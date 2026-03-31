@@ -268,11 +268,11 @@ app.get('/api/v1/expenses', authenticate, async (req, res) => {
 });
 
 app.post('/api/v1/expenses', authenticate, async (req, res) => {
-  try { res.status(201).json(await prisma.expense.create({ data: req.body })); } catch (err) { res.status(500).json({ error: err.message }); }
+  try { const data = { ...req.body }; if (data.date) data.date = new Date(data.date); res.status(201).json(await prisma.expense.create({ data })); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/v1/expenses/:id', authenticate, async (req, res) => {
-  try { res.json(await prisma.expense.update({ where: { id: req.params.id }, data: req.body })); } catch (err) { res.status(500).json({ error: err.message }); }
+  try { const data = { ...req.body }; if (data.date) data.date = new Date(data.date); res.json(await prisma.expense.update({ where: { id: req.params.id }, data })); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/v1/expenses/:id', authenticate, async (req, res) => {

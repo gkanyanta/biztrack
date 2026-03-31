@@ -32,7 +32,9 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
-    const expense = await prisma.expense.create({ data: req.body });
+    const data = { ...req.body };
+    if (data.date) data.date = new Date(data.date);
+    const expense = await prisma.expense.create({ data });
     res.status(201).json(expense);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -43,9 +45,11 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
+    const data = { ...req.body };
+    if (data.date) data.date = new Date(data.date);
     const expense = await prisma.expense.update({
       where: { id: req.params.id },
-      data: req.body
+      data
     });
     res.json(expense);
   } catch (err) {
