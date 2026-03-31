@@ -5,16 +5,17 @@ const { PrismaClient } = require('@prisma/client');
 const app = express();
 
 // Reuse prisma client across serverless invocations
-let prisma;
 if (!global.__prisma) {
   global.__prisma = new PrismaClient();
 }
-prisma = global.__prisma;
 
 app.use(cors());
 app.use(express.json());
 
-app.locals.prisma = prisma;
+app.locals.prisma = global.__prisma;
+
+// Set JWT_SECRET from env
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'biztrack-default-secret';
 
 // Routes
 app.use('/api/v1/auth', require('../server/src/routes/auth'));
