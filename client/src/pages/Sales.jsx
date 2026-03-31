@@ -6,7 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge, PaymentBadge } from '../components/StatusBadge';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage } from 'react-icons/fi';
 
 export default function Sales() {
   const [sales, setSales] = useState([]);
@@ -17,8 +17,10 @@ export default function Sales() {
   const [statusFilter, setStatusFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [selectedProduct, setSelectedProduct] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [showDetail, setShowDetail] = useState(null);
+  const [productSearch, setProductSearch] = useState('');
 
   const emptyForm = {
     productId: '', qty: '1', unitPrice: '', customerName: '', customerPhone: '',
@@ -40,14 +42,20 @@ export default function Sales() {
     getShippingRates().then(res => setShippingRates(res.data));
   }, []);
 
-  const openCreate = () => {
+  const selectProduct = (product) => {
+    setSelectedProduct(product);
     setEditing(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      productId: product.id,
+      unitPrice: product.sellingPrice
+    });
     setShowForm(true);
   };
 
   const openEdit = (sale) => {
     setEditing(sale);
+    setSelectedProduct(products.find(p => p.id === sale.productId) || null);
     setForm({
       productId: sale.productId, qty: String(sale.qty), unitPrice: sale.unitPrice,
       customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
@@ -58,11 +66,6 @@ export default function Sales() {
       date: sale.date ? sale.date.slice(0, 10) : ''
     });
     setShowForm(true);
-  };
-
-  const onProductChange = (productId) => {
-    const product = products.find(p => p.id === productId);
-    setForm(f => ({ ...f, productId, unitPrice: product ? product.sellingPrice : '' }));
   };
 
   const onCityChange = (city) => {
@@ -82,7 +85,9 @@ export default function Sales() {
         toast.success('Sale recorded');
       }
       setShowForm(false);
+      setSelectedProduct(null);
       loadSales();
+      getProducts().then(res => setProducts(res.data.filter(p => p.isActive)));
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error saving sale');
     }
@@ -114,106 +119,164 @@ export default function Sales() {
       parseFloat(s.shippingCost) + parseFloat(s.shippingCharge) - parseFloat(s.discount);
   };
 
+  const filteredProducts = products.filter(p =>
+    !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase())
+  );
+
   return (
-    <div className="space-y-4 pb-20 lg:pb-0">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
-        <div className="flex gap-2 items-center w-full sm:w-auto">
-          <div className="relative flex-1 sm:flex-none">
-            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <input type="text" placeholder="Search orders..." value={search} onChange={e => setSearch(e.target.value)}
-              className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm w-full sm:w-56 outline-none focus:ring-2 focus:ring-blue-500" />
+    <div className="space-y-6 pb-20 lg:pb-0">
+      {/* Product Tiles Section */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">Select a product to record a sale</h3>
+          <div className="relative">
+            <FiSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+            <input
+              type="text"
+              placeholder="Search products..."
+              value={productSearch}
+              onChange={e => setProductSearch(e.target.value)}
+              className="pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-sm w-48 outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-            className="border border-gray-300 rounded-lg px-2 py-2 text-sm outline-none">
-            <option value="">All Status</option>
-            {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-          <FiPlus size={16} /> Record Sale
-        </button>
+
+        {filteredProducts.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {filteredProducts.map(p => (
+              <button
+                key={p.id}
+                onClick={() => selectProduct(p)}
+                className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:border-blue-400 hover:shadow-md transition-all group"
+              >
+                <div className="flex items-center justify-center w-10 h-10 bg-blue-50 rounded-lg mb-2 group-hover:bg-blue-100 transition-colors">
+                  <FiPackage className="text-blue-500" size={20} />
+                </div>
+                <div className="font-medium text-gray-800 text-sm truncate">{p.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{p.sku}</div>
+                <div className="font-bold text-blue-600 text-sm mt-1">{formatMoney(p.sellingPrice)}</div>
+                <div className={`text-xs mt-1 ${p.stock <= p.reorderLevel ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+                  {p.stock} in stock
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center text-gray-500">
+            <FiPackage className="mx-auto mb-2" size={32} />
+            <p className="text-sm">No products found. Add products first.</p>
+          </div>
+        )}
       </div>
 
-      {/* Sales table */}
-      {loading ? <LoadingSpinner /> : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left p-3 font-medium text-gray-600">Order</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">Product</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden lg:table-cell">Customer</th>
-                <th className="text-right p-3 font-medium text-gray-600">Total</th>
-                <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Profit</th>
-                <th className="text-center p-3 font-medium text-gray-600">Status</th>
-                <th className="text-center p-3 font-medium text-gray-600 hidden sm:table-cell">Payment</th>
-                <th className="text-right p-3 font-medium text-gray-600">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sales.map(s => (
-                <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="p-3">
-                    <div className="font-medium text-gray-800">{s.orderNumber}</div>
-                    <div className="text-xs text-gray-500">{formatDate(s.date)}</div>
-                  </td>
-                  <td className="p-3 text-gray-600 hidden md:table-cell">
-                    {s.product?.name} <span className="text-gray-400">x{s.qty}</span>
-                  </td>
-                  <td className="p-3 hidden lg:table-cell">
-                    <div className="text-gray-700">{s.customerName || '-'}</div>
-                    <div className="text-xs text-gray-500">{s.customerCity || ''}</div>
-                  </td>
-                  <td className="p-3 text-right font-medium text-gray-800">{formatMoney(s.totalPrice)}</td>
-                  <td className="p-3 text-right hidden sm:table-cell">
-                    <span className={calcProfit(s) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                      {formatMoney(calcProfit(s))}
-                    </span>
-                  </td>
-                  <td className="p-3 text-center">
-                    <select
-                      value={s.status}
-                      onChange={e => handleStatusChange(s, e.target.value)}
-                      className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none"
-                    >
-                      {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
-                    </select>
-                  </td>
-                  <td className="p-3 text-center hidden sm:table-cell">
-                    <PaymentBadge status={s.paymentStatus} />
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="flex gap-1 justify-end">
-                      <button onClick={() => setShowDetail(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEye size={15} /></button>
-                      <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={15} /></button>
-                      <button onClick={() => setDeleteConfirm(s)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {sales.length === 0 && (
-                <tr><td colSpan={8} className="p-8 text-center text-gray-500">
-                  <FiShoppingCart className="mx-auto mb-2" size={32} />No sales found
-                </td></tr>
-              )}
-            </tbody>
-          </table>
+      {/* Orders Section */}
+      <div>
+        <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">Orders</h3>
+          <div className="flex gap-2 items-center w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-none">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+              <input type="text" placeholder="Search orders..." value={search} onChange={e => setSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-sm w-full sm:w-48 outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+              className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none">
+              <option value="">All Status</option>
+              {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
         </div>
-      )}
 
-      {/* Create/Edit Sale Modal */}
-      <Modal isOpen={showForm} onClose={() => setShowForm(false)} title={editing ? 'Edit Sale' : 'Record Sale'} size="lg">
+        {loading ? <LoadingSpinner /> : (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="text-left p-3 font-medium text-gray-600">Order</th>
+                  <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">Product</th>
+                  <th className="text-left p-3 font-medium text-gray-600 hidden lg:table-cell">Customer</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Total</th>
+                  <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Profit</th>
+                  <th className="text-center p-3 font-medium text-gray-600">Status</th>
+                  <th className="text-center p-3 font-medium text-gray-600 hidden sm:table-cell">Payment</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sales.map(s => (
+                  <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="p-3">
+                      <div className="font-medium text-gray-800">{s.orderNumber}</div>
+                      <div className="text-xs text-gray-500">{formatDate(s.date)}</div>
+                    </td>
+                    <td className="p-3 text-gray-600 hidden md:table-cell">
+                      {s.product?.name} <span className="text-gray-400">x{s.qty}</span>
+                    </td>
+                    <td className="p-3 hidden lg:table-cell">
+                      <div className="text-gray-700">{s.customerName || '-'}</div>
+                      <div className="text-xs text-gray-500">{s.customerCity || ''}</div>
+                    </td>
+                    <td className="p-3 text-right font-medium text-gray-800">{formatMoney(s.totalPrice)}</td>
+                    <td className="p-3 text-right hidden sm:table-cell">
+                      <span className={calcProfit(s) >= 0 ? 'text-green-600' : 'text-red-600'}>
+                        {formatMoney(calcProfit(s))}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <select
+                        value={s.status}
+                        onChange={e => handleStatusChange(s, e.target.value)}
+                        className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none"
+                      >
+                        {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                      </select>
+                    </td>
+                    <td className="p-3 text-center hidden sm:table-cell">
+                      <PaymentBadge status={s.paymentStatus} />
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex gap-1 justify-end">
+                        <button onClick={() => setShowDetail(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEye size={15} /></button>
+                        <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={15} /></button>
+                        <button onClick={() => setDeleteConfirm(s)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {sales.length === 0 && (
+                  <tr><td colSpan={8} className="p-8 text-center text-gray-500">
+                    <FiShoppingCart className="mx-auto mb-2" size={32} />No sales found
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Record Sale Modal - opens when a product tile is clicked */}
+      <Modal isOpen={showForm} onClose={() => { setShowForm(false); setSelectedProduct(null); }} title={editing ? 'Edit Sale' : `Record Sale — ${selectedProduct?.name || ''}`} size="lg">
+        {selectedProduct && !editing && (
+          <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg mb-4">
+            <div className="flex items-center justify-center w-10 h-10 bg-blue-100 rounded-lg">
+              <FiPackage className="text-blue-600" size={20} />
+            </div>
+            <div>
+              <div className="font-medium text-gray-800">{selectedProduct.name}</div>
+              <div className="text-sm text-gray-500">{selectedProduct.sku} &middot; {formatMoney(selectedProduct.sellingPrice)} &middot; {selectedProduct.stock} in stock</div>
+            </div>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Product *</label>
-              <select required value={form.productId} onChange={e => onProductChange(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Select product</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name} ({formatMoney(p.sellingPrice)}) — Stock: {p.stock}</option>)}
-              </select>
-            </div>
+            {editing && (
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
+                <div className="text-sm text-gray-800 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+                  {selectedProduct?.name || 'Unknown product'}
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Qty *</label>
@@ -307,7 +370,7 @@ export default function Sales() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div className="flex gap-3 justify-end pt-2">
-            <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+            <button type="button" onClick={() => { setShowForm(false); setSelectedProduct(null); }} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
             <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Record Sale'}</button>
           </div>
         </form>
