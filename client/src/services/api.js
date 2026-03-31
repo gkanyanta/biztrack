@@ -1,0 +1,85 @@
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: '/api/v1',
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('biztrack_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('biztrack_token');
+      localStorage.removeItem('biztrack_user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(err);
+  }
+);
+
+// Auth
+export const login = (data) => api.post('/auth/login', data);
+export const getMe = () => api.get('/auth/me');
+
+// Products
+export const getProducts = (params) => api.get('/products', { params });
+export const getProduct = (id) => api.get(`/products/${id}`);
+export const createProduct = (data) => api.post('/products', data);
+export const updateProduct = (id, data) => api.put(`/products/${id}`, data);
+export const deleteProduct = (id) => api.delete(`/products/${id}`);
+export const bulkRestock = (items) => api.post('/products/restock', { items });
+export const getStockLog = (id) => api.get(`/products/${id}/stock-log`);
+export const getCategories = () => api.get('/products/meta/categories');
+
+// Sales
+export const getSales = (params) => api.get('/sales', { params });
+export const getSale = (id) => api.get(`/sales/${id}`);
+export const createSale = (data) => api.post('/sales', data);
+export const updateSale = (id, data) => api.put(`/sales/${id}`, data);
+export const updateSaleStatus = (id, status) => api.put(`/sales/${id}/status`, { status });
+export const deleteSale = (id) => api.delete(`/sales/${id}`);
+
+// Expenses
+export const getExpenses = (params) => api.get('/expenses', { params });
+export const createExpense = (data) => api.post('/expenses', data);
+export const updateExpense = (id, data) => api.put(`/expenses/${id}`, data);
+export const deleteExpense = (id) => api.delete(`/expenses/${id}`);
+
+// Customers
+export const getCustomers = (params) => api.get('/customers', { params });
+export const getCustomer = (id) => api.get(`/customers/${id}`);
+export const createCustomer = (data) => api.post('/customers', data);
+export const updateCustomer = (id, data) => api.put(`/customers/${id}`, data);
+export const deleteCustomer = (id) => api.delete(`/customers/${id}`);
+export const getCustomerOrders = (id) => api.get(`/customers/${id}/orders`);
+
+// Shipping Rates
+export const getShippingRates = () => api.get('/shipping-rates');
+export const createShippingRate = (data) => api.post('/shipping-rates', data);
+export const updateShippingRate = (id, data) => api.put(`/shipping-rates/${id}`, data);
+export const deleteShippingRate = (id) => api.delete(`/shipping-rates/${id}`);
+
+// Dashboard & Reports
+export const getDashboard = (params) => api.get('/dashboard', { params });
+export const getPnlReport = (params) => api.get('/reports/pnl', { params });
+export const getSalesReport = (params) => api.get('/reports/sales', { params });
+export const getExpenseReport = (params) => api.get('/reports/expenses', { params });
+export const getProductReport = (params) => api.get('/reports/products', { params });
+export const getCustomerReport = (params) => api.get('/reports/customers', { params });
+export const exportCSV = (type, params) => api.get('/reports/export/csv', {
+  params: { type, ...params },
+  responseType: type === 'pnl' ? 'blob' : 'text'
+});
+
+// Settings
+export const getSettings = () => api.get('/settings');
+export const updateSettings = (data) => api.put('/settings', data);
+
+export default api;
