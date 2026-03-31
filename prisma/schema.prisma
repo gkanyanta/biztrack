@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  name      String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id           String     @id @default(cuid())
+  name         String
+  sku          String     @unique
+  description  String?
+  category     String?
+  costPrice    Decimal    @db.Decimal(10, 2)
+  sellingPrice Decimal    @db.Decimal(10, 2)
+  stock        Int        @default(0)
+  reorderLevel Int        @default(5)
+  supplier     String?
+  imageUrl     String?
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  sales        Sale[]
+  stockLogs    StockLog[]
+}
+
+model StockLog {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  change    Int
+  reason    String
+  saleId    String?
+  createdAt DateTime @default(now())
+}
+
+model Sale {
+  id              String           @id @default(cuid())
+  orderNumber     String           @unique
+  date            DateTime         @default(now())
+  productId       String
+  product         Product          @relation(fields: [productId], references: [id])
+  qty             Int
+  unitPrice       Decimal          @db.Decimal(10, 2)
+  costPrice       Decimal          @db.Decimal(10, 2)
+  totalPrice      Decimal          @db.Decimal(10, 2)
+  shippingCost    Decimal          @db.Decimal(10, 2) @default(0)
+  shippingCharge  Decimal          @db.Decimal(10, 2) @default(0)
+  discount        Decimal          @db.Decimal(10, 2) @default(0)
+  status          String           @default("Pending")
+  paymentStatus   String           @default("Unpaid")
+  paymentMethod   String?
+  source          String?
+  customerId      String?
+  customer        Customer?        @relation(fields: [customerId], references: [id])
+  customerName    String?
+  customerPhone   String?
+  customerCity    String?
+  deliveryAddress String?
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  statusHistory   OrderStatusLog[]
+}
+
+model OrderStatusLog {
+  id         String   @id @default(cuid())
+  saleId     String
+  sale       Sale     @relation(fields: [saleId], references: [id])
+  fromStatus String
+  toStatus   String
+  createdAt  DateTime @default(now())
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  whatsapp  String?
+  city      String?
+  email     String?
+  source    String?
+  notes     String?
+  createdAt DateTime @default(now())
+  sales     Sale[]
+}
+
+model Expense {
+  id            String   @id @default(cuid())
+  date          DateTime @default(now())
+  description   String
+  amount        Decimal  @db.Decimal(10, 2)
+  category      String
+  paymentMethod String?
+  isRecurring   Boolean  @default(false)
+  frequency     String?
+  notes         String?
+  createdAt     DateTime @default(now())
+}
+
+model ShippingRate {
+  id     String  @id @default(cuid())
+  city   String  @unique
+  region String?
+  rate   Decimal @db.Decimal(10, 2)
+}
+
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}

@@ -9,7 +9,7 @@
     "dev:client": "cd client && npm run dev",
     "setup": "cd server && npx prisma generate && npx prisma db push && npm run seed",
     "seed": "cd server && node prisma/seed.js",
-    "postinstall": "prisma generate --schema=server/prisma/schema.prisma"
+    "postinstall": "prisma generate"
   },
   "keywords": [],
   "author": "",
