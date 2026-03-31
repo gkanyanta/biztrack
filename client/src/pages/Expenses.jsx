@@ -45,7 +45,7 @@ export default function Expenses() {
     e.preventDefault();
     try {
       const data = { ...form, amount: parseFloat(form.amount) };
-      if (!data.date) data.date = new Date().toISOString();
+      data.date = data.date ? new Date(data.date).toISOString() : new Date().toISOString();
       if (editing) {
         await updateExpense(editing.id, data);
         toast.success('Expense updated');
