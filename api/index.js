@@ -207,13 +207,35 @@ app.post('/api/v1/sales', authenticate, async (req, res) => {
 
 app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
-    const data = req.body;
-    if (data.qty !== undefined || data.unitPrice !== undefined) {
-      const existing = await prisma.sale.findUnique({ where: { id: req.params.id } });
-      const qty = data.qty !== undefined ? parseInt(data.qty) : existing.qty;
-      const unitPrice = data.unitPrice !== undefined ? parseFloat(data.unitPrice) : parseFloat(existing.unitPrice);
-      data.totalPrice = qty * unitPrice;
-    }
+    const raw = req.body;
+    const existing = await prisma.sale.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+
+    const qty = raw.qty !== undefined ? parseInt(raw.qty) : existing.qty;
+    const unitPrice = raw.unitPrice !== undefined ? parseFloat(raw.unitPrice) : parseFloat(existing.unitPrice);
+
+    const data = {
+      ...(raw.productId && { productId: raw.productId }),
+      qty,
+      unitPrice,
+      totalPrice: qty * unitPrice,
+      shippingCost: raw.shippingCost !== undefined ? parseFloat(raw.shippingCost) || 0 : undefined,
+      shippingCharge: raw.shippingCharge !== undefined ? parseFloat(raw.shippingCharge) || 0 : undefined,
+      discount: raw.discount !== undefined ? parseFloat(raw.discount) || 0 : undefined,
+      ...(raw.date && { date: new Date(raw.date) }),
+      ...(raw.paymentMethod !== undefined && { paymentMethod: raw.paymentMethod || null }),
+      ...(raw.paymentStatus && { paymentStatus: raw.paymentStatus }),
+      ...(raw.source !== undefined && { source: raw.source || null }),
+      ...(raw.customerName !== undefined && { customerName: raw.customerName || null }),
+      ...(raw.customerPhone !== undefined && { customerPhone: raw.customerPhone || null }),
+      ...(raw.customerCity !== undefined && { customerCity: raw.customerCity || null }),
+      ...(raw.deliveryAddress !== undefined && { deliveryAddress: raw.deliveryAddress || null }),
+      ...(raw.notes !== undefined && { notes: raw.notes || null }),
+    };
+
+    // Remove undefined keys
+    Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
+
     const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { product: true, customer: true } });
     res.json(sale);
   } catch (err) { res.status(500).json({ error: err.message }); }
