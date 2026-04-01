@@ -76,7 +76,15 @@ export default function Sales() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const data = { ...form };
+      const data = {
+        ...form,
+        qty: parseInt(form.qty) || 1,
+        unitPrice: parseFloat(form.unitPrice) || 0,
+        shippingCost: parseFloat(form.shippingCost) || 0,
+        shippingCharge: parseFloat(form.shippingCharge) || 0,
+        discount: parseFloat(form.discount) || 0,
+      };
+      if (data.date) data.date = new Date(data.date).toISOString();
       if (editing) {
         await updateSale(editing.id, data);
         toast.success('Sale updated');
