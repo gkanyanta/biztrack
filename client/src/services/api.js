@@ -68,6 +68,7 @@ export const deleteShippingRate = (id) => api.delete(`/shipping-rates/${id}`);
 
 // Dashboard & Reports
 export const getDashboard = (params) => api.get('/dashboard', { params });
+export const getGrowthReport = () => api.get('/reports/growth');
 export const getPnlReport = (params) => api.get('/reports/pnl', { params });
 export const getSalesReport = (params) => api.get('/reports/sales', { params });
 export const getExpenseReport = (params) => api.get('/reports/expenses', { params });

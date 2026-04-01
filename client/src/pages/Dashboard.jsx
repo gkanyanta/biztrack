@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getDashboard } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle } from 'react-icons/fi';
+import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap } from 'react-icons/fi';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend
@@ -21,6 +21,8 @@ export default function Dashboard() {
   if (loading) return <LoadingSpinner />;
   if (!data) return <p className="text-gray-500">Failed to load dashboard</p>;
 
+  const g = data.growth;
+
   const cards = [
     { label: 'Total Revenue', value: formatMoney(data.totalRevenue), icon: FiDollarSign, color: 'bg-blue-500' },
     { label: 'Net Profit', value: formatMoney(data.netProfit), icon: FiTrendingUp, color: data.netProfit >= 0 ? 'bg-green-500' : 'bg-red-500' },
@@ -36,6 +38,136 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {/* Growth Tracker - Top Priority */}
+      {g && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-5 text-white shadow-lg">
+          <div className="flex items-center gap-2 mb-4">
+            <FiTarget size={20} />
+            <h3 className="font-bold text-lg">200% Growth Tracker</h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="bg-white/15 rounded-lg p-3">
+              <p className="text-blue-100 text-xs">This Month Revenue</p>
+              <p className="text-xl font-bold">{formatMoney(g.thisMonthRevenue)}</p>
+              <p className="text-blue-200 text-xs">{g.thisMonthOrders} orders</p>
+            </div>
+            <div className="bg-white/15 rounded-lg p-3">
+              <p className="text-blue-100 text-xs">Target (3x Last Month)</p>
+              <p className="text-xl font-bold">{formatMoney(g.growthTarget)}</p>
+              <p className="text-blue-200 text-xs">Last month: {formatMoney(g.lastMonthRevenue)}</p>
+            </div>
+            <div className="bg-white/15 rounded-lg p-3">
+              <p className="text-blue-100 text-xs">Projected This Month</p>
+              <p className="text-xl font-bold">{formatMoney(g.projectedMonthRevenue)}</p>
+              <p className="text-blue-200 text-xs">~{g.projectedMonthOrders} orders at current pace</p>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="mb-3">
+            <div className="flex justify-between text-xs text-blue-100 mb-1">
+              <span>Progress to 200% growth target</span>
+              <span>{g.growthProgress.toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-white/20 rounded-full h-3">
+              <div
+                className={`h-3 rounded-full transition-all ${g.growthProgress >= 100 ? 'bg-green-400' : g.growthProgress >= 50 ? 'bg-yellow-400' : 'bg-white'}`}
+                style={{ width: `${Math.min(g.growthProgress, 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div>
+              <span className="text-blue-200">Remaining</span>
+              <p className="font-semibold">{formatMoney(g.remainingToTarget)}</p>
+            </div>
+            <div>
+              <span className="text-blue-200">Daily target needed</span>
+              <p className="font-semibold">{formatMoney(g.dailyTargetNeeded)}/day</p>
+            </div>
+            <div>
+              <span className="text-blue-200">Days left</span>
+              <p className="font-semibold">{g.daysLeft} days</p>
+            </div>
+            <div>
+              <span className="text-blue-200">Current daily rate</span>
+              <p className="font-semibold">{formatMoney(g.dailyRevenueRate)}/day</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reinvestment Guide */}
+      {g && g.reinvestment && (
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2 mb-4">
+            <FiZap className="text-amber-500" size={18} />
+            <h3 className="text-sm font-bold text-gray-800">Reinvestment Guide — How to Hit 200% Growth</h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Per Sale Breakdown */}
+            <div>
+              <p className="text-xs text-gray-500 mb-3 uppercase font-medium">Per Sale Action</p>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-sm text-gray-600">Avg profit per sale</span>
+                  <span className="font-bold text-green-600">{formatMoney(g.reinvestment.avgProfitPerSale)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-sm text-gray-600">Set aside per sale for growth</span>
+                  <span className="font-bold text-blue-600">{formatMoney(g.reinvestment.perSale)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-sm text-gray-600">% of profit to reinvest</span>
+                  <span className="font-bold text-amber-600">{g.reinvestment.percentOfProfit.toFixed(0)}%</span>
+                </div>
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-sm text-gray-600">Keep as take-home</span>
+                  <span className="font-bold text-gray-800">{formatMoney(Math.max(0, g.reinvestment.avgProfitPerSale - g.reinvestment.perSale))}</span>
+                </div>
+              </div>
+
+              {g.reinvestment.avgProfitPerSale > 0 && (
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-xs text-amber-800">
+                    <strong>Rule of thumb:</strong> For every sale, put {formatMoney(g.reinvestment.perSale)} back into ads + inventory.
+                    Take home {formatMoney(Math.max(0, g.reinvestment.avgProfitPerSale - g.reinvestment.perSale))} as profit.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Monthly Budget */}
+            <div>
+              <p className="text-xs text-gray-500 mb-3 uppercase font-medium">Monthly Reinvestment Budget</p>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <div>
+                    <span className="text-sm text-gray-600">Facebook Ads budget</span>
+                    <p className="text-xs text-gray-400">Based on {g.reinvestment.roas.toFixed(1)}x ROAS</p>
+                  </div>
+                  <span className="font-bold text-pink-600">{formatMoney(g.reinvestment.monthlyAdBudget)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <div>
+                    <span className="text-sm text-gray-600">Inventory investment</span>
+                    <p className="text-xs text-gray-400">Stock for 3x orders</p>
+                  </div>
+                  <span className="font-bold text-purple-600">{formatMoney(g.reinvestment.monthlyInventory)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 bg-gray-50 rounded-lg px-3">
+                  <span className="text-sm font-medium text-gray-700">Total monthly reinvestment</span>
+                  <span className="font-bold text-gray-800 text-lg">{formatMoney(g.reinvestment.totalMonthly)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stats cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map(card => (
@@ -55,7 +187,6 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Monthly Revenue vs Profit */}
         {data.monthlySummary.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-700 mb-4">Monthly Revenue vs Profit</h3>
@@ -73,7 +204,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Expense Breakdown */}
         {expensePieData.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-700 mb-4">Expense Breakdown</h3>
@@ -90,7 +220,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Sales Trend */}
         {data.monthlySummary.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-700 mb-4">Sales Trend</h3>
@@ -106,7 +235,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Top Products */}
         {data.topProducts.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
             <h3 className="text-sm font-semibold text-gray-700 mb-4">Top 5 Products by Revenue</h3>

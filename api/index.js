@@ -377,7 +377,139 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const lowStockProducts = lowStock.filter(p => p.stock <= p.reorderLevel);
     const pendingOrders = await prisma.sale.count({ where: { status: { in: ['Pending', 'Confirmed'] } } });
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders });
+    // ---- GROWTH ANALYSIS ----
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+    const thisMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart);
+    const thisMonthRevenue = thisMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const thisMonthOrders = thisMonthSales.length;
+    const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+
+    // Get last month data from DB directly (may not be in filtered sales)
+    const lastMonthSalesData = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } } });
+    const lastMonthRevenue = lastMonthSalesData.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const lastMonthOrders = lastMonthSalesData.length;
+
+    // Days elapsed this month and daily run rate
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dailyRevenueRate = dayOfMonth > 0 ? thisMonthRevenue / dayOfMonth : 0;
+    const dailyOrderRate = dayOfMonth > 0 ? thisMonthOrders / dayOfMonth : 0;
+    const projectedMonthRevenue = dailyRevenueRate * daysInMonth;
+    const projectedMonthOrders = Math.round(dailyOrderRate * daysInMonth);
+
+    // Growth target: 200% = 3x last month
+    const growthTarget = lastMonthRevenue * 3;
+    const growthProgress = growthTarget > 0 ? (thisMonthRevenue / growthTarget) * 100 : 0;
+    const remainingToTarget = Math.max(0, growthTarget - thisMonthRevenue);
+    const daysLeft = daysInMonth - dayOfMonth;
+    const dailyTargetNeeded = daysLeft > 0 ? remainingToTarget / daysLeft : 0;
+
+    // Actual month-over-month growth rate
+    const actualGrowthRate = lastMonthRevenue > 0 ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100 : 0;
+
+    // Reinvestment calculation
+    // Per sale: how much to set aside for ads + inventory to hit 200% growth
+    const avgProfitPerSale = thisMonthOrders > 0 ? (thisMonthRevenue - thisMonthCOGS) / thisMonthOrders : 0;
+    const effectiveRoas = roas > 0 ? roas : 3; // default assume 3x if no data
+    // To 3x revenue, need 2x more customers = 2x current ad spend
+    // Required additional ad budget = (2 × current monthly revenue) / ROAS
+    const additionalAdBudgetNeeded = (2 * (lastMonthRevenue || thisMonthRevenue)) / effectiveRoas;
+    const targetMonthlyOrders = (lastMonthOrders || thisMonthOrders) * 3;
+    const additionalInventoryCost = targetMonthlyOrders > 0 && thisMonthOrders > 0 ? thisMonthCOGS * 2 : 0; // 2x more inventory
+    const totalReinvestmentNeeded = additionalAdBudgetNeeded + additionalInventoryCost;
+    const reinvestPerSale = thisMonthOrders > 0 ? totalReinvestmentNeeded / (thisMonthOrders * 3) : 0;
+    const reinvestPercentOfProfit = avgProfitPerSale > 0 ? (reinvestPerSale / avgProfitPerSale) * 100 : 0;
+
+    const growth = {
+      thisMonthRevenue, thisMonthOrders, lastMonthRevenue, lastMonthOrders,
+      dailyRevenueRate, projectedMonthRevenue, projectedMonthOrders,
+      growthTarget, growthProgress: Math.min(growthProgress, 100), remainingToTarget, dailyTargetNeeded, daysLeft,
+      actualGrowthRate,
+      reinvestment: {
+        perSale: reinvestPerSale,
+        percentOfProfit: reinvestPercentOfProfit,
+        monthlyAdBudget: additionalAdBudgetNeeded,
+        monthlyInventory: additionalInventoryCost,
+        totalMonthly: totalReinvestmentNeeded,
+        avgProfitPerSale,
+        roas: effectiveRoas
+      }
+    };
+
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---- GROWTH PROJECTIONS REPORT ----
+app.get('/api/v1/reports/growth', authenticate, async (req, res) => {
+  try {
+    // Get all non-cancelled sales grouped by month
+    const allSales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' } }, orderBy: { date: 'asc' } });
+    const allExpenses = await prisma.expense.findMany({ orderBy: { date: 'asc' } });
+
+    // Build monthly history
+    const monthlyHistory = {};
+    allSales.forEach(s => {
+      const m = s.date.toISOString().slice(0, 7);
+      if (!monthlyHistory[m]) monthlyHistory[m] = { revenue: 0, cogs: 0, orders: 0, profit: 0, expenses: 0, adSpend: 0 };
+      monthlyHistory[m].revenue += parseFloat(s.totalPrice);
+      monthlyHistory[m].cogs += parseFloat(s.costPrice) * s.qty;
+      monthlyHistory[m].orders += s.qty;
+      monthlyHistory[m].profit += parseFloat(s.totalPrice) - (parseFloat(s.costPrice) * s.qty);
+    });
+    allExpenses.forEach(e => {
+      const m = e.date.toISOString().slice(0, 7);
+      if (!monthlyHistory[m]) monthlyHistory[m] = { revenue: 0, cogs: 0, orders: 0, profit: 0, expenses: 0, adSpend: 0 };
+      monthlyHistory[m].expenses += parseFloat(e.amount);
+      if (e.category === 'Facebook Ads') monthlyHistory[m].adSpend += parseFloat(e.amount);
+    });
+
+    const history = Object.entries(monthlyHistory).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({
+      month, ...d, netProfit: d.profit - d.expenses, roas: d.adSpend > 0 ? d.revenue / d.adSpend : 0
+    }));
+
+    // Calculate growth rates between months
+    for (let i = 1; i < history.length; i++) {
+      history[i].growthRate = history[i - 1].revenue > 0 ? ((history[i].revenue - history[i - 1].revenue) / history[i - 1].revenue) * 100 : 0;
+    }
+    if (history.length > 0) history[0].growthRate = 0;
+
+    // Project next 6 months based on current trajectory vs 200% target
+    const now = new Date();
+    const latestMonth = history.length > 0 ? history[history.length - 1] : null;
+    const avgGrowthRate = history.length >= 2 ? history.slice(1).reduce((s, h) => s + h.growthRate, 0) / (history.length - 1) : 0;
+    const avgMargin = latestMonth && latestMonth.revenue > 0 ? (latestMonth.profit / latestMonth.revenue) : 0.3;
+    const avgExpenseRatio = latestMonth && latestMonth.revenue > 0 ? (latestMonth.expenses / latestMonth.revenue) : 0.2;
+
+    const projections = [];
+    for (let i = 1; i <= 6; i++) {
+      const projMonth = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const monthLabel = projMonth.toISOString().slice(0, 7);
+      const baseRevenue = latestMonth ? latestMonth.revenue : 0;
+
+      // Current trajectory (using actual avg growth)
+      const currentGrowthMultiplier = Math.pow(1 + avgGrowthRate / 100, i);
+      const currentRevenue = baseRevenue * currentGrowthMultiplier;
+
+      // Target trajectory (200% monthly = 3x)
+      const targetRevenue = baseRevenue * Math.pow(3, i);
+
+      // What's needed
+      const targetAdSpend = latestMonth && latestMonth.roas > 0 ? targetRevenue / latestMonth.roas : targetRevenue / 3;
+
+      projections.push({
+        month: monthLabel,
+        currentTrajectory: { revenue: currentRevenue, profit: currentRevenue * avgMargin, orders: Math.round(latestMonth ? (latestMonth.orders * currentGrowthMultiplier) : 0) },
+        targetTrajectory: { revenue: targetRevenue, profit: targetRevenue * avgMargin - targetRevenue * avgExpenseRatio, adSpendNeeded: targetAdSpend, inventoryNeeded: targetRevenue * (1 - avgMargin) },
+        gap: targetRevenue - currentRevenue
+      });
+    }
+
+    res.json({ history, projections, avgGrowthRate, targetGrowthRate: 200 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
