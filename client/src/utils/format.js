@@ -26,15 +26,14 @@ export function formatDateTime(date) {
 export function calcMargin(costPrice, sellingPrice) {
   const cost = parseFloat(costPrice) || 0;
   const sell = parseFloat(sellingPrice) || 0;
-  if (sell === 0) return 0;
-  return ((sell - cost) / sell) * 100;
+  if (cost === 0) return 0;
+  return ((sell - cost) / cost) * 100;
 }
 
 export function calcSuggestedPrice(costPrice, marginPercent) {
   const cost = parseFloat(costPrice) || 0;
   const margin = parseFloat(marginPercent) || 0;
-  if (margin >= 100) return 0;
-  return cost / (1 - margin / 100);
+  return cost * (1 + margin / 100);
 }
 
 export const STATUS_COLORS = {

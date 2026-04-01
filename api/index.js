@@ -357,7 +357,7 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const roas = adSpend > 0 ? totalRevenue / adSpend : 0;
     const totalOrders = sales.length;
     const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-    const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+    const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
     sales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += parseFloat(s.costPrice) * s.qty; monthlyData[m].orders += 1; });
@@ -398,7 +398,7 @@ app.get('/api/v1/reports/pnl', authenticate, async (req, res) => {
     const expensesByCategory = {}; let totalExpenses = 0;
     expenses.forEach(e => { const a = parseFloat(e.amount); if (!expensesByCategory[e.category]) expensesByCategory[e.category] = 0; expensesByCategory[e.category] += a; totalExpenses += a; });
     const netProfit = grossProfit - totalExpenses;
-    res.json({ revenue, cogs, shippingCost, shippingCharge, discount, grossProfit, expensesByCategory, totalExpenses, netProfit, profitMargin: revenue > 0 ? (netProfit / revenue) * 100 : 0 });
+    res.json({ revenue, cogs, shippingCost, shippingCharge, discount, grossProfit, expensesByCategory, totalExpenses, netProfit, profitMargin: cogs > 0 ? (netProfit / cogs) * 100 : 0 });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

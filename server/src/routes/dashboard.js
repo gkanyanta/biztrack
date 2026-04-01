@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
     // Order counts
     const totalOrders = sales.length;
     const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-    const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+    const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     // Monthly data for charts
     const monthlyData = {};

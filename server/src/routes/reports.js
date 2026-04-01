@@ -50,7 +50,7 @@ router.get('/pnl', async (req, res) => {
       expensesByCategory,
       totalExpenses,
       netProfit,
-      profitMargin: revenue > 0 ? (netProfit / revenue) * 100 : 0
+      profitMargin: cogs > 0 ? (netProfit / cogs) * 100 : 0
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
