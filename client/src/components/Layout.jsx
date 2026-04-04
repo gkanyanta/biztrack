@@ -32,7 +32,10 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-white transform transition-transform lg:relative lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <h1 className="text-xl font-bold text-white">BizTrack</h1>
+          <div>
+            <h1 className="text-xl font-bold text-white">BizTrack</h1>
+            {user?.companyName && <p className="text-xs text-gray-400 truncate">{user.companyName}</p>}
+          </div>
           <button className="lg:hidden text-gray-400 hover:text-white" onClick={() => setSidebarOpen(false)}>
             <FiX size={20} />
           </button>

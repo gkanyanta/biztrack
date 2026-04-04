@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { login as apiLogin, getMe } from '../services/api';
+import { login as apiLogin, register as apiRegister, getMe } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -34,6 +34,14 @@ export function AuthProvider({ children }) {
     return res.data;
   };
 
+  const register = async (companyName, username, password, name) => {
+    const res = await apiRegister({ companyName, username, password, name });
+    localStorage.setItem('biztrack_token', res.data.token);
+    localStorage.setItem('biztrack_user', JSON.stringify(res.data.user));
+    setUser(res.data.user);
+    return res.data;
+  };
+
   const logout = () => {
     localStorage.removeItem('biztrack_token');
     localStorage.removeItem('biztrack_user');
@@ -41,7 +49,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, register, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

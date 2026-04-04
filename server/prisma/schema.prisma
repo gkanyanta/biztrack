@@ -7,19 +7,39 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  products        Product[]
+  sales           Sale[]
+  customers       Customer[]
+  expenses        Expense[]
+  shippingRates   ShippingRate[]
+  settings        Setting[]
+  stockLogs       StockLog[]
+  orderStatusLogs OrderStatusLog[]
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
   password  String
   name      String
   role      String   @default("admin")
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
 }
 
 model Product {
   id           String     @id @default(cuid())
   name         String
-  sku          String     @unique
+  sku          String
   description  String?
   category     String?
   costPrice    Decimal    @db.Decimal(10, 2)
@@ -29,10 +49,14 @@ model Product {
   supplier     String?
   imageUrl     String?
   isActive     Boolean    @default(true)
+  companyId    String
+  company      Company    @relation(fields: [companyId], references: [id])
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   sales        Sale[]
   stockLogs    StockLog[]
+
+  @@unique([companyId, sku])
 }
 
 model StockLog {
@@ -42,12 +66,14 @@ model StockLog {
   change    Int
   reason    String
   saleId    String?
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
 }
 
 model Sale {
   id              String           @id @default(cuid())
-  orderNumber     String           @unique
+  orderNumber     String
   date            DateTime         @default(now())
   productId       String
   product         Product          @relation(fields: [productId], references: [id])
@@ -69,9 +95,13 @@ model Sale {
   customerCity    String?
   deliveryAddress String?
   notes           String?
+  companyId       String
+  company         Company          @relation(fields: [companyId], references: [id])
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   statusHistory   OrderStatusLog[]
+
+  @@unique([companyId, orderNumber])
 }
 
 model OrderStatusLog {
@@ -80,6 +110,8 @@ model OrderStatusLog {
   sale       Sale     @relation(fields: [saleId], references: [id])
   fromStatus String
   toStatus   String
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id])
   createdAt  DateTime @default(now())
 }
 
@@ -92,6 +124,8 @@ model Customer {
   email     String?
   source    String?
   notes     String?
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
   sales     Sale[]
 }
@@ -106,18 +140,28 @@ model Expense {
   isRecurring   Boolean  @default(false)
   frequency     String?
   notes         String?
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id])
   createdAt     DateTime @default(now())
 }
 
 model ShippingRate {
-  id     String  @id @default(cuid())
-  city   String  @unique
-  region String?
-  rate   Decimal @db.Decimal(10, 2)
+  id        String  @id @default(cuid())
+  city      String
+  region    String?
+  rate      Decimal @db.Decimal(10, 2)
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, city])
 }
 
 model Setting {
-  id    String @id @default(cuid())
-  key   String @unique
-  value String
+  id        String  @id @default(cuid())
+  key       String
+  value     String
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, key])
 }
