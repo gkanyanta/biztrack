@@ -188,11 +188,13 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {g.reinvestment.avgProfitPerSale > 0 && (
+              {g.reinvestment.avgProfitPerSale > 0 && data.savings && (
                 <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-xs text-amber-800">
-                    <strong>Rule of thumb:</strong> For every sale, put {formatMoney(g.reinvestment.perSale)} back into ads + inventory.
-                    Take home {formatMoney(Math.max(0, g.reinvestment.avgProfitPerSale - g.reinvestment.perSale))} as profit.
+                    <strong>Rule of thumb:</strong> For every sale averaging {formatMoney(g.reinvestment.avgProfitPerSale)} profit
+                    — save {formatMoney(g.reinvestment.avgProfitPerSale * data.savings.rate)} (25%),
+                    reinvest {formatMoney(g.reinvestment.perSale)} into ads + inventory,
+                    and take home {formatMoney(Math.max(0, g.reinvestment.avgProfitPerSale - (g.reinvestment.avgProfitPerSale * data.savings.rate) - g.reinvestment.perSale))}.
                   </p>
                 </div>
               )}
