@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getDashboard } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap } from 'react-icons/fi';
+import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave } from 'react-icons/fi';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend
@@ -94,6 +94,64 @@ export default function Dashboard() {
             <div>
               <span className="text-blue-200">Current daily rate</span>
               <p className="font-semibold">{formatMoney(g.dailyRevenueRate)}/day</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Daily Savings Guide */}
+      {data.savings && (
+        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 rounded-xl p-5 text-white shadow-lg">
+          <div className="flex items-center gap-2 mb-4">
+            <FiSave size={20} />
+            <h3 className="font-bold text-lg">Daily Savings Guide</h3>
+            <span className="ml-auto text-emerald-200 text-xs font-medium bg-white/15 px-2 py-1 rounded-full">
+              {(data.savings.rate * 100).toFixed(0)}% of gross profit
+            </span>
+          </div>
+
+          {/* Today's breakdown */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="bg-white/15 rounded-lg p-3">
+              <p className="text-emerald-100 text-xs">Today's Revenue</p>
+              <p className="text-xl font-bold">{formatMoney(data.savings.today.revenue)}</p>
+              <p className="text-emerald-200 text-xs">{data.savings.today.orders} orders</p>
+            </div>
+            <div className="bg-white/15 rounded-lg p-3">
+              <p className="text-emerald-100 text-xs">Today's Gross Profit</p>
+              <p className="text-xl font-bold">{formatMoney(data.savings.today.grossProfit)}</p>
+            </div>
+            <div className="bg-white/20 rounded-lg p-3 ring-2 ring-white/30">
+              <p className="text-emerald-100 text-xs font-medium">Save Today</p>
+              <p className="text-2xl font-bold">{formatMoney(data.savings.today.savings)}</p>
+              <p className="text-emerald-200 text-xs">put aside</p>
+            </div>
+            <div className="bg-white/15 rounded-lg p-3">
+              <p className="text-emerald-100 text-xs">Reinvest Today</p>
+              <p className="text-xl font-bold">{formatMoney(data.savings.today.reinvest)}</p>
+              <p className="text-emerald-200 text-xs">back into business</p>
+            </div>
+          </div>
+
+          {/* Monthly summary */}
+          <div className="bg-white/10 rounded-lg p-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <span className="text-emerald-200">This Month Profit</span>
+                <p className="font-semibold text-sm">{formatMoney(data.savings.thisMonth.grossProfit)}</p>
+              </div>
+              <div>
+                <span className="text-emerald-200">Total Saved This Month</span>
+                <p className="font-semibold text-sm">{formatMoney(data.savings.thisMonth.totalSavings)}</p>
+              </div>
+              <div>
+                <span className="text-emerald-200">Total Reinvested</span>
+                <p className="font-semibold text-sm">{formatMoney(data.savings.thisMonth.totalReinvest)}</p>
+              </div>
+              <div>
+                <span className="text-emerald-200">Avg Daily Savings</span>
+                <p className="font-semibold text-sm">{formatMoney(data.savings.avgDailySavings)}/day</p>
+              </div>
             </div>
           </div>
         </div>

@@ -446,6 +446,41 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const reinvestPerSale = thisMonthOrders > 0 ? totalReinvestmentNeeded / (thisMonthOrders * 3) : 0;
     const reinvestPercentOfProfit = avgProfitPerSale > 0 ? (reinvestPerSale / avgProfitPerSale) * 100 : 0;
 
+    // ---- DAILY SAVINGS (25% of daily gross profit) ----
+    const SAVINGS_RATE = 0.25;
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const todaySales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } } });
+    const todayRevenue = todaySales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const todayCOGS = todaySales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const todayShippingCost = todaySales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
+    const todayGrossProfit = todayRevenue - todayCOGS - todayShippingCost;
+    const todaySavings = Math.max(0, todayGrossProfit * SAVINGS_RATE);
+    const todayReinvest = Math.max(0, todayGrossProfit - todaySavings);
+
+    // Monthly savings totals
+    const thisMonthShippingCost = thisMonthSales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
+    const thisMonthGrossProfit = thisMonthRevenue - thisMonthCOGS - thisMonthShippingCost;
+    const thisMonthSavings = Math.max(0, thisMonthGrossProfit * SAVINGS_RATE);
+
+    const savings = {
+      rate: SAVINGS_RATE,
+      today: {
+        revenue: todayRevenue,
+        grossProfit: todayGrossProfit,
+        savings: todaySavings,
+        reinvest: todayReinvest,
+        orders: todaySales.length
+      },
+      thisMonth: {
+        grossProfit: thisMonthGrossProfit,
+        totalSavings: thisMonthSavings,
+        totalReinvest: Math.max(0, thisMonthGrossProfit - thisMonthSavings),
+        daysWithSales: [...new Set(thisMonthSales.map(s => s.date.toISOString().slice(0, 10)))].length
+      },
+      avgDailySavings: dayOfMonth > 0 ? thisMonthSavings / dayOfMonth : 0
+    };
+
     const growth = {
       thisMonthRevenue, thisMonthOrders, lastMonthRevenue, lastMonthOrders,
       dailyRevenueRate, projectedMonthRevenue, projectedMonthOrders,
@@ -462,7 +497,7 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
       }
     };
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth });
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth, savings });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -109,6 +109,46 @@ router.get('/', async (req, res) => {
       where: { status: { in: ['Pending', 'Confirmed'] } }
     });
 
+    // ---- DAILY SAVINGS (25% of daily gross profit) ----
+    const now = new Date();
+    const SAVINGS_RATE = 0.25;
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const todaySales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } } });
+    const todayRevenue = todaySales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const todayCOGS = todaySales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const todayShippingCost = todaySales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
+    const todayGrossProfit = todayRevenue - todayCOGS - todayShippingCost;
+    const todaySavings = Math.max(0, todayGrossProfit * SAVINGS_RATE);
+    const todayReinvest = Math.max(0, todayGrossProfit - todaySavings);
+
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart);
+    const thisMonthRevenue = thisMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const thisMonthShippingCost = thisMonthSales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
+    const thisMonthGrossProfit = thisMonthRevenue - thisMonthCOGS - thisMonthShippingCost;
+    const thisMonthSavingsTotal = Math.max(0, thisMonthGrossProfit * SAVINGS_RATE);
+    const dayOfMonth = now.getDate();
+
+    const savings = {
+      rate: SAVINGS_RATE,
+      today: {
+        revenue: todayRevenue,
+        grossProfit: todayGrossProfit,
+        savings: todaySavings,
+        reinvest: todayReinvest,
+        orders: todaySales.length
+      },
+      thisMonth: {
+        grossProfit: thisMonthGrossProfit,
+        totalSavings: thisMonthSavingsTotal,
+        totalReinvest: Math.max(0, thisMonthGrossProfit - thisMonthSavingsTotal),
+        daysWithSales: [...new Set(thisMonthSales.map(s => s.date.toISOString().slice(0, 10)))].length
+      },
+      avgDailySavings: dayOfMonth > 0 ? thisMonthSavingsTotal / dayOfMonth : 0
+    };
+
     res.json({
       totalRevenue,
       totalCOGS,
@@ -124,7 +164,8 @@ router.get('/', async (req, res) => {
       expenseByCategory,
       topProducts,
       lowStockProducts,
-      pendingOrders
+      pendingOrders,
+      savings
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
