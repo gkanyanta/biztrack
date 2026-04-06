@@ -25,6 +25,7 @@ app.use('/api/v1/shipping-rates', require('./routes/shippingRates'));
 app.use('/api/v1/dashboard', require('./routes/dashboard'));
 app.use('/api/v1/reports', require('./routes/reports'));
 app.use('/api/v1/settings', require('./routes/settings'));
+app.use('/api/v1/inventory', require('./routes/inventory'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

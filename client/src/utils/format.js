@@ -66,3 +66,4 @@ export const ORDER_STATUSES = ['Pending', 'Confirmed', 'Shipped', 'Delivered', '
 export const PAYMENT_STATUSES = ['Unpaid', 'Partial', 'Paid'];
 export const PAYMENT_METHODS = ['Mobile Money', 'Cash', 'Bank Transfer', 'Other'];
 export const SOURCES = ['Facebook Ad', 'WhatsApp', 'Referral', 'Repeat Customer', 'Other'];
+export const PAYMENT_TYPES = ['Cash', 'Credit'];

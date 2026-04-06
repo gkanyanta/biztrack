@@ -3,14 +3,16 @@ import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard
 } from 'react-icons/fi';
 
 const navItems = [
   { path: '/', icon: FiHome, label: 'Dashboard' },
   { path: '/products', icon: FiPackage, label: 'Products' },
+  { path: '/inventory', icon: FiClipboard, label: 'Inventory' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
+  { path: '/credit', icon: FiCreditCard, label: 'Credit' },
   { path: '/customers', icon: FiUsers, label: 'Customers' },
   { path: '/shipping', icon: FiTruck, label: 'Shipping' },
   { path: '/reports', icon: FiBarChart2, label: 'Reports' },
@@ -30,7 +32,7 @@ export default function Layout() {
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-white transform transition-transform lg:relative lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-white transform transition-transform lg:relative lg:translate-x-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div>
             <h1 className="text-xl font-bold text-white">BizTrack</h1>
@@ -41,7 +43,7 @@ export default function Layout() {
           </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           {navItems.map(item => {
             const isActive = location.pathname === item.path ||
               (item.path !== '/' && location.pathname.startsWith(item.path));

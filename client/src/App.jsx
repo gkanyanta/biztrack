@@ -12,6 +12,8 @@ import Customers from './pages/Customers';
 import Shipping from './pages/Shipping';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
+import CreditTracker from './pages/CreditTracker';
+import Inventory from './pages/Inventory';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -33,6 +35,8 @@ function AppRoutes() {
         <Route path="expenses" element={<Expenses />} />
         <Route path="customers" element={<Customers />} />
         <Route path="shipping" element={<Shipping />} />
+        <Route path="credit" element={<CreditTracker />} />
+        <Route path="inventory" element={<Inventory />} />
         <Route path="reports" element={<Reports />} />
         <Route path="settings" element={<Settings />} />
       </Route>

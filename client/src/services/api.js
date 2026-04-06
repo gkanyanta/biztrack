@@ -46,6 +46,11 @@ export const createSale = (data) => api.post('/sales', data);
 export const updateSale = (id, data) => api.put(`/sales/${id}`, data);
 export const updateSaleStatus = (id, status) => api.put(`/sales/${id}/status`, { status });
 export const deleteSale = (id) => api.delete(`/sales/${id}`);
+export const recordCreditPayment = (saleId, data) => api.post(`/sales/${saleId}/payments`, data);
+export const getCreditPayments = (saleId) => api.get(`/sales/${saleId}/payments`);
+export const getCreditSummary = () => api.get('/sales/credit/summary');
+export const sendReminder = (saleId, data) => api.post(`/sales/${saleId}/reminders`, data);
+export const getSaleReceipt = (id) => api.get(`/sales/${id}/receipt`);
 
 // Expenses
 export const getExpenses = (params) => api.get('/expenses', { params });
@@ -79,6 +84,9 @@ export const exportCSV = (type, params) => api.get('/reports/export/csv', {
   params: { type, ...params },
   responseType: type === 'pnl' ? 'blob' : 'text'
 });
+
+// Inventory
+export const getInventory = (params) => api.get('/inventory', { params });
 
 // Settings
 export const getSettings = () => api.get('/settings');

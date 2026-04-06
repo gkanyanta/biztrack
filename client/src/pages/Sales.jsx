@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
-import { getSales, createSale, updateSale, updateSaleStatus, deleteSale, getProducts, getShippingRates } from '../services/api';
-import { formatMoney, formatDate, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_METHODS, SOURCES } from '../utils/format';
+import { getSales, createSale, updateSale, updateSaleStatus, deleteSale, getProducts, getShippingRates, recordCreditPayment, getSale } from '../services/api';
+import { formatMoney, formatDate, formatDateTime, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_METHODS, SOURCES, PAYMENT_TYPES } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge, PaymentBadge } from '../components/StatusBadge';
+import ReceiptButton from '../components/ReceiptButton';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign } from 'react-icons/fi';
 
 export default function Sales() {
   const [sales, setSales] = useState([]);
@@ -25,8 +26,11 @@ export default function Sales() {
   const emptyForm = {
     productId: '', qty: '1', unitPrice: '', customerName: '', customerPhone: '',
     customerCity: '', deliveryAddress: '', shippingCost: '', shippingCharge: '',
-    discount: '0', paymentMethod: '', paymentStatus: 'Unpaid', source: '', notes: '', date: ''
+    discount: '0', paymentMethod: '', paymentStatus: 'Unpaid', source: '', notes: '', date: '',
+    paymentType: 'Cash', amountPaid: '', creditDueDate: '', creditNotes: ''
   };
+  const [creditPaymentForm, setCreditPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
   const loadSales = () => {
@@ -63,7 +67,9 @@ export default function Sales() {
       shippingCost: sale.shippingCost, shippingCharge: sale.shippingCharge,
       discount: sale.discount, paymentMethod: sale.paymentMethod || '',
       paymentStatus: sale.paymentStatus, source: sale.source || '', notes: sale.notes || '',
-      date: sale.date ? sale.date.slice(0, 10) : ''
+      date: sale.date ? sale.date.slice(0, 10) : '',
+      paymentType: sale.paymentType || 'Cash', amountPaid: sale.amountPaid || '',
+      creditDueDate: sale.creditDueDate ? sale.creditDueDate.slice(0, 10) : '', creditNotes: sale.creditNotes || ''
     });
     setShowForm(true);
   };
@@ -83,6 +89,7 @@ export default function Sales() {
         shippingCost: parseFloat(form.shippingCost) || 0,
         shippingCharge: parseFloat(form.shippingCharge) || 0,
         discount: parseFloat(form.discount) || 0,
+        amountPaid: parseFloat(form.amountPaid) || 0,
       };
       if (data.date) data.date = new Date(data.date).toISOString();
       if (editing) {
@@ -119,6 +126,34 @@ export default function Sales() {
       loadSales();
     } catch {
       toast.error('Error deleting sale');
+    }
+  };
+
+  const handleRecordPayment = async (e) => {
+    e.preventDefault();
+    try {
+      const { data } = await recordCreditPayment(showDetail.id, {
+        amount: parseFloat(creditPaymentForm.amount),
+        paymentMethod: creditPaymentForm.paymentMethod || null,
+        reference: creditPaymentForm.reference || null,
+        notes: creditPaymentForm.notes || null,
+      });
+      toast.success('Payment recorded');
+      setShowDetail(data);
+      setShowPaymentForm(false);
+      setCreditPaymentForm({ amount: '', paymentMethod: '', reference: '', notes: '' });
+      loadSales();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error recording payment');
+    }
+  };
+
+  const openDetail = async (sale) => {
+    try {
+      const { data } = await getSale(sale.id);
+      setShowDetail(data);
+    } catch {
+      setShowDetail(sale);
     }
   };
 
@@ -244,7 +279,8 @@ export default function Sales() {
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex gap-1 justify-end">
-                        <button onClick={() => setShowDetail(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEye size={15} /></button>
+                        <ReceiptButton saleId={s.id} size={15} className="p-1.5" />
+                        <button onClick={() => openDetail(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEye size={15} /></button>
                         <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={15} /></button>
                         <button onClick={() => setDeleteConfirm(s)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>
                       </div>
@@ -347,12 +383,44 @@ export default function Sales() {
               </select>
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Type</label>
+              <div className="flex gap-2">
+                {PAYMENT_TYPES.map(t => (
+                  <button key={t} type="button" onClick={() => setForm({...form, paymentType: t, paymentStatus: t === 'Cash' ? 'Unpaid' : form.paymentStatus})}
+                    className={`flex-1 py-2 text-sm rounded-lg border transition-colors ${form.paymentType === t ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Status</label>
               <select value={form.paymentStatus} onChange={e => setForm({...form, paymentStatus: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
                 {PAYMENT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            {form.paymentType === 'Credit' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Initial Deposit</label>
+                  <input type="number" step="0.01" min="0" value={form.amountPaid} onChange={e => setForm({...form, amountPaid: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+                  <input type="date" value={form.creditDueDate} onChange={e => setForm({...form, creditDueDate: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Credit Notes</label>
+                  <input type="text" value={form.creditNotes} onChange={e => setForm({...form, creditNotes: e.target.value})}
+                    placeholder="e.g. Will pay after payday"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
               <select value={form.source} onChange={e => setForm({...form, source: e.target.value})}
@@ -385,25 +453,88 @@ export default function Sales() {
       </Modal>
 
       {/* Sale Detail Modal */}
-      <Modal isOpen={!!showDetail} onClose={() => setShowDetail(null)} title={`Order ${showDetail?.orderNumber}`} size="md">
+      <Modal isOpen={!!showDetail} onClose={() => { setShowDetail(null); setShowPaymentForm(false); }} title={`Order ${showDetail?.orderNumber}`} size="lg">
         {showDetail && (
           <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-2 gap-3">
-              <div><span className="text-gray-500">Product:</span> <span className="font-medium">{showDetail.product?.name}</span></div>
-              <div><span className="text-gray-500">Qty:</span> <span className="font-medium">{showDetail.qty}</span></div>
-              <div><span className="text-gray-500">Unit Price:</span> <span className="font-medium">{formatMoney(showDetail.unitPrice)}</span></div>
-              <div><span className="text-gray-500">Total:</span> <span className="font-medium">{formatMoney(showDetail.totalPrice)}</span></div>
-              <div><span className="text-gray-500">Cost Price:</span> <span className="font-medium">{formatMoney(showDetail.costPrice)}</span></div>
-              <div><span className="text-gray-500">Profit:</span> <span className={`font-medium ${calcProfit(showDetail) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(calcProfit(showDetail))}</span></div>
-              <div><span className="text-gray-500">Shipping Cost:</span> {formatMoney(showDetail.shippingCost)}</div>
-              <div><span className="text-gray-500">Shipping Charge:</span> {formatMoney(showDetail.shippingCharge)}</div>
-              <div><span className="text-gray-500">Customer:</span> {showDetail.customerName || '-'}</div>
-              <div><span className="text-gray-500">Phone:</span> {showDetail.customerPhone || '-'}</div>
-              <div><span className="text-gray-500">City:</span> {showDetail.customerCity || '-'}</div>
-              <div><span className="text-gray-500">Source:</span> {showDetail.source || '-'}</div>
-              <div><span className="text-gray-500">Status:</span> <StatusBadge status={showDetail.status} /></div>
-              <div><span className="text-gray-500">Payment:</span> <PaymentBadge status={showDetail.paymentStatus} /></div>
+            <div className="flex justify-between items-start">
+              <div className="grid grid-cols-2 gap-3 flex-1">
+                <div><span className="text-gray-500">Product:</span> <span className="font-medium">{showDetail.product?.name}</span></div>
+                <div><span className="text-gray-500">Qty:</span> <span className="font-medium">{showDetail.qty}</span></div>
+                <div><span className="text-gray-500">Unit Price:</span> <span className="font-medium">{formatMoney(showDetail.unitPrice)}</span></div>
+                <div><span className="text-gray-500">Total:</span> <span className="font-medium">{formatMoney(showDetail.totalPrice)}</span></div>
+                <div><span className="text-gray-500">Cost Price:</span> <span className="font-medium">{formatMoney(showDetail.costPrice)}</span></div>
+                <div><span className="text-gray-500">Profit:</span> <span className={`font-medium ${calcProfit(showDetail) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(calcProfit(showDetail))}</span></div>
+                <div><span className="text-gray-500">Shipping Cost:</span> {formatMoney(showDetail.shippingCost)}</div>
+                <div><span className="text-gray-500">Shipping Charge:</span> {formatMoney(showDetail.shippingCharge)}</div>
+                <div><span className="text-gray-500">Customer:</span> {showDetail.customerName || '-'}</div>
+                <div><span className="text-gray-500">Phone:</span> {showDetail.customerPhone || '-'}</div>
+                <div><span className="text-gray-500">City:</span> {showDetail.customerCity || '-'}</div>
+                <div><span className="text-gray-500">Source:</span> {showDetail.source || '-'}</div>
+                <div><span className="text-gray-500">Status:</span> <StatusBadge status={showDetail.status} /></div>
+                <div><span className="text-gray-500">Payment:</span> <PaymentBadge status={showDetail.paymentStatus} /> <span className="text-gray-400 ml-1">({showDetail.paymentType})</span></div>
+              </div>
+              <ReceiptButton saleId={showDetail.id} size={20} className="ml-3 p-2 bg-blue-50 rounded-lg hover:bg-blue-100" />
             </div>
+
+            {showDetail.paymentType === 'Credit' && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold text-amber-800">Credit Details</h4>
+                  {showDetail.paymentStatus !== 'Paid' && (
+                    <button onClick={() => setShowPaymentForm(!showPaymentForm)}
+                      className="text-xs bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 flex items-center gap-1">
+                      <FiDollarSign size={12} /> Record Payment
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-amber-700">Amount Paid:</span> <span className="font-medium">{formatMoney(showDetail.amountPaid)}</span></div>
+                  <div><span className="text-amber-700">Balance:</span> <span className="font-bold text-red-600">{formatMoney(parseFloat(showDetail.totalPrice) - parseFloat(showDetail.amountPaid))}</span></div>
+                  {showDetail.creditDueDate && (
+                    <div><span className="text-amber-700">Due Date:</span> <span className={`font-medium ${new Date(showDetail.creditDueDate) < new Date() && showDetail.paymentStatus !== 'Paid' ? 'text-red-600' : ''}`}>{formatDate(showDetail.creditDueDate)}</span></div>
+                  )}
+                  {showDetail.creditNotes && <div className="col-span-2"><span className="text-amber-700">Notes:</span> {showDetail.creditNotes}</div>}
+                </div>
+
+                {showPaymentForm && (
+                  <form onSubmit={handleRecordPayment} className="mt-3 pt-3 border-t border-amber-200 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="number" step="0.01" min="0.01" required placeholder="Amount *"
+                        value={creditPaymentForm.amount} onChange={e => setCreditPaymentForm({...creditPaymentForm, amount: e.target.value})}
+                        className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                      <select value={creditPaymentForm.paymentMethod} onChange={e => setCreditPaymentForm({...creditPaymentForm, paymentMethod: e.target.value})}
+                        className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none">
+                        <option value="">Method</option>
+                        {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                    <input type="text" placeholder="Reference (optional)"
+                      value={creditPaymentForm.reference} onChange={e => setCreditPaymentForm({...creditPaymentForm, reference: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                    <div className="flex gap-2 justify-end">
+                      <button type="button" onClick={() => setShowPaymentForm(false)} className="px-3 py-1 text-xs border rounded-lg hover:bg-gray-50">Cancel</button>
+                      <button type="submit" className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700">Save Payment</button>
+                    </div>
+                  </form>
+                )}
+
+                {showDetail.creditPayments?.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-amber-200">
+                    <h5 className="text-xs font-semibold text-amber-700 mb-2">Payment History</h5>
+                    <div className="space-y-1">
+                      {showDetail.creditPayments.map(p => (
+                        <div key={p.id} className="flex justify-between text-xs bg-white rounded px-2 py-1.5">
+                          <span>{formatDateTime(p.createdAt)}</span>
+                          <span className="text-gray-500">{p.paymentMethod || ''}</span>
+                          <span className="font-medium text-green-700">+{formatMoney(p.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {showDetail.notes && <div><span className="text-gray-500">Notes:</span> {showDetail.notes}</div>}
           </div>
         )}
