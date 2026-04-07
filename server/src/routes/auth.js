@@ -51,6 +51,10 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
+    if (user.company && !user.company.isActive) {
+      return res.status(403).json({ error: 'Your company account has been suspended. Contact the system administrator.' });
+    }
+
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, companyId: user.companyId },
       process.env.JWT_SECRET,

@@ -93,6 +93,11 @@ export const getSuperadminStats = () => api.get('/superadmin/stats');
 export const getCompanies = () => api.get('/superadmin/companies');
 export const getCompanyDetail = (id) => api.get(`/superadmin/companies/${id}`);
 export const createCompanyAdmin = (data) => api.post('/superadmin/companies', data);
+export const updateCompany = (id, data) => api.put(`/superadmin/companies/${id}`, data);
+export const toggleCompanyStatus = (id) => api.put(`/superadmin/companies/${id}/toggle-status`);
+export const deleteCompany = (id) => api.delete(`/superadmin/companies/${id}`);
+export const uploadCompanyLogo = (id, logo) => api.put(`/superadmin/companies/${id}/logo`, { logo });
+export const addCompanyUser = (id, data) => api.post(`/superadmin/companies/${id}/users`, data);
 export const resetAdminPassword = (userId, data) => api.post(`/superadmin/users/${userId}/reset-password`, data);
 
 // Settings

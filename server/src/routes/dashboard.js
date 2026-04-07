@@ -49,8 +49,52 @@ router.get('/', async (req, res) => {
     const lowStockProducts = lowStock.filter(p => p.stock <= p.reorderLevel);
     const pendingOrders = await prisma.sale.count({ where: { companyId, status: { in: ['Pending', 'Confirmed'] } } });
 
-    // ---- DAILY SAVINGS (25% of daily gross profit) ----
+    // ---- GROWTH TRACKER ----
     const now = new Date();
+    const thisMonthStart2 = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+    const lastMonthSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } } });
+    const lastMonthRevenue = lastMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const lastMonthOrders = lastMonthSales.length;
+
+    const currentMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart2);
+    const thisMonthRevenue2 = currentMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const thisMonthOrders = currentMonthSales.length;
+    const thisMonthCOGS2 = currentMonthSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+
+    const growthTarget = lastMonthRevenue * 3;
+    const growthProgress = growthTarget > 0 ? (thisMonthRevenue2 / growthTarget) * 100 : 0;
+    const remainingToTarget = Math.max(0, growthTarget - thisMonthRevenue2);
+    const dayOfMonth2 = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysLeft = daysInMonth - dayOfMonth2;
+    const dailyRevenueRate = dayOfMonth2 > 0 ? thisMonthRevenue2 / dayOfMonth2 : 0;
+    const dailyTargetNeeded = daysLeft > 0 ? remainingToTarget / daysLeft : remainingToTarget;
+    const projectedMonthRevenue = dailyRevenueRate * daysInMonth;
+    const projectedMonthOrders = dayOfMonth2 > 0 ? Math.round((thisMonthOrders / dayOfMonth2) * daysInMonth) : 0;
+
+    const avgProfitPerSale = thisMonthOrders > 0 ? (thisMonthRevenue2 - thisMonthCOGS2) / thisMonthOrders : 0;
+    const currentRoas = adSpend > 0 ? totalRevenue / adSpend : 2;
+    const monthlyAdBudget = growthTarget > 0 ? growthTarget / Math.max(currentRoas, 1) : 0;
+    const avgCostPerItem = thisMonthOrders > 0 ? thisMonthCOGS2 / thisMonthOrders : 0;
+    const monthlyInventory = avgCostPerItem * thisMonthOrders * 3;
+    const totalMonthlyReinvestment = monthlyAdBudget + monthlyInventory;
+    const reinvestmentPerSale = thisMonthOrders > 0 ? totalMonthlyReinvestment / (thisMonthOrders * 3) : 0;
+    const percentOfProfit = avgProfitPerSale > 0 ? (reinvestmentPerSale / avgProfitPerSale) * 100 : 0;
+
+    const growth = {
+      thisMonthRevenue: thisMonthRevenue2, thisMonthOrders, lastMonthRevenue, lastMonthOrders,
+      growthTarget, growthProgress: Math.min(growthProgress, 100), remainingToTarget, dailyTargetNeeded, daysLeft,
+      dailyRevenueRate, projectedMonthRevenue, projectedMonthOrders,
+      reinvestment: {
+        perSale: reinvestmentPerSale, avgProfitPerSale, percentOfProfit, roas: currentRoas,
+        monthlyAdBudget, monthlyInventory, totalMonthly: totalMonthlyReinvestment,
+      },
+    };
+
+    // ---- DAILY SAVINGS (25% of daily gross profit) ----
     const SAVINGS_RATE = 0.25;
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
@@ -78,7 +122,7 @@ router.get('/', async (req, res) => {
       avgDailySavings: dayOfMonth > 0 ? thisMonthSavingsTotal / dayOfMonth : 0
     };
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, savings });
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth, savings });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

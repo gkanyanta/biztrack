@@ -1,5 +1,10 @@
 node_modules/
 dist/
 .env
+.env.production
 .vercel
 *.log
+*.dump
+*.sql
+local_backup_*.json
+neon_backup_*.json
