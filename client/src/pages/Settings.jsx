@@ -13,10 +13,18 @@ export default function Settings() {
     getSettings().then(res => setSettings(res.data)).finally(() => setLoading(false));
   }, []);
 
+  const [logoChanged, setLogoChanged] = useState(false);
+
   const handleSave = async () => {
     try {
-      const res = await updateSettings(settings);
-      setSettings(res.data);
+      // Save text settings (exclude logo to avoid payload size issues)
+      const { companyLogo, ...textSettings } = settings;
+      await updateSettings(textSettings);
+      // Save logo separately only if it changed
+      if (logoChanged) {
+        await updateSettings({ companyLogo: companyLogo || '' });
+        setLogoChanged(false);
+      }
       toast.success('Settings saved');
     } catch { toast.error('Error saving settings'); }
   };
@@ -35,12 +43,14 @@ export default function Settings() {
     const reader = new FileReader();
     reader.onload = () => {
       setSettings({ ...settings, companyLogo: reader.result });
+      setLogoChanged(true);
     };
     reader.readAsDataURL(file);
   };
 
   const removeLogo = () => {
     setSettings({ ...settings, companyLogo: '' });
+    setLogoChanged(true);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
