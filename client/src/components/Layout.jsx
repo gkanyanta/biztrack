@@ -3,10 +3,10 @@ import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield
 } from 'react-icons/fi';
 
-const navItems = [
+const adminNavItems = [
   { path: '/', icon: FiHome, label: 'Dashboard' },
   { path: '/products', icon: FiPackage, label: 'Products' },
   { path: '/inventory', icon: FiClipboard, label: 'Inventory' },
@@ -19,10 +19,15 @@ const navItems = [
   { path: '/settings', icon: FiSettings, label: 'Settings' },
 ];
 
+const superadminNavItems = [
+  { path: '/superadmin', icon: FiShield, label: 'Admin Panel' },
+];
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const navItems = user?.role === 'superadmin' ? superadminNavItems : adminNavItems;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -36,7 +41,9 @@ export default function Layout() {
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div>
             <h1 className="text-xl font-bold text-white">BizTrack</h1>
-            {user?.companyName && <p className="text-xs text-gray-400 truncate">{user.companyName}</p>}
+            {user?.role === 'superadmin'
+            ? <p className="text-xs text-gray-400">System Admin</p>
+            : user?.companyName && <p className="text-xs text-gray-400 truncate">{user.companyName}</p>}
           </div>
           <button className="lg:hidden text-gray-400 hover:text-white" onClick={() => setSidebarOpen(false)}>
             <FiX size={20} />

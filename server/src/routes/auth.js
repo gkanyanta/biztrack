@@ -59,7 +59,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company.name }
+      user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -74,7 +74,7 @@ router.get('/me', require('../middleware/auth').authenticate, async (req, res) =
       include: { company: true }
     });
     if (!user) return res.status(401).json({ error: 'User not found' });
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company.name });
+    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

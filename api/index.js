@@ -31,6 +31,13 @@ function authenticate(req, res, next) {
   }
 }
 
+function requireSuperadmin(req, res, next) {
+  if (req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin access required' });
+  }
+  next();
+}
+
 // ---- AUTH ----
 app.post('/api/v1/auth/register', async (req, res) => {
   try {
@@ -76,7 +83,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, companyId: user.companyId }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company.name } });
+    res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -84,7 +91,7 @@ app.get('/api/v1/auth/me', authenticate, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user.id }, include: { company: true } });
     if (!user) return res.status(401).json({ error: 'User not found' });
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company.name });
+    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -933,6 +940,83 @@ app.put('/api/v1/settings', authenticate, async (req, res) => {
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const obj = {}; settings.forEach(s => { obj[s.key] = s.value; });
     res.json(obj);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---- SUPERADMIN ----
+app.get('/api/v1/superadmin/stats', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const totalCompanies = await prisma.company.count();
+    const totalUsers = await prisma.user.count({ where: { role: 'admin' } });
+    const newestCompany = await prisma.company.findFirst({ orderBy: { createdAt: 'desc' } });
+    res.json({ totalCompanies, totalUsers, newestCompany });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/v1/superadmin/companies', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const companies = await prisma.company.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { users: true, products: true, sales: true } } },
+    });
+    res.json(companies);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const company = await prisma.company.findUnique({
+      where: { id: req.params.id },
+      include: {
+        users: { select: { id: true, username: true, name: true, role: true, createdAt: true } },
+        _count: { select: { products: true, sales: true, customers: true, expenses: true } },
+      },
+    });
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+    res.json(company);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/v1/superadmin/companies', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const { companyName, username, password, name } = req.body;
+    if (!companyName || !username || !password || !name) {
+      return res.status(400).json({ error: 'Company name, username, password, and name are required' });
+    }
+    const slug = companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const existing = await prisma.company.findUnique({ where: { slug } });
+    if (existing) return res.status(400).json({ error: 'A company with a similar name already exists' });
+    const existingUser = await prisma.user.findUnique({ where: { username } });
+    if (existingUser) return res.status(400).json({ error: 'Username already taken' });
+
+    const company = await prisma.company.create({ data: { name: companyName, slug } });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({ data: { username, password: hashed, name, role: 'admin', companyId: company.id } });
+
+    const defaults = [
+      { key: 'currency', value: 'ZMW', companyId: company.id },
+      { key: 'businessName', value: companyName, companyId: company.id },
+      { key: 'currencySymbol', value: 'K', companyId: company.id },
+    ];
+    for (const s of defaults) { await prisma.setting.create({ data: s }); }
+
+    res.status(201).json({ company, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/v1/superadmin/users/:id/reset-password', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'superadmin') return res.status(403).json({ error: 'Cannot reset superadmin password from here' });
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({ where: { id: req.params.id }, data: { password: hashed } });
+    res.json({ message: 'Password reset successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

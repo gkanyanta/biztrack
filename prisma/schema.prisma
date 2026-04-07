@@ -33,8 +33,8 @@ model User {
   password  String
   name      String
   role      String   @default("admin")
-  companyId String
-  company   Company  @relation(fields: [companyId], references: [id])
+  companyId String?
+  company   Company?  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
 }
 

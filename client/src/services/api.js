@@ -88,6 +88,13 @@ export const exportCSV = (type, params) => api.get('/reports/export/csv', {
 // Inventory
 export const getInventory = (params) => api.get('/inventory', { params });
 
+// Superadmin
+export const getSuperadminStats = () => api.get('/superadmin/stats');
+export const getCompanies = () => api.get('/superadmin/companies');
+export const getCompanyDetail = (id) => api.get(`/superadmin/companies/${id}`);
+export const createCompanyAdmin = (data) => api.post('/superadmin/companies', data);
+export const resetAdminPassword = (userId, data) => api.post(`/superadmin/users/${userId}/reset-password`, data);
+
 // Settings
 export const getSettings = () => api.get('/settings');
 export const updateSettings = (data) => api.put('/settings', data);

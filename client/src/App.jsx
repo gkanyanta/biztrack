@@ -14,11 +14,18 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import CreditTracker from './pages/CreditTracker';
 import Inventory from './pages/Inventory';
+import SuperadminPanel from './pages/SuperadminPanel';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
   return user ? children : <Navigate to="/login" />;
+}
+
+function DashboardRouter() {
+  const { user } = useAuth();
+  if (user?.role === 'superadmin') return <Navigate to="/superadmin" />;
+  return <Dashboard />;
 }
 
 function AppRoutes() {
@@ -29,7 +36,8 @@ function AppRoutes() {
       <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
-        <Route index element={<Dashboard />} />
+        <Route index element={<DashboardRouter />} />
+        <Route path="superadmin" element={<SuperadminPanel />} />
         <Route path="products" element={<Products />} />
         <Route path="sales" element={<Sales />} />
         <Route path="expenses" element={<Expenses />} />
