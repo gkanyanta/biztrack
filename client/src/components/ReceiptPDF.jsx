@@ -1,8 +1,10 @@
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: 'Helvetica' },
-  header: { marginBottom: 20, borderBottom: '1 solid #333', paddingBottom: 10 },
+  header: { marginBottom: 20, borderBottom: '1 solid #333', paddingBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  logo: { width: 60, height: 60, objectFit: 'contain' },
+  headerText: { flex: 1 },
   businessName: { fontSize: 18, fontWeight: 'bold', fontFamily: 'Helvetica-Bold' },
   receiptTitle: { fontSize: 14, marginTop: 4, color: '#555' },
   row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
@@ -55,8 +57,11 @@ export default function ReceiptPDF({ sale, settings = {} }) {
     <Document>
       <Page size="A4" style={styles.page}>
         <View style={styles.header}>
-          <Text style={styles.businessName}>{businessName}</Text>
-          <Text style={styles.receiptTitle}>RECEIPT / INVOICE</Text>
+          {settings.companyLogo && <Image style={styles.logo} src={settings.companyLogo} />}
+          <View style={styles.headerText}>
+            <Text style={styles.businessName}>{businessName}</Text>
+            <Text style={styles.receiptTitle}>RECEIPT / INVOICE</Text>
+          </View>
         </View>
 
         <View style={styles.section}>

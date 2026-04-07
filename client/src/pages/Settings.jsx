@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getSettings, updateSettings } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
+import { FiUpload, FiTrash2 } from 'react-icons/fi';
 
 export default function Settings() {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     getSettings().then(res => setSettings(res.data)).finally(() => setLoading(false));
@@ -19,6 +21,29 @@ export default function Settings() {
     } catch { toast.error('Error saving settings'); }
   };
 
+  const handleLogoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    if (file.size > 500 * 1024) {
+      toast.error('Logo must be under 500KB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSettings({ ...settings, companyLogo: reader.result });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removeLogo = () => {
+    setSettings({ ...settings, companyLogo: '' });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   if (loading) return <LoadingSpinner />;
 
   return (
@@ -26,6 +51,33 @@ export default function Settings() {
       <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Business Settings</h3>
         <div className="space-y-4">
+          {/* Company Logo */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Company Logo</label>
+            {settings.companyLogo ? (
+              <div className="flex items-start gap-4">
+                <img src={settings.companyLogo} alt="Company logo" className="h-20 w-20 object-contain rounded-lg border border-gray-200 bg-gray-50 p-1" />
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
+                    <FiUpload size={14} /> Change
+                  </button>
+                  <button onClick={removeLogo}
+                    className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-800">
+                    <FiTrash2 size={14} /> Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors w-full justify-center">
+                <FiUpload size={16} /> Upload Logo (max 500KB)
+              </button>
+            )}
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+            <p className="text-xs text-gray-400 mt-1">Appears on receipts and invoices. PNG or JPG recommended.</p>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Business Name</label>
             <input type="text" value={settings.businessName || ''}
