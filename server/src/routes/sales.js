@@ -3,6 +3,8 @@ const { authenticate } = require('../middleware/auth');
 
 router.use(authenticate);
 
+const saleInclude = { items: { include: { product: true } }, customer: true };
+
 // ---- CREDIT SUMMARY (must be before /:id routes) ----
 router.get('/credit/summary', async (req, res) => {
   try {
@@ -42,7 +44,7 @@ router.get('/', async (req, res) => {
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }, { customerPhone: { contains: search, mode: 'insensitive' } }]; }
-    const sales = await prisma.sale.findMany({ where, include: { product: true, customer: true }, orderBy: { createdAt: 'desc' } });
+    const sales = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
     res.json(sales);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -51,7 +53,7 @@ router.get('/:id', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { product: true, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     res.json(sale);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -62,15 +64,25 @@ router.post('/', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const data = req.body;
+    const items = data.items; // [{ productId, qty, unitPrice? }]
+    if (!items || !items.length) return res.status(400).json({ error: 'At least one item is required' });
 
-    const product = await prisma.product.findFirst({ where: { id: data.productId, companyId } });
-    if (!product) return res.status(400).json({ error: 'Product not found' });
+    // Validate products
+    const productIds = items.map(i => i.productId);
+    const products = await prisma.product.findMany({ where: { id: { in: productIds }, companyId } });
+    const productMap = {};
+    products.forEach(p => { productMap[p.id] = p; });
+    for (const item of items) {
+      if (!productMap[item.productId]) return res.status(400).json({ error: `Product not found: ${item.productId}` });
+    }
 
+    // Order number
     const lastSale = await prisma.sale.findFirst({ where: { companyId }, orderBy: { createdAt: 'desc' } });
     let nextNum = 1;
     if (lastSale) { const match = lastSale.orderNumber.match(/ORD-(\d+)/); if (match) nextNum = parseInt(match[1]) + 1; }
     const orderNumber = `ORD-${String(nextNum).padStart(4, '0')}`;
 
+    // Customer
     let customerId = data.customerId;
     if (!customerId && data.customerName) {
       let customer = null;
@@ -79,16 +91,26 @@ router.post('/', async (req, res) => {
       customerId = customer.id;
     }
 
+    // Shipping
     let shippingCost = parseFloat(data.shippingCost) || 0;
     if (data.customerCity && !data.shippingCost) {
       const rate = await prisma.shippingRate.findFirst({ where: { city: data.customerCity, companyId } });
       if (rate) shippingCost = parseFloat(rate.rate);
     }
 
-    const unitPrice = parseFloat(data.unitPrice) || parseFloat(product.sellingPrice);
-    const qty = parseInt(data.qty);
-    const totalPrice = qty * unitPrice;
+    // Calculate items totals
+    const saleItems = items.map(item => {
+      const product = productMap[item.productId];
+      const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
+      const qty = parseInt(item.qty);
+      return { productId: item.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice: qty * unitPrice };
+    });
+    const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
+    const discount = parseFloat(data.discount) || 0;
+    const shippingCharge = parseFloat(data.shippingCharge) || 0;
+    const totalPrice = itemsTotal + shippingCharge - discount;
 
+    // Payment
     const paymentType = data.paymentType || 'Cash';
     let amountPaid = parseFloat(data.amountPaid) || 0;
     if (paymentType === 'Cash' && (data.paymentStatus === 'Paid' || !data.paymentStatus)) amountPaid = totalPrice;
@@ -101,19 +123,23 @@ router.post('/', async (req, res) => {
 
     const sale = await prisma.sale.create({
       data: {
-        orderNumber, date: data.date ? new Date(data.date) : new Date(), productId: data.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice,
-        shippingCost, shippingCharge: parseFloat(data.shippingCharge) || 0, discount: parseFloat(data.discount) || 0,
+        orderNumber, date: data.date ? new Date(data.date) : new Date(),
+        totalPrice, shippingCost, shippingCharge, discount,
         status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
         paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
-        customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
-        companyId
+        customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null,
+        deliveryAddress: data.deliveryAddress || null, notes: data.notes || null, companyId,
+        items: { create: saleItems },
       },
-      include: { product: true, customer: true }
+      include: saleInclude,
     });
 
+    // Stock deduction
     if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
-      await prisma.product.update({ where: { id: data.productId }, data: { stock: { decrement: qty } } });
-      await prisma.stockLog.create({ data: { productId: data.productId, change: -qty, reason: 'Sale', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+      }
     }
 
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: 'New', toStatus: sale.status, companyId } });
@@ -126,17 +152,13 @@ router.put('/:id', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const raw = req.body;
-    const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!existing) return res.status(404).json({ error: 'Not found' });
 
-    const qty = raw.qty !== undefined ? parseInt(raw.qty) : existing.qty;
-    const unitPrice = raw.unitPrice !== undefined ? parseFloat(raw.unitPrice) : parseFloat(existing.unitPrice);
-
     const data = {
-      ...(raw.productId && { productId: raw.productId }), qty, unitPrice, totalPrice: qty * unitPrice,
-      shippingCost: raw.shippingCost !== undefined ? parseFloat(raw.shippingCost) || 0 : undefined,
-      shippingCharge: raw.shippingCharge !== undefined ? parseFloat(raw.shippingCharge) || 0 : undefined,
-      discount: raw.discount !== undefined ? parseFloat(raw.discount) || 0 : undefined,
+      ...(raw.shippingCost !== undefined && { shippingCost: parseFloat(raw.shippingCost) || 0 }),
+      ...(raw.shippingCharge !== undefined && { shippingCharge: parseFloat(raw.shippingCharge) || 0 }),
+      ...(raw.discount !== undefined && { discount: parseFloat(raw.discount) || 0 }),
       ...(raw.date && { date: new Date(raw.date) }),
       ...(raw.paymentMethod !== undefined && { paymentMethod: raw.paymentMethod || null }),
       ...(raw.paymentStatus && { paymentStatus: raw.paymentStatus }),
@@ -150,11 +172,31 @@ router.put('/:id', async (req, res) => {
       ...(raw.creditDueDate !== undefined && { creditDueDate: raw.creditDueDate ? new Date(raw.creditDueDate) : null }),
       ...(raw.creditNotes !== undefined && { creditNotes: raw.creditNotes || null }),
     };
-    Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
 
-    // Recalculate amountPaid and paymentStatus when paymentType changes
+    // Update items if provided
+    if (raw.items && raw.items.length) {
+      const products = await prisma.product.findMany({ where: { id: { in: raw.items.map(i => i.productId) }, companyId } });
+      const productMap = {};
+      products.forEach(p => { productMap[p.id] = p; });
+
+      // Delete old items and create new ones
+      await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
+      const saleItems = raw.items.map(item => {
+        const product = productMap[item.productId];
+        const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
+        const qty = parseInt(item.qty);
+        return { saleId: req.params.id, productId: item.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice: qty * unitPrice };
+      });
+      await prisma.saleItem.createMany({ data: saleItems });
+
+      const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
+      const discount = data.discount !== undefined ? data.discount : parseFloat(existing.discount);
+      const shippingCharge = data.shippingCharge !== undefined ? data.shippingCharge : parseFloat(existing.shippingCharge);
+      data.totalPrice = itemsTotal + shippingCharge - discount;
+    }
+
+    // Recalculate payment when paymentType changes
     if (raw.paymentType !== undefined) {
-      const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
       const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
       if (raw.paymentType === 'Credit') {
         const deposit = raw.amountPaid !== undefined ? parseFloat(raw.amountPaid) || 0 : 0;
@@ -163,22 +205,19 @@ router.put('/:id', async (req, res) => {
         else if (deposit > 0) data.paymentStatus = 'Partial';
         else data.paymentStatus = 'Unpaid';
       } else if (raw.paymentType === 'Cash') {
-        data.amountPaid = saleTotal;
+        data.amountPaid = data.totalPrice || parseFloat(existing.totalPrice);
         data.paymentStatus = 'Paid';
       }
-    } else if (raw.amountPaid !== undefined) {
-      const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
-      if (existing.paymentType === 'Credit') {
-        const deposit = parseFloat(raw.amountPaid) || 0;
-        const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
-        data.amountPaid = deposit;
-        if (deposit >= saleTotal) data.paymentStatus = 'Paid';
-        else if (deposit > 0) data.paymentStatus = 'Partial';
-        else data.paymentStatus = 'Unpaid';
-      }
+    } else if (raw.amountPaid !== undefined && existing.paymentType === 'Credit') {
+      const deposit = parseFloat(raw.amountPaid) || 0;
+      const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
+      data.amountPaid = deposit;
+      if (deposit >= saleTotal) data.paymentStatus = 'Paid';
+      else if (deposit > 0) data.paymentStatus = 'Partial';
+      else data.paymentStatus = 'Unpaid';
     }
 
-    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { product: true, customer: true } });
+    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: saleInclude });
     res.json(sale);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -188,20 +227,26 @@ router.put('/:id/status', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const { status } = req.body;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const oldStatus = sale.status;
     const stockDeductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
     const wasDeducted = stockDeductStatuses.includes(oldStatus);
     const shouldDeduct = stockDeductStatuses.includes(status);
+
     if (!wasDeducted && shouldDeduct) {
-      await prisma.product.update({ where: { id: sale.productId }, data: { stock: { decrement: sale.qty } } });
-      await prisma.stockLog.create({ data: { productId: sale.productId, change: -sale.qty, reason: 'Sale', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+      }
     } else if (wasDeducted && !shouldDeduct) {
-      await prisma.product.update({ where: { id: sale.productId }, data: { stock: { increment: sale.qty } } });
-      await prisma.stockLog.create({ data: { productId: sale.productId, change: sale.qty, reason: status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert', saleId: sale.id, companyId } });
+      }
     }
-    const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { product: true, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } } } });
+
+    const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } } } });
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -211,15 +256,20 @@ router.delete('/:id', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
+
     if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
-      await prisma.product.update({ where: { id: sale.productId }, data: { stock: { increment: sale.qty } } });
-      await prisma.stockLog.create({ data: { productId: sale.productId, change: sale.qty, reason: 'Order Deleted', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: 'Order Deleted', saleId: sale.id, companyId } });
+      }
     }
+
     await prisma.creditPayment.deleteMany({ where: { saleId: req.params.id } });
     await prisma.debtReminder.deleteMany({ where: { saleId: req.params.id } });
     await prisma.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+    await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
     await prisma.sale.delete({ where: { id: req.params.id } });
     res.json({ message: 'Sale deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -240,7 +290,7 @@ router.post('/:id/payments', async (req, res) => {
     const newAmountPaid = parseFloat(sale.amountPaid) + amount;
     const totalPrice = parseFloat(sale.totalPrice);
     const paymentStatus = newAmountPaid >= totalPrice ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
-    const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { product: true, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { ...saleInclude, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -280,7 +330,7 @@ router.get('/:id/receipt', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { product: true, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { ...saleInclude, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const settingsMap = {};

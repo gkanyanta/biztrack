@@ -12,9 +12,11 @@ router.get('/', async (req, res) => {
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
 
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter } });
+    const saleCOGS = (s) => s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
+
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const totalCOGS = sales.reduce((sum, s) => sum + (parseFloat(s.costPrice) * s.qty), 0);
+    const totalCOGS = sales.reduce((sum, s) => sum + saleCOGS(s), 0);
     const totalShippingCost = sales.reduce((sum, s) => sum + parseFloat(s.shippingCost), 0);
     const totalShippingCharge = sales.reduce((sum, s) => sum + parseFloat(s.shippingCharge), 0);
     const totalDiscount = sales.reduce((sum, s) => sum + parseFloat(s.discount), 0);
@@ -32,7 +34,7 @@ router.get('/', async (req, res) => {
     const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
-    sales.forEach(s => { const month = s.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[month].revenue += parseFloat(s.totalPrice); monthlyData[month].cogs += parseFloat(s.costPrice) * s.qty; monthlyData[month].orders += 1; });
+    sales.forEach(s => { const month = s.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[month].revenue += parseFloat(s.totalPrice); monthlyData[month].cogs += saleCOGS(s); monthlyData[month].orders += 1; });
     expenses.forEach(e => { const month = e.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[month].expenses += parseFloat(e.amount); });
     const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, data]) => ({ month, revenue: data.revenue, profit: data.revenue - data.cogs - data.expenses, expenses: data.expenses, orders: data.orders }));
 
@@ -40,7 +42,7 @@ router.get('/', async (req, res) => {
     expenses.forEach(e => { if (!expenseByCategory[e.category]) expenseByCategory[e.category] = 0; expenseByCategory[e.category] += parseFloat(e.amount); });
 
     const productSales = {};
-    sales.forEach(s => { if (!productSales[s.productId]) productSales[s.productId] = { revenue: 0, qty: 0 }; productSales[s.productId].revenue += parseFloat(s.totalPrice); productSales[s.productId].qty += s.qty; });
+    sales.forEach(s => { s.items.forEach(i => { if (!productSales[i.productId]) productSales[i.productId] = { revenue: 0, qty: 0 }; productSales[i.productId].revenue += parseFloat(i.totalPrice); productSales[i.productId].qty += i.qty; }); });
     const productIds = Object.keys(productSales);
     const products = productIds.length > 0 ? await prisma.product.findMany({ where: { id: { in: productIds }, companyId } }) : [];
     const topProducts = products.map(p => ({ name: p.name, revenue: productSales[p.id].revenue, qty: productSales[p.id].qty })).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
@@ -55,14 +57,14 @@ router.get('/', async (req, res) => {
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-    const lastMonthSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } } });
+    const lastMonthSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } }, include: { items: true } });
     const lastMonthRevenue = lastMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const lastMonthOrders = lastMonthSales.length;
 
     const currentMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart2);
     const thisMonthRevenue2 = currentMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const thisMonthOrders = currentMonthSales.length;
-    const thisMonthCOGS2 = currentMonthSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const thisMonthCOGS2 = currentMonthSales.reduce((s, r) => s + saleCOGS(r), 0);
 
     const growthTarget = lastMonthRevenue * 3;
     const growthProgress = growthTarget > 0 ? (thisMonthRevenue2 / growthTarget) * 100 : 0;
@@ -98,9 +100,9 @@ router.get('/', async (req, res) => {
     const SAVINGS_RATE = 0.25;
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const todaySales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } } });
+    const todaySales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } }, include: { items: true } });
     const todayRevenue = todaySales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const todayCOGS = todaySales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const todayCOGS = todaySales.reduce((s, r) => s + saleCOGS(r), 0);
     const todayShippingCost = todaySales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const todayGrossProfit = todayRevenue - todayCOGS - todayShippingCost;
     const todaySavings = Math.max(0, todayGrossProfit * SAVINGS_RATE);
@@ -109,7 +111,7 @@ router.get('/', async (req, res) => {
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const thisMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart);
     const thisMonthRevenue = thisMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + saleCOGS(r), 0);
     const thisMonthShippingCost = thisMonthSales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const thisMonthGrossProfit = thisMonthRevenue - thisMonthCOGS - thisMonthShippingCost;
     const thisMonthSavingsTotal = Math.max(0, thisMonthGrossProfit * SAVINGS_RATE);

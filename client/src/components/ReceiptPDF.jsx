@@ -43,10 +43,11 @@ function formatDate(date) {
 export default function ReceiptPDF({ sale, settings = {} }) {
   const currency = settings.currencySymbol || settings.currency || 'K';
   const businessName = settings.businessName || 'BizTrack';
-  const subtotal = parseFloat(sale.totalPrice) || 0;
+  const items = sale.items || [];
+  const itemsTotal = items.reduce((sum, i) => sum + (parseFloat(i.totalPrice) || 0), 0);
   const shipping = parseFloat(sale.shippingCharge) || 0;
   const discount = parseFloat(sale.discount) || 0;
-  const grandTotal = subtotal + shipping - discount;
+  const grandTotal = itemsTotal + shipping - discount;
   const amountPaid = parseFloat(sale.amountPaid) || 0;
   const balance = grandTotal - amountPaid;
   const isCredit = sale.paymentType === 'Credit';
@@ -113,12 +114,20 @@ export default function ReceiptPDF({ sale, settings = {} }) {
             <Text style={[styles.col3, styles.bold]}>Unit Price</Text>
             <Text style={[styles.col4, styles.bold]}>Total</Text>
           </View>
-          <View style={styles.tableRow}>
-            <Text style={styles.col1}>{sale.product?.name || 'Product'}</Text>
-            <Text style={styles.col2}>{sale.qty}</Text>
-            <Text style={styles.col3}>{formatMoney(sale.unitPrice, currency)}</Text>
-            <Text style={styles.col4}>{formatMoney(subtotal, currency)}</Text>
-          </View>
+          {items.map((item, idx) => (
+            <View key={idx} style={styles.tableRow}>
+              <Text style={styles.col1}>{item.product?.name || 'Product'}</Text>
+              <Text style={styles.col2}>{item.qty}</Text>
+              <Text style={styles.col3}>{formatMoney(item.unitPrice, currency)}</Text>
+              <Text style={styles.col4}>{formatMoney(item.totalPrice, currency)}</Text>
+            </View>
+          ))}
+          {items.length > 1 && (
+            <View style={[styles.totalRow, { borderTop: '0.5 solid #ccc', marginTop: 2 }]}>
+              <Text style={styles.bold}>Subtotal</Text>
+              <Text style={styles.bold}>{formatMoney(itemsTotal, currency)}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>

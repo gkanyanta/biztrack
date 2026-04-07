@@ -11,10 +11,10 @@ router.get('/pnl', async (req, res) => {
     const { from, to } = req.query;
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter } });
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
     const expenses = await prisma.expense.findMany({ where: dateFilter });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const cogs = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const shippingCharge = sales.reduce((s, r) => s + parseFloat(r.shippingCharge), 0);
     const discount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
@@ -32,10 +32,16 @@ router.get('/sales', async (req, res) => {
     const companyId = req.user.companyId;
     const { from, to, productId, customerId, status } = req.query;
     const where = { companyId };
-    if (status) where.status = status; if (productId) where.productId = productId; if (customerId) where.customerId = customerId;
+    if (status) where.status = status;
+    if (productId) where.items = { some: { productId } };
+    if (customerId) where.customerId = customerId;
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where, include: { product: true, customer: true }, orderBy: { date: 'desc' } });
-    const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - (parseFloat(r.costPrice) * r.qty) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0) };
+    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { date: 'desc' } });
+    const summary = {
+      totalSales: sales.length,
+      totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0),
+      totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0)
+    };
     res.json({ sales, summary });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -62,9 +68,20 @@ router.get('/products', async (req, res) => {
     const { from, to } = req.query;
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { product: true } });
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: { include: { product: true } } } });
     const productMap = {};
-    sales.forEach(s => { const pid = s.productId; if (!productMap[pid]) productMap[pid] = { id: pid, name: s.product.name, sku: s.product.sku, revenue: 0, qtySold: 0, profit: 0, orders: 0 }; productMap[pid].revenue += parseFloat(s.totalPrice); productMap[pid].qtySold += s.qty; productMap[pid].profit += parseFloat(s.totalPrice) - (parseFloat(s.costPrice) * s.qty); productMap[pid].orders += 1; });
+    sales.forEach(s => {
+      s.items.forEach(item => {
+        const pid = item.productId;
+        if (!productMap[pid]) productMap[pid] = { id: pid, name: item.product.name, sku: item.product.sku, revenue: 0, qtySold: 0, profit: 0, orders: 0 };
+        const itemRevenue = parseFloat(item.totalPrice);
+        const itemCost = parseFloat(item.costPrice) * item.qty;
+        productMap[pid].revenue += itemRevenue;
+        productMap[pid].qtySold += item.qty;
+        productMap[pid].profit += itemRevenue - itemCost;
+        productMap[pid].orders += 1;
+      });
+    });
     res.json(Object.values(productMap).sort((a, b) => b.revenue - a.revenue));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -92,18 +109,39 @@ router.get('/export/csv', async (req, res) => {
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
     let data = []; let filename = 'export.csv';
     if (type === 'sales') {
-      const sales = await prisma.sale.findMany({ where: dateFilter, include: { product: true }, orderBy: { date: 'desc' } });
-      data = sales.map(s => ({ 'Order #': s.orderNumber, Date: s.date.toISOString().slice(0, 10), Product: s.product.name, Qty: s.qty, 'Unit Price': parseFloat(s.unitPrice), Total: parseFloat(s.totalPrice), Cost: parseFloat(s.costPrice) * s.qty, 'Shipping Cost': parseFloat(s.shippingCost), 'Shipping Charge': parseFloat(s.shippingCharge), Discount: parseFloat(s.discount), Status: s.status, Payment: s.paymentStatus, Customer: s.customerName || '', City: s.customerCity || '' }));
+      const sales = await prisma.sale.findMany({ where: dateFilter, include: { items: { include: { product: true } }, customer: true }, orderBy: { date: 'desc' } });
+      sales.forEach(s => {
+        s.items.forEach(item => {
+          data.push({
+            'Order #': s.orderNumber,
+            Date: s.date.toISOString().slice(0, 10),
+            Product: item.product.name,
+            Qty: item.qty,
+            'Unit Price': parseFloat(item.unitPrice),
+            'Item Total': parseFloat(item.totalPrice),
+            'Cost Price': parseFloat(item.costPrice),
+            'Item Cost': parseFloat(item.costPrice) * item.qty,
+            'Sale Total': parseFloat(s.totalPrice),
+            'Shipping Cost': parseFloat(s.shippingCost),
+            'Shipping Charge': parseFloat(s.shippingCharge),
+            Discount: parseFloat(s.discount),
+            Status: s.status,
+            Payment: s.paymentStatus,
+            Customer: s.customerName || '',
+            City: s.customerCity || ''
+          });
+        });
+      });
       filename = 'sales-report.csv';
     } else if (type === 'expenses') {
       const expenses = await prisma.expense.findMany({ where: dateFilter, orderBy: { date: 'desc' } });
       data = expenses.map(e => ({ Date: e.date.toISOString().slice(0, 10), Description: e.description, Amount: parseFloat(e.amount), Category: e.category, 'Payment Method': e.paymentMethod || '', Recurring: e.isRecurring ? 'Yes' : 'No', Notes: e.notes || '' }));
       filename = 'expenses-report.csv';
     } else if (type === 'pnl') {
-      const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter } });
+      const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
       const expenses = await prisma.expense.findMany({ where: dateFilter });
       const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-      const cogs = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+      const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
       const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
       const grossProfit = revenue - cogs - shippingCost;
       const expensesByCategory = {}; let totalExpenses = 0;

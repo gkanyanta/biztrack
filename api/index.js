@@ -230,7 +230,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
-    const sales = await prisma.sale.findMany({ where, include: { product: true, customer: true }, orderBy: { createdAt: 'desc' } });
+    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { createdAt: 'desc' } });
     res.json(sales);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -238,7 +238,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { product: true, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     res.json(sale);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -248,8 +248,31 @@ app.post('/api/v1/sales', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = req.body;
-    const product = await prisma.product.findFirst({ where: { id: data.productId, companyId } });
-    if (!product) return res.status(400).json({ error: 'Product not found' });
+    const itemsInput = data.items || [];
+    if (!itemsInput.length) return res.status(400).json({ error: 'At least one item is required' });
+
+    // Validate all products exist
+    const productIds = itemsInput.map(i => i.productId);
+    const products = await prisma.product.findMany({ where: { id: { in: productIds }, companyId } });
+    const productMap = {}; products.forEach(p => { productMap[p.id] = p; });
+    for (const item of itemsInput) {
+      if (!productMap[item.productId]) return res.status(400).json({ error: `Product ${item.productId} not found` });
+    }
+
+    // Build sale items
+    const saleItems = itemsInput.map(item => {
+      const product = productMap[item.productId];
+      const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
+      const costPrice = parseFloat(product.costPrice);
+      const qty = parseInt(item.qty);
+      const totalPrice = qty * unitPrice;
+      return { productId: item.productId, qty, unitPrice, costPrice, totalPrice };
+    });
+
+    const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
+    const shippingCharge = parseFloat(data.shippingCharge) || 0;
+    const discount = parseFloat(data.discount) || 0;
+    const totalPrice = itemsTotal + shippingCharge - discount;
 
     const lastSale = await prisma.sale.findFirst({ where: { companyId }, orderBy: { createdAt: 'desc' } });
     let nextNum = 1;
@@ -270,10 +293,6 @@ app.post('/api/v1/sales', authenticate, async (req, res) => {
       if (rate) shippingCost = parseFloat(rate.rate);
     }
 
-    const unitPrice = parseFloat(data.unitPrice) || parseFloat(product.sellingPrice);
-    const qty = parseInt(data.qty);
-    const totalPrice = qty * unitPrice;
-
     const paymentType = data.paymentType || 'Cash';
     let amountPaid = parseFloat(data.amountPaid) || 0;
     if (paymentType === 'Cash' && (data.paymentStatus === 'Paid' || !data.paymentStatus)) amountPaid = totalPrice;
@@ -286,19 +305,22 @@ app.post('/api/v1/sales', authenticate, async (req, res) => {
 
     const sale = await prisma.sale.create({
       data: {
-        orderNumber, date: data.date ? new Date(data.date) : new Date(), productId: data.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice,
-        shippingCost, shippingCharge: parseFloat(data.shippingCharge) || 0, discount: parseFloat(data.discount) || 0,
+        orderNumber, date: data.date ? new Date(data.date) : new Date(), totalPrice,
+        shippingCost, shippingCharge, discount,
         status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
         paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
         customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
-        companyId
+        companyId,
+        items: { create: saleItems }
       },
-      include: { product: true, customer: true }
+      include: { items: { include: { product: true } }, customer: true }
     });
 
     if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
-      await prisma.product.update({ where: { id: data.productId }, data: { stock: { decrement: qty } } });
-      await prisma.stockLog.create({ data: { productId: data.productId, change: -qty, reason: 'Sale', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+      }
     }
 
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: 'New', toStatus: sale.status, companyId } });
@@ -310,15 +332,10 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const raw = req.body;
-    const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!existing) return res.status(404).json({ error: 'Not found' });
 
-    const qty = raw.qty !== undefined ? parseInt(raw.qty) : existing.qty;
-    const unitPrice = raw.unitPrice !== undefined ? parseFloat(raw.unitPrice) : parseFloat(existing.unitPrice);
-
     const data = {
-      ...(raw.productId && { productId: raw.productId }),
-      qty, unitPrice, totalPrice: qty * unitPrice,
       shippingCost: raw.shippingCost !== undefined ? parseFloat(raw.shippingCost) || 0 : undefined,
       shippingCharge: raw.shippingCharge !== undefined ? parseFloat(raw.shippingCharge) || 0 : undefined,
       discount: raw.discount !== undefined ? parseFloat(raw.discount) || 0 : undefined,
@@ -337,9 +354,32 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
     };
     Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
 
+    // If items provided, delete old and create new
+    if (raw.items && raw.items.length > 0) {
+      const productIds = raw.items.map(i => i.productId);
+      const products = await prisma.product.findMany({ where: { id: { in: productIds }, companyId } });
+      const productMap = {}; products.forEach(p => { productMap[p.id] = p; });
+      for (const item of raw.items) {
+        if (!productMap[item.productId]) return res.status(400).json({ error: `Product ${item.productId} not found` });
+      }
+      const saleItems = raw.items.map(item => {
+        const product = productMap[item.productId];
+        const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
+        const costPrice = parseFloat(product.costPrice);
+        const qty = parseInt(item.qty);
+        const totalPrice = qty * unitPrice;
+        return { productId: item.productId, qty, unitPrice, costPrice, totalPrice };
+      });
+      await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
+      await prisma.saleItem.createMany({ data: saleItems.map(i => ({ ...i, saleId: req.params.id })) });
+      const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
+      const shippingCharge = data.shippingCharge !== undefined ? data.shippingCharge : parseFloat(existing.shippingCharge);
+      const discount = data.discount !== undefined ? data.discount : parseFloat(existing.discount);
+      data.totalPrice = itemsTotal + shippingCharge - discount;
+    }
+
     // Recalculate amountPaid and paymentStatus when paymentType changes
     if (raw.paymentType !== undefined) {
-      const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
       const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
       if (raw.paymentType === 'Credit') {
         const deposit = raw.amountPaid !== undefined ? parseFloat(raw.amountPaid) || 0 : 0;
@@ -352,7 +392,6 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
         data.paymentStatus = 'Paid';
       }
     } else if (raw.amountPaid !== undefined) {
-      const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
       if (existing.paymentType === 'Credit') {
         const deposit = parseFloat(raw.amountPaid) || 0;
         const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
@@ -363,7 +402,7 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
       }
     }
 
-    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { product: true, customer: true } });
+    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { items: { include: { product: true } }, customer: true } });
     res.json(sale);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -372,20 +411,24 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { status } = req.body;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     const oldStatus = sale.status;
     const stockDeductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
     const wasDeducted = stockDeductStatuses.includes(oldStatus);
     const shouldDeduct = stockDeductStatuses.includes(status);
     if (!wasDeducted && shouldDeduct) {
-      await prisma.product.update({ where: { id: sale.productId }, data: { stock: { decrement: sale.qty } } });
-      await prisma.stockLog.create({ data: { productId: sale.productId, change: -sale.qty, reason: 'Sale', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+      }
     } else if (wasDeducted && !shouldDeduct) {
-      await prisma.product.update({ where: { id: sale.productId }, data: { stock: { increment: sale.qty } } });
-      await prisma.stockLog.create({ data: { productId: sale.productId, change: sale.qty, reason: status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert', saleId: sale.id, companyId } });
+      }
     }
-    const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { product: true, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } } } });
+    const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { items: { include: { product: true } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } } } });
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -394,15 +437,18 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
 app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
-      await prisma.product.update({ where: { id: sale.productId }, data: { stock: { increment: sale.qty } } });
-      await prisma.stockLog.create({ data: { productId: sale.productId, change: sale.qty, reason: 'Order Deleted', saleId: sale.id, companyId } });
+      for (const item of sale.items) {
+        await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
+        await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: 'Order Deleted', saleId: sale.id, companyId } });
+      }
     }
     await prisma.creditPayment.deleteMany({ where: { saleId: req.params.id } });
     await prisma.debtReminder.deleteMany({ where: { saleId: req.params.id } });
     await prisma.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+    await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
     await prisma.sale.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -422,7 +468,7 @@ app.post('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
     const newAmountPaid = parseFloat(sale.amountPaid) + amount;
     const totalPrice = parseFloat(sale.totalPrice);
     const paymentStatus = newAmountPaid >= totalPrice ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
-    const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { product: true, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -458,7 +504,7 @@ app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { product: true, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const settingsMap = {};
@@ -526,7 +572,7 @@ app.get('/api/v1/customers', authenticate, async (req, res) => {
 app.get('/api/v1/customers/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const customer = await prisma.customer.findFirst({ where: { id: req.params.id, companyId }, include: { sales: { include: { product: true }, orderBy: { date: 'desc' } } } });
+    const customer = await prisma.customer.findFirst({ where: { id: req.params.id, companyId }, include: { sales: { include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } } } });
     if (!customer) return res.status(404).json({ error: 'Not found' });
     res.json(customer);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -535,7 +581,7 @@ app.get('/api/v1/customers/:id', authenticate, async (req, res) => {
 app.get('/api/v1/customers/:id/orders', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    res.json(await prisma.sale.findMany({ where: { customerId: req.params.id, companyId }, include: { product: true }, orderBy: { date: 'desc' } }));
+    res.json(await prisma.sale.findMany({ where: { customerId: req.params.id, companyId }, include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } }));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -614,9 +660,9 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
 
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter } });
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
     const totalRevenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const totalCOGS = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const totalCOGS = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const totalShippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const totalShippingCharge = sales.reduce((s, r) => s + parseFloat(r.shippingCharge), 0);
     const totalDiscount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
@@ -633,7 +679,7 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
-    sales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += parseFloat(s.costPrice) * s.qty; monthlyData[m].orders += 1; });
+    sales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); monthlyData[m].orders += 1; });
     expenses.forEach(e => { const m = e.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[m].expenses += parseFloat(e.amount); });
     const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({ month, revenue: d.revenue, profit: d.revenue - d.cogs - d.expenses, expenses: d.expenses, orders: d.orders }));
 
@@ -641,7 +687,7 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     expenses.forEach(e => { if (!expenseByCategory[e.category]) expenseByCategory[e.category] = 0; expenseByCategory[e.category] += parseFloat(e.amount); });
 
     const productSales = {};
-    sales.forEach(s => { if (!productSales[s.productId]) productSales[s.productId] = { revenue: 0, qty: 0 }; productSales[s.productId].revenue += parseFloat(s.totalPrice); productSales[s.productId].qty += s.qty; });
+    sales.forEach(s => { s.items.forEach(item => { if (!productSales[item.productId]) productSales[item.productId] = { revenue: 0, qty: 0 }; productSales[item.productId].revenue += parseFloat(item.totalPrice); productSales[item.productId].qty += item.qty; }); });
     const productIds = Object.keys(productSales);
     const products = productIds.length > 0 ? await prisma.product.findMany({ where: { id: { in: productIds }, companyId } }) : [];
     const topProducts = products.map(p => ({ name: p.name, revenue: productSales[p.id].revenue, qty: productSales[p.id].qty })).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
@@ -659,9 +705,9 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const thisMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart);
     const thisMonthRevenue = thisMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const thisMonthOrders = thisMonthSales.length;
-    const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
 
-    const lastMonthSalesData = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } } });
+    const lastMonthSalesData = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } }, include: { items: true } });
     const lastMonthRevenue = lastMonthSalesData.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const lastMonthOrders = lastMonthSalesData.length;
 
@@ -692,9 +738,9 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
     const SAVINGS_RATE = 0.25;
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const todaySales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } } });
+    const todaySales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } }, include: { items: true } });
     const todayRevenue = todaySales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const todayCOGS = todaySales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const todayCOGS = todaySales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const todayShippingCost = todaySales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const todayGrossProfit = todayRevenue - todayCOGS - todayShippingCost;
     const todaySavings = Math.max(0, todayGrossProfit * SAVINGS_RATE);
@@ -727,11 +773,11 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
 app.get('/api/v1/reports/growth', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const allSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' } }, orderBy: { date: 'asc' } });
+    const allSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' } }, orderBy: { date: 'asc' }, include: { items: true } });
     const allExpenses = await prisma.expense.findMany({ where: { companyId }, orderBy: { date: 'asc' } });
 
     const monthlyHistory = {};
-    allSales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyHistory[m]) monthlyHistory[m] = { revenue: 0, cogs: 0, orders: 0, profit: 0, expenses: 0, adSpend: 0 }; monthlyHistory[m].revenue += parseFloat(s.totalPrice); monthlyHistory[m].cogs += parseFloat(s.costPrice) * s.qty; monthlyHistory[m].orders += s.qty; monthlyHistory[m].profit += parseFloat(s.totalPrice) - (parseFloat(s.costPrice) * s.qty); });
+    allSales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyHistory[m]) monthlyHistory[m] = { revenue: 0, cogs: 0, orders: 0, profit: 0, expenses: 0, adSpend: 0 }; const saleCogs = s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); const saleQty = s.items.reduce((sum, i) => sum + i.qty, 0); monthlyHistory[m].revenue += parseFloat(s.totalPrice); monthlyHistory[m].cogs += saleCogs; monthlyHistory[m].orders += saleQty; monthlyHistory[m].profit += parseFloat(s.totalPrice) - saleCogs; });
     allExpenses.forEach(e => { const m = e.date.toISOString().slice(0, 7); if (!monthlyHistory[m]) monthlyHistory[m] = { revenue: 0, cogs: 0, orders: 0, profit: 0, expenses: 0, adSpend: 0 }; monthlyHistory[m].expenses += parseFloat(e.amount); if (e.category === 'Facebook Ads') monthlyHistory[m].adSpend += parseFloat(e.amount); });
 
     const history = Object.entries(monthlyHistory).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({ month, ...d, netProfit: d.profit - d.expenses, roas: d.adSpend > 0 ? d.revenue / d.adSpend : 0 }));
@@ -767,10 +813,10 @@ app.get('/api/v1/reports/pnl', authenticate, async (req, res) => {
     const { from, to } = req.query;
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter } });
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
     const expenses = await prisma.expense.findMany({ where: dateFilter });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const cogs = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const shippingCharge = sales.reduce((s, r) => s + parseFloat(r.shippingCharge), 0);
     const discount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
@@ -787,10 +833,10 @@ app.get('/api/v1/reports/sales', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const { from, to, productId, customerId, status } = req.query;
     const where = { companyId };
-    if (status) where.status = status; if (productId) where.productId = productId; if (customerId) where.customerId = customerId;
+    if (status) where.status = status; if (productId) where.items = { some: { productId } }; if (customerId) where.customerId = customerId;
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where, include: { product: true, customer: true }, orderBy: { date: 'desc' } });
-    const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - (parseFloat(r.costPrice) * r.qty) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0) };
+    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { date: 'desc' } });
+    const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0) };
     res.json({ sales, summary });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -815,9 +861,9 @@ app.get('/api/v1/reports/products', authenticate, async (req, res) => {
     const { from, to } = req.query;
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { product: true } });
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: { include: { product: true } } } });
     const productMap = {};
-    sales.forEach(s => { const pid = s.productId; if (!productMap[pid]) productMap[pid] = { id: pid, name: s.product.name, sku: s.product.sku, revenue: 0, qtySold: 0, profit: 0, orders: 0 }; productMap[pid].revenue += parseFloat(s.totalPrice); productMap[pid].qtySold += s.qty; productMap[pid].profit += parseFloat(s.totalPrice) - (parseFloat(s.costPrice) * s.qty); productMap[pid].orders += 1; });
+    sales.forEach(s => { s.items.forEach(item => { const pid = item.productId; if (!productMap[pid]) productMap[pid] = { id: pid, name: item.product.name, sku: item.product.sku, revenue: 0, qtySold: 0, profit: 0, orders: 0 }; productMap[pid].revenue += parseFloat(item.totalPrice); productMap[pid].qtySold += item.qty; productMap[pid].profit += parseFloat(item.totalPrice) - (parseFloat(item.costPrice) * item.qty); productMap[pid].orders += 1; }); });
     res.json(Object.values(productMap).sort((a, b) => b.revenue - a.revenue));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -843,18 +889,18 @@ app.get('/api/v1/reports/export/csv', authenticate, async (req, res) => {
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
     let data = []; let filename = 'export.csv';
     if (type === 'sales') {
-      const sales = await prisma.sale.findMany({ where: dateFilter, include: { product: true }, orderBy: { date: 'desc' } });
-      data = sales.map(s => ({ 'Order #': s.orderNumber, Date: s.date.toISOString().slice(0, 10), Product: s.product.name, Qty: s.qty, 'Unit Price': parseFloat(s.unitPrice), Total: parseFloat(s.totalPrice), Status: s.status, Customer: s.customerName || '' }));
+      const sales = await prisma.sale.findMany({ where: dateFilter, include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } });
+      sales.forEach(s => { s.items.forEach(item => { data.push({ 'Order #': s.orderNumber, Date: s.date.toISOString().slice(0, 10), Product: item.product.name, Qty: item.qty, 'Unit Price': parseFloat(item.unitPrice), 'Item Total': parseFloat(item.totalPrice), 'Sale Total': parseFloat(s.totalPrice), Status: s.status, Customer: s.customerName || '' }); }); });
       filename = 'sales-report.csv';
     } else if (type === 'expenses') {
       const expenses = await prisma.expense.findMany({ where: dateFilter, orderBy: { date: 'desc' } });
       data = expenses.map(e => ({ Date: e.date.toISOString().slice(0, 10), Description: e.description, Amount: parseFloat(e.amount), Category: e.category }));
       filename = 'expenses-report.csv';
     } else if (type === 'pnl') {
-      const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter } });
+      const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
       const expenses = await prisma.expense.findMany({ where: dateFilter });
       const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-      const cogs = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+      const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
       const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
       const grossProfit = revenue - cogs - shippingCost;
       const expensesByCategory = {}; let totalExpenses = 0;
@@ -953,9 +999,9 @@ app.get('/api/v1/superadmin/stats', authenticate, requireSuperadmin, async (req,
     const activeCompanies = await prisma.company.count({ where: { isActive: true } });
     const totalUsers = await prisma.user.count({ where: { role: 'admin' } });
     const newestCompany = await prisma.company.findFirst({ orderBy: { createdAt: 'desc' } });
-    const allSales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' } }, select: { totalPrice: true, costPrice: true, qty: true, companyId: true } });
+    const allSales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' } }, include: { items: true } });
     const totalRevenue = allSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const totalCOGS = allSales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const totalCOGS = allSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const totalOrders = allSales.length;
     const revenueByCompany = {};
     allSales.forEach(s => {
@@ -992,9 +1038,9 @@ app.get('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, asy
       },
     });
     if (!company) return res.status(404).json({ error: 'Company not found' });
-    const sales = await prisma.sale.findMany({ where: { companyId: req.params.id, status: { not: 'Cancelled' } }, select: { totalPrice: true, costPrice: true, qty: true } });
+    const sales = await prisma.sale.findMany({ where: { companyId: req.params.id, status: { not: 'Cancelled' } }, include: { items: true } });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
-    const cogs = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
+    const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const expenses = await prisma.expense.findMany({ where: { companyId: req.params.id }, select: { amount: true } });
     const totalExpenses = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
     const settingsObj = {}; company.settings.forEach(s => { settingsObj[s.key] = s.value; });
@@ -1048,6 +1094,7 @@ app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, 
     await prisma.creditPayment.deleteMany({ where: { companyId } });
     await prisma.orderStatusLog.deleteMany({ where: { companyId } });
     await prisma.stockLog.deleteMany({ where: { companyId } });
+    await prisma.saleItem.deleteMany({ where: { sale: { companyId } } });
     await prisma.sale.deleteMany({ where: { companyId } });
     await prisma.product.deleteMany({ where: { companyId } });
     await prisma.customer.deleteMany({ where: { companyId } });
