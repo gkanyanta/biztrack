@@ -13,13 +13,20 @@ const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    getDashboard().then(res => setData(res.data)).finally(() => setLoading(false));
+    getDashboard()
+      .then(res => setData(res.data))
+      .catch(err => {
+        console.error('Dashboard error:', err.response?.data || err.message);
+        setError(err.response?.data?.error || err.message);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <LoadingSpinner />;
-  if (!data) return <p className="text-gray-500">Failed to load dashboard</p>;
+  if (!data) return <p className="text-red-500">Failed to load dashboard{error ? `: ${error}` : ''}</p>;
 
   const g = data.growth;
 
