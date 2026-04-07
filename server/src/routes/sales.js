@@ -151,6 +151,33 @@ router.put('/:id', async (req, res) => {
       ...(raw.creditNotes !== undefined && { creditNotes: raw.creditNotes || null }),
     };
     Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
+
+    // Recalculate amountPaid and paymentStatus when paymentType changes
+    if (raw.paymentType !== undefined) {
+      const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+      const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
+      if (raw.paymentType === 'Credit') {
+        const deposit = raw.amountPaid !== undefined ? parseFloat(raw.amountPaid) || 0 : 0;
+        data.amountPaid = deposit;
+        if (deposit >= saleTotal) data.paymentStatus = 'Paid';
+        else if (deposit > 0) data.paymentStatus = 'Partial';
+        else data.paymentStatus = 'Unpaid';
+      } else if (raw.paymentType === 'Cash') {
+        data.amountPaid = saleTotal;
+        data.paymentStatus = 'Paid';
+      }
+    } else if (raw.amountPaid !== undefined) {
+      const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+      if (existing.paymentType === 'Credit') {
+        const deposit = parseFloat(raw.amountPaid) || 0;
+        const saleTotal = data.totalPrice || parseFloat(existing.totalPrice);
+        data.amountPaid = deposit;
+        if (deposit >= saleTotal) data.paymentStatus = 'Paid';
+        else if (deposit > 0) data.paymentStatus = 'Partial';
+        else data.paymentStatus = 'Unpaid';
+      }
+    }
+
     const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { product: true, customer: true } });
     res.json(sale);
   } catch (err) { res.status(500).json({ error: err.message }); }
