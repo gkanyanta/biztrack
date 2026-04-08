@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
+const { validateSale } = require('../middleware/validate');
 
 router.use(authenticate);
 
@@ -28,7 +29,7 @@ router.get('/credit/summary', async (req, res) => {
     const topDebtors = Object.values(debtorMap).sort((a, b) => b.totalOwed - a.totalOwed);
     const recentPayments = await prisma.creditPayment.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
     res.json({ totalOutstanding, overdueCount, overdueAmount, topDebtors, recentPayments });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/', async (req, res) => {
@@ -46,7 +47,7 @@ router.get('/', async (req, res) => {
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }, { customerPhone: { contains: search, mode: 'insensitive' } }]; }
     const sales = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
     res.json(sales);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/:id', async (req, res) => {
@@ -56,16 +57,15 @@ router.get('/:id', async (req, res) => {
     const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     res.json(sale);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', validateSale, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const data = req.body;
-    const items = data.items; // [{ productId, qty, unitPrice? }]
-    if (!items || !items.length) return res.status(400).json({ error: 'At least one item is required' });
+    const items = data.items;
 
     // Validate products
     const productIds = items.map(i => i.productId);
@@ -144,7 +144,7 @@ router.post('/', async (req, res) => {
 
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: 'New', toStatus: sale.status, companyId } });
     res.status(201).json(sale);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.put('/:id', async (req, res) => {
@@ -219,7 +219,7 @@ router.put('/:id', async (req, res) => {
 
     const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: saleInclude });
     res.json(sale);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.put('/:id/status', async (req, res) => {
@@ -249,7 +249,7 @@ router.put('/:id/status', async (req, res) => {
     const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } } } });
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.delete('/:id', async (req, res) => {
@@ -272,7 +272,7 @@ router.delete('/:id', async (req, res) => {
     await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
     await prisma.sale.delete({ where: { id: req.params.id } });
     res.json({ message: 'Sale deleted' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- CREDIT PAYMENTS ----
@@ -292,7 +292,7 @@ router.post('/:id/payments', async (req, res) => {
     const paymentStatus = newAmountPaid >= totalPrice ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
     const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { ...saleInclude, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/:id/payments', async (req, res) => {
@@ -301,7 +301,7 @@ router.get('/:id/payments', async (req, res) => {
     const companyId = req.user.companyId;
     const payments = await prisma.creditPayment.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(payments);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- REMINDERS ----
@@ -313,7 +313,7 @@ router.post('/:id/reminders', async (req, res) => {
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const reminder = await prisma.debtReminder.create({ data: { saleId: sale.id, channel: req.body.channel, message: req.body.message || null, companyId } });
     res.status(201).json(reminder);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/:id/reminders', async (req, res) => {
@@ -322,7 +322,7 @@ router.get('/:id/reminders', async (req, res) => {
     const companyId = req.user.companyId;
     const reminders = await prisma.debtReminder.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { sentAt: 'desc' } });
     res.json(reminders);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- RECEIPT DATA ----
@@ -336,7 +336,7 @@ router.get('/:id/receipt', async (req, res) => {
     const settingsMap = {};
     settings.forEach(s => { settingsMap[s.key] = s.value; });
     res.json({ sale, settings: settingsMap });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 module.exports = router;

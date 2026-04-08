@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
+const { validateProduct } = require('../middleware/validate');
 
 router.use(authenticate);
 
@@ -9,7 +10,7 @@ router.get('/meta/categories', async (req, res) => {
     const companyId = req.user.companyId;
     const products = await prisma.product.findMany({ where: { companyId, category: { not: null } }, select: { category: true }, distinct: ['category'] });
     res.json(products.map(p => p.category).filter(Boolean));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/', async (req, res) => {
@@ -23,7 +24,7 @@ router.get('/', async (req, res) => {
     let products = await prisma.product.findMany({ where, orderBy: { createdAt: 'desc' } });
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     res.json(products);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/:id', async (req, res) => {
@@ -33,7 +34,7 @@ router.get('/:id', async (req, res) => {
     const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 } } });
     if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json(product);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/:id/stock-log', async (req, res) => {
@@ -42,10 +43,10 @@ router.get('/:id/stock-log', async (req, res) => {
     const companyId = req.user.companyId;
     const logs = await prisma.stockLog.findMany({ where: { productId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(logs);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', validateProduct, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -56,11 +57,11 @@ router.post('/', async (req, res) => {
     res.status(201).json(product);
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'SKU already exists' });
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', validateProduct, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -74,7 +75,7 @@ router.put('/:id', async (req, res) => {
       await prisma.stockLog.create({ data: { productId: product.id, change: stockChange, reason: 'Manual Adjustment', companyId } });
     }
     res.json(product);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.delete('/:id', async (req, res) => {
@@ -85,7 +86,7 @@ router.delete('/:id', async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Not found' });
     await prisma.product.update({ where: { id: req.params.id }, data: { isActive: false } });
     res.json({ message: 'Product deactivated' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.post('/restock', async (req, res) => {
@@ -102,7 +103,7 @@ router.post('/restock', async (req, res) => {
       results.push(updated);
     }
     res.json(results);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 module.exports = router;

@@ -23,7 +23,7 @@ router.get('/pnl', async (req, res) => {
     expenses.forEach(e => { const amt = parseFloat(e.amount); if (!expensesByCategory[e.category]) expensesByCategory[e.category] = 0; expensesByCategory[e.category] += amt; totalExpenses += amt; });
     const netProfit = grossProfit - totalExpenses;
     res.json({ revenue, cogs, shippingCost, shippingCharge, discount, grossProfit, expensesByCategory, totalExpenses, netProfit, profitMargin: cogs > 0 ? (netProfit / cogs) * 100 : 0 });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/sales', async (req, res) => {
@@ -43,7 +43,7 @@ router.get('/sales', async (req, res) => {
       totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0)
     };
     res.json({ sales, summary });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/expenses', async (req, res) => {
@@ -58,7 +58,7 @@ router.get('/expenses', async (req, res) => {
     const byCategory = {}; let total = 0;
     expenses.forEach(e => { const amt = parseFloat(e.amount); if (!byCategory[e.category]) byCategory[e.category] = 0; byCategory[e.category] += amt; total += amt; });
     res.json({ expenses, byCategory, total });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/products', async (req, res) => {
@@ -83,7 +83,7 @@ router.get('/products', async (req, res) => {
       });
     });
     res.json(Object.values(productMap).sort((a, b) => b.revenue - a.revenue));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/customers', async (req, res) => {
@@ -97,7 +97,7 @@ router.get('/customers', async (req, res) => {
     const customerMap = {};
     sales.forEach(s => { const cid = s.customerId; if (!cid) return; if (!customerMap[cid]) customerMap[cid] = { id: cid, name: s.customer?.name || s.customerName, phone: s.customer?.phone || s.customerPhone, city: s.customer?.city || s.customerCity, totalSpent: 0, orderCount: 0 }; customerMap[cid].totalSpent += parseFloat(s.totalPrice); customerMap[cid].orderCount += 1; });
     res.json(Object.values(customerMap).sort((a, b) => b.totalSpent - a.totalSpent));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.get('/export/csv', async (req, res) => {
@@ -159,7 +159,7 @@ router.get('/export/csv', async (req, res) => {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.send(csv);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 module.exports = router;

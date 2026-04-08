@@ -1,14 +1,12 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { validateRegister, validateLogin } = require('../middleware/validate');
 
-router.post('/register', async (req, res) => {
+router.post('/register', validateRegister, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const { companyName, username, password, name } = req.body;
-    if (!companyName || !username || !password || !name) {
-      return res.status(400).json({ error: 'Company name, username, password, and name are required' });
-    }
 
     const slug = companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const existing = await prisma.company.findUnique({ where: { slug } });
@@ -36,11 +34,11 @@ router.post('/register', async (req, res) => {
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, companyId: company.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: company.id, companyName: company.name } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', validateLogin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const { username, password } = req.body;
@@ -66,7 +64,7 @@ router.post('/login', async (req, res) => {
       user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -80,7 +78,7 @@ router.get('/me', require('../middleware/auth').authenticate, async (req, res) =
     if (!user) return res.status(401).json({ error: 'User not found' });
     res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }
 });
 

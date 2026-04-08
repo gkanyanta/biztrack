@@ -6,6 +6,7 @@ dist/
 *.log
 *.dump
 *.sql
+!**/prisma/migrations/**/*.sql
 *.sql.gz
 backups/
 local_backup_*.json

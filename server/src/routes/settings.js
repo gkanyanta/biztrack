@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
     const obj = {};
     settings.forEach(s => { obj[s.key] = s.value; });
     res.json(obj);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 router.put('/', async (req, res) => {
@@ -29,7 +29,7 @@ router.put('/', async (req, res) => {
     const obj = {};
     settings.forEach(s => { obj[s.key] = s.value; });
     res.json(obj);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 module.exports = router;

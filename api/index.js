@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -12,7 +14,35 @@ if (!global.__prisma) {
 }
 const prisma = global.__prisma;
 
-app.use(cors());
+// Security headers
+app.use(helmet());
+
+// CORS - restrict to known origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+  credentials: true
+}));
+
+// Rate limiting - general
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { error: 'Too many requests, please try again later' }
+}));
+
+// Stricter rate limit for auth routes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: { error: 'Too many login attempts, please try again later' }
+});
+
 app.use(express.json({ limit: '2mb' }));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'biztrack-default-secret';
@@ -38,13 +68,116 @@ function requireSuperadmin(req, res, next) {
   next();
 }
 
+// ---- INPUT VALIDATION ----
+function sanitizeString(val, maxLength = 500) {
+  if (typeof val !== 'string') return val;
+  return val.trim().slice(0, maxLength);
+}
+
+function validateRegister(req, res, next) {
+  const { companyName, username, password, name } = req.body;
+  if (!companyName || !username || !password || !name) {
+    return res.status(400).json({ error: 'Company name, username, password, and name are required' });
+  }
+  if (typeof username !== 'string' || username.length < 3 || username.length > 50) {
+    return res.status(400).json({ error: 'Username must be 3-50 characters' });
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
+  }
+  if (typeof password !== 'string' || password.length < 6 || password.length > 128) {
+    return res.status(400).json({ error: 'Password must be 6-128 characters' });
+  }
+  if (typeof name !== 'string' || name.length < 1 || name.length > 100) {
+    return res.status(400).json({ error: 'Name must be 1-100 characters' });
+  }
+  if (typeof companyName !== 'string' || companyName.length < 2 || companyName.length > 100) {
+    return res.status(400).json({ error: 'Company name must be 2-100 characters' });
+  }
+  req.body.username = sanitizeString(username, 50);
+  req.body.name = sanitizeString(name, 100);
+  req.body.companyName = sanitizeString(companyName, 100);
+  next();
+}
+
+function validateLogin(req, res, next) {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Invalid input' });
+  }
+  next();
+}
+
+function validateProduct(req, res, next) {
+  const { name, costPrice, sellingPrice } = req.body;
+  if (!name || typeof name !== 'string' || name.length < 1 || name.length > 200) {
+    return res.status(400).json({ error: 'Product name is required (max 200 characters)' });
+  }
+  if (costPrice !== undefined && (isNaN(costPrice) || Number(costPrice) < 0)) {
+    return res.status(400).json({ error: 'Cost price must be a non-negative number' });
+  }
+  if (sellingPrice !== undefined && (isNaN(sellingPrice) || Number(sellingPrice) < 0)) {
+    return res.status(400).json({ error: 'Selling price must be a non-negative number' });
+  }
+  req.body.name = sanitizeString(name, 200);
+  if (req.body.description) req.body.description = sanitizeString(req.body.description, 1000);
+  if (req.body.category) req.body.category = sanitizeString(req.body.category, 100);
+  next();
+}
+
+function validateSale(req, res, next) {
+  const { items } = req.body;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'At least one item is required' });
+  }
+  for (const item of items) {
+    if (!item.productId || typeof item.productId !== 'string') {
+      return res.status(400).json({ error: 'Each item must have a valid productId' });
+    }
+    if (!item.qty || isNaN(item.qty) || Number(item.qty) < 1) {
+      return res.status(400).json({ error: 'Each item must have a quantity of at least 1' });
+    }
+  }
+  if (req.body.customerName) req.body.customerName = sanitizeString(req.body.customerName, 200);
+  if (req.body.customerPhone) req.body.customerPhone = sanitizeString(req.body.customerPhone, 30);
+  if (req.body.notes) req.body.notes = sanitizeString(req.body.notes, 1000);
+  next();
+}
+
+function validateExpense(req, res, next) {
+  const { description, amount, category } = req.body;
+  if (!description || typeof description !== 'string') {
+    return res.status(400).json({ error: 'Description is required' });
+  }
+  if (amount === undefined || isNaN(amount) || Number(amount) <= 0) {
+    return res.status(400).json({ error: 'Amount must be a positive number' });
+  }
+  if (!category || typeof category !== 'string') {
+    return res.status(400).json({ error: 'Category is required' });
+  }
+  req.body.description = sanitizeString(description, 500);
+  req.body.category = sanitizeString(category, 100);
+  next();
+}
+
+function validateCustomer(req, res, next) {
+  const { name } = req.body;
+  if (!name || typeof name !== 'string' || name.length < 1 || name.length > 200) {
+    return res.status(400).json({ error: 'Customer name is required (max 200 characters)' });
+  }
+  req.body.name = sanitizeString(name, 200);
+  if (req.body.phone) req.body.phone = sanitizeString(req.body.phone, 30);
+  if (req.body.email) req.body.email = sanitizeString(req.body.email, 200);
+  next();
+}
+
 // ---- AUTH ----
-app.post('/api/v1/auth/register', async (req, res) => {
+app.post('/api/v1/auth/register', authLimiter, validateRegister, async (req, res) => {
   try {
     const { companyName, username, password, name } = req.body;
-    if (!companyName || !username || !password || !name) {
-      return res.status(400).json({ error: 'Company name, username, password, and name are required' });
-    }
 
     const slug = companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const existing = await prisma.company.findUnique({ where: { slug } });
@@ -72,10 +205,10 @@ app.post('/api/v1/auth/register', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, companyId: company.id }, JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: company.id, companyName: company.name } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/auth/login', async (req, res) => {
+app.post('/api/v1/auth/login', authLimiter, validateLogin, async (req, res) => {
   try {
     const { username, password } = req.body;
     const user = await prisma.user.findUnique({ where: { username }, include: { company: true } });
@@ -87,7 +220,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
     }
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, companyId: user.companyId }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/auth/me', authenticate, async (req, res) => {
@@ -95,7 +228,7 @@ app.get('/api/v1/auth/me', authenticate, async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: req.user.id }, include: { company: true } });
     if (!user) return res.status(401).json({ error: 'User not found' });
     res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- PRODUCTS ----
@@ -104,7 +237,7 @@ app.get('/api/v1/products/meta/categories', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const products = await prisma.product.findMany({ where: { companyId, category: { not: null } }, select: { category: true }, distinct: ['category'] });
     res.json(products.map(p => p.category).filter(Boolean));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/products', authenticate, async (req, res) => {
@@ -117,7 +250,7 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
     let products = await prisma.product.findMany({ where, orderBy: { createdAt: 'desc' } });
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     res.json(products);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/products/:id', authenticate, async (req, res) => {
@@ -126,7 +259,7 @@ app.get('/api/v1/products/:id', authenticate, async (req, res) => {
     const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 } } });
     if (!product) return res.status(404).json({ error: 'Not found' });
     res.json(product);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/products/:id/stock-log', authenticate, async (req, res) => {
@@ -134,10 +267,10 @@ app.get('/api/v1/products/:id/stock-log', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const logs = await prisma.stockLog.findMany({ where: { productId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(logs);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/products', authenticate, async (req, res) => {
+app.post('/api/v1/products', authenticate, validateProduct, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
@@ -147,11 +280,11 @@ app.post('/api/v1/products', authenticate, async (req, res) => {
     res.status(201).json(product);
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'SKU already exists' });
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
-app.put('/api/v1/products/:id', authenticate, async (req, res) => {
+app.put('/api/v1/products/:id', authenticate, validateProduct, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.product.findFirst({ where: { id: req.params.id, companyId } });
@@ -164,7 +297,7 @@ app.put('/api/v1/products/:id', authenticate, async (req, res) => {
       await prisma.stockLog.create({ data: { productId: product.id, change: stockChange, reason: 'Manual Adjustment', companyId } });
     }
     res.json(product);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.delete('/api/v1/products/:id', authenticate, async (req, res) => {
@@ -174,7 +307,7 @@ app.delete('/api/v1/products/:id', authenticate, async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Not found' });
     await prisma.product.update({ where: { id: req.params.id }, data: { isActive: false } });
     res.json({ message: 'Product deactivated' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.post('/api/v1/products/restock', authenticate, async (req, res) => {
@@ -190,7 +323,7 @@ app.post('/api/v1/products/restock', authenticate, async (req, res) => {
       results.push(updated);
     }
     res.json(results);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- SALES ----
@@ -215,7 +348,7 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
     const topDebtors = Object.values(debtorMap).sort((a, b) => b.totalOwed - a.totalOwed);
     const recentPayments = await prisma.creditPayment.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
     res.json({ totalOutstanding, overdueCount, overdueAmount, topDebtors, recentPayments });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/sales', authenticate, async (req, res) => {
@@ -232,7 +365,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
     const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { createdAt: 'desc' } });
     res.json(sales);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
@@ -241,10 +374,10 @@ app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
     const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     res.json(sale);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/sales', authenticate, async (req, res) => {
+app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = req.body;
@@ -325,7 +458,7 @@ app.post('/api/v1/sales', authenticate, async (req, res) => {
 
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: 'New', toStatus: sale.status, companyId } });
     res.status(201).json(sale);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
@@ -404,7 +537,7 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
 
     const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { items: { include: { product: true } }, customer: true } });
     res.json(sale);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
@@ -431,7 +564,7 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
     const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { items: { include: { product: true } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } } } });
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
@@ -451,7 +584,7 @@ app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
     await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
     await prisma.sale.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- CREDIT PAYMENTS ----
@@ -470,7 +603,7 @@ app.post('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
     const paymentStatus = newAmountPaid >= totalPrice ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
     const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
@@ -478,7 +611,7 @@ app.get('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const payments = await prisma.creditPayment.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(payments);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- REMINDERS ----
@@ -489,7 +622,7 @@ app.post('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const reminder = await prisma.debtReminder.create({ data: { saleId: sale.id, channel: req.body.channel, message: req.body.message || null, companyId } });
     res.status(201).json(reminder);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
@@ -497,7 +630,7 @@ app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const reminders = await prisma.debtReminder.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { sentAt: 'desc' } });
     res.json(reminders);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- RECEIPT DATA ----
@@ -510,7 +643,7 @@ app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
     const settingsMap = {};
     settings.forEach(s => { settingsMap[s.key] = s.value; });
     res.json({ sale, settings: settingsMap });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- EXPENSES ----
@@ -523,19 +656,19 @@ app.get('/api/v1/expenses', authenticate, async (req, res) => {
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     const expenses = await prisma.expense.findMany({ where, orderBy: { date: 'desc' } });
     res.json(expenses);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/expenses', authenticate, async (req, res) => {
+app.post('/api/v1/expenses', authenticate, validateExpense, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
     if (data.date) data.date = new Date(data.date);
     res.status(201).json(await prisma.expense.create({ data }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/expenses/:id', authenticate, async (req, res) => {
+app.put('/api/v1/expenses/:id', authenticate, validateExpense, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.expense.findFirst({ where: { id: req.params.id, companyId } });
@@ -544,7 +677,7 @@ app.put('/api/v1/expenses/:id', authenticate, async (req, res) => {
     delete data.companyId;
     if (data.date) data.date = new Date(data.date);
     res.json(await prisma.expense.update({ where: { id: req.params.id }, data }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.delete('/api/v1/expenses/:id', authenticate, async (req, res) => {
@@ -554,7 +687,7 @@ app.delete('/api/v1/expenses/:id', authenticate, async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Not found' });
     await prisma.expense.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- CUSTOMERS ----
@@ -566,7 +699,7 @@ app.get('/api/v1/customers', authenticate, async (req, res) => {
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { phone: { contains: search, mode: 'insensitive' } }]; }
     const customers = await prisma.customer.findMany({ where, include: { _count: { select: { sales: true } } }, orderBy: { createdAt: 'desc' } });
     res.json(customers);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/customers/:id', authenticate, async (req, res) => {
@@ -575,24 +708,24 @@ app.get('/api/v1/customers/:id', authenticate, async (req, res) => {
     const customer = await prisma.customer.findFirst({ where: { id: req.params.id, companyId }, include: { sales: { include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } } } });
     if (!customer) return res.status(404).json({ error: 'Not found' });
     res.json(customer);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/customers/:id/orders', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     res.json(await prisma.sale.findMany({ where: { customerId: req.params.id, companyId }, include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/customers', authenticate, async (req, res) => {
+app.post('/api/v1/customers', authenticate, validateCustomer, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     res.status(201).json(await prisma.customer.create({ data: { ...req.body, companyId } }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/customers/:id', authenticate, async (req, res) => {
+app.put('/api/v1/customers/:id', authenticate, validateCustomer, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.customer.findFirst({ where: { id: req.params.id, companyId } });
@@ -600,7 +733,7 @@ app.put('/api/v1/customers/:id', authenticate, async (req, res) => {
     const data = { ...req.body };
     delete data.companyId;
     res.json(await prisma.customer.update({ where: { id: req.params.id }, data }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.delete('/api/v1/customers/:id', authenticate, async (req, res) => {
@@ -610,7 +743,7 @@ app.delete('/api/v1/customers/:id', authenticate, async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Not found' });
     await prisma.customer.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- SHIPPING RATES ----
@@ -618,7 +751,7 @@ app.get('/api/v1/shipping-rates', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     res.json(await prisma.shippingRate.findMany({ where: { companyId }, orderBy: { city: 'asc' } }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.post('/api/v1/shipping-rates', authenticate, async (req, res) => {
@@ -627,7 +760,7 @@ app.post('/api/v1/shipping-rates', authenticate, async (req, res) => {
     res.status(201).json(await prisma.shippingRate.create({ data: { ...req.body, companyId } }));
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'City already exists' });
-    res.status(500).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -639,7 +772,7 @@ app.put('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
     const data = { ...req.body };
     delete data.companyId;
     res.json(await prisma.shippingRate.update({ where: { id: req.params.id }, data }));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.delete('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
@@ -649,7 +782,7 @@ app.delete('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Not found' });
     await prisma.shippingRate.delete({ where: { id: req.params.id } });
     res.json({ message: 'Deleted' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- DASHBOARD ----
@@ -803,7 +936,7 @@ app.get('/api/v1/reports/growth', authenticate, async (req, res) => {
     }
 
     res.json({ history, projections, avgGrowthRate, targetGrowthRate: 200 });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- REPORTS ----
@@ -825,7 +958,7 @@ app.get('/api/v1/reports/pnl', authenticate, async (req, res) => {
     expenses.forEach(e => { const a = parseFloat(e.amount); if (!expensesByCategory[e.category]) expensesByCategory[e.category] = 0; expensesByCategory[e.category] += a; totalExpenses += a; });
     const netProfit = grossProfit - totalExpenses;
     res.json({ revenue, cogs, shippingCost, shippingCharge, discount, grossProfit, expensesByCategory, totalExpenses, netProfit, profitMargin: cogs > 0 ? (netProfit / cogs) * 100 : 0 });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/reports/sales', authenticate, async (req, res) => {
@@ -838,7 +971,7 @@ app.get('/api/v1/reports/sales', authenticate, async (req, res) => {
     const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { date: 'desc' } });
     const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0) };
     res.json({ sales, summary });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/reports/expenses', authenticate, async (req, res) => {
@@ -852,7 +985,7 @@ app.get('/api/v1/reports/expenses', authenticate, async (req, res) => {
     const byCategory = {}; let total = 0;
     expenses.forEach(e => { const a = parseFloat(e.amount); if (!byCategory[e.category]) byCategory[e.category] = 0; byCategory[e.category] += a; total += a; });
     res.json({ expenses, byCategory, total });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/reports/products', authenticate, async (req, res) => {
@@ -865,7 +998,7 @@ app.get('/api/v1/reports/products', authenticate, async (req, res) => {
     const productMap = {};
     sales.forEach(s => { s.items.forEach(item => { const pid = item.productId; if (!productMap[pid]) productMap[pid] = { id: pid, name: item.product.name, sku: item.product.sku, revenue: 0, qtySold: 0, profit: 0, orders: 0 }; productMap[pid].revenue += parseFloat(item.totalPrice); productMap[pid].qtySold += item.qty; productMap[pid].profit += parseFloat(item.totalPrice) - (parseFloat(item.costPrice) * item.qty); productMap[pid].orders += 1; }); });
     res.json(Object.values(productMap).sort((a, b) => b.revenue - a.revenue));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/reports/customers', authenticate, async (req, res) => {
@@ -878,7 +1011,7 @@ app.get('/api/v1/reports/customers', authenticate, async (req, res) => {
     const customerMap = {};
     sales.forEach(s => { const cid = s.customerId; if (!cid) return; if (!customerMap[cid]) customerMap[cid] = { id: cid, name: s.customer?.name || s.customerName, phone: s.customer?.phone, city: s.customer?.city, totalSpent: 0, orderCount: 0 }; customerMap[cid].totalSpent += parseFloat(s.totalPrice); customerMap[cid].orderCount += 1; });
     res.json(Object.values(customerMap).sort((a, b) => b.totalSpent - a.totalSpent));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/reports/export/csv', authenticate, async (req, res) => {
@@ -917,7 +1050,7 @@ app.get('/api/v1/reports/export/csv', authenticate, async (req, res) => {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.send(csv);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- SETTINGS ----
@@ -927,7 +1060,7 @@ app.get('/api/v1/settings', authenticate, async (req, res) => {
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const obj = {}; settings.forEach(s => { obj[s.key] = s.value; });
     res.json(obj);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- INVENTORY ----
@@ -977,7 +1110,7 @@ app.get('/api/v1/inventory', authenticate, async (req, res) => {
       totalPotentialProfit: items.reduce((s, i) => s + i.potentialProfit, 0),
     };
     res.json({ items, summary });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.put('/api/v1/settings', authenticate, async (req, res) => {
@@ -989,7 +1122,7 @@ app.put('/api/v1/settings', authenticate, async (req, res) => {
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const obj = {}; settings.forEach(s => { obj[s.key] = s.value; });
     res.json(obj);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // ---- SUPERADMIN ----
@@ -1014,7 +1147,7 @@ app.get('/api/v1/superadmin/stats', authenticate, requireSuperadmin, async (req,
     const nameMap = {}; companyNames.forEach(c => { nameMap[c.id] = c.name; });
     const topCompanies = Object.entries(revenueByCompany).map(([id, data]) => ({ id, name: nameMap[id] || 'Unknown', ...data })).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
     res.json({ totalCompanies, activeCompanies, totalUsers, newestCompany, totalRevenue, totalCOGS, totalOrders, topCompanies });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/superadmin/companies', authenticate, requireSuperadmin, async (req, res) => {
@@ -1024,7 +1157,7 @@ app.get('/api/v1/superadmin/companies', authenticate, requireSuperadmin, async (
       include: { _count: { select: { users: true, products: true, sales: true, customers: true } } },
     });
     res.json(companies);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.get('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, async (req, res) => {
@@ -1045,7 +1178,7 @@ app.get('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, asy
     const totalExpenses = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
     const settingsObj = {}; company.settings.forEach(s => { settingsObj[s.key] = s.value; });
     res.json({ ...company, settings: settingsObj, metrics: { revenue, cogs, grossProfit: revenue - cogs, totalExpenses, netProfit: revenue - cogs - totalExpenses, totalOrders: sales.length } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.post('/api/v1/superadmin/companies', authenticate, requireSuperadmin, async (req, res) => {
@@ -1063,7 +1196,7 @@ app.post('/api/v1/superadmin/companies', authenticate, requireSuperadmin, async 
     const defaults = [{ key: 'currency', value: 'ZMW', companyId: company.id }, { key: 'businessName', value: companyName, companyId: company.id }, { key: 'currencySymbol', value: 'K', companyId: company.id }];
     for (const s of defaults) { await prisma.setting.create({ data: s }); }
     res.status(201).json({ company, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.put('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, async (req, res) => {
@@ -1073,7 +1206,7 @@ app.put('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, asy
     if (name) data.name = name;
     const company = await prisma.company.update({ where: { id: req.params.id }, data });
     res.json(company);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.put('/api/v1/superadmin/companies/:id/toggle-status', authenticate, requireSuperadmin, async (req, res) => {
@@ -1082,7 +1215,7 @@ app.put('/api/v1/superadmin/companies/:id/toggle-status', authenticate, requireS
     if (!company) return res.status(404).json({ error: 'Company not found' });
     const updated = await prisma.company.update({ where: { id: req.params.id }, data: { isActive: !company.isActive } });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, async (req, res) => {
@@ -1104,7 +1237,7 @@ app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, 
     await prisma.user.deleteMany({ where: { companyId } });
     await prisma.company.delete({ where: { id: companyId } });
     res.json({ message: `Company "${company.name}" and all data deleted` });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.put('/api/v1/superadmin/companies/:id/logo', authenticate, requireSuperadmin, async (req, res) => {
@@ -1114,7 +1247,7 @@ app.put('/api/v1/superadmin/companies/:id/logo', authenticate, requireSuperadmin
     if (!logo && logo !== '') return res.status(400).json({ error: 'Logo data required' });
     await prisma.setting.upsert({ where: { companyId_key: { companyId, key: 'companyLogo' } }, update: { value: logo }, create: { key: 'companyLogo', value: logo, companyId } });
     res.json({ message: 'Logo updated' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.post('/api/v1/superadmin/companies/:id/users', authenticate, requireSuperadmin, async (req, res) => {
@@ -1129,7 +1262,7 @@ app.post('/api/v1/superadmin/companies/:id/users', authenticate, requireSuperadm
     const hashed = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({ data: { username, password: hashed, name, role: 'admin', companyId } });
     res.status(201).json({ id: user.id, username: user.username, name: user.name, role: user.role, createdAt: user.createdAt });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.post('/api/v1/superadmin/users/:id/reset-password', authenticate, requireSuperadmin, async (req, res) => {
@@ -1142,7 +1275,7 @@ app.post('/api/v1/superadmin/users/:id/reset-password', authenticate, requireSup
     const hashed = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({ where: { id: req.params.id }, data: { password: hashed } });
     res.json({ message: 'Password reset successfully' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 module.exports = app;

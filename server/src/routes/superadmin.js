@@ -41,7 +41,7 @@ router.get('/stats', async (req, res) => {
       .slice(0, 5);
 
     res.json({ totalCompanies, activeCompanies, totalUsers, newestCompany, totalRevenue, totalCOGS, totalOrders, topCompanies });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // List all companies
@@ -53,7 +53,7 @@ router.get('/companies', async (req, res) => {
       include: { _count: { select: { users: true, products: true, sales: true, customers: true } } },
     });
     res.json(companies);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Get company detail with users and metrics
@@ -85,7 +85,7 @@ router.get('/companies/:id', async (req, res) => {
       settings: settingsObj,
       metrics: { revenue, cogs, grossProfit: revenue - cogs, totalExpenses, netProfit: revenue - cogs - totalExpenses, totalOrders: sales.length },
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Create company + admin
@@ -120,7 +120,7 @@ router.post('/companies', async (req, res) => {
     }
 
     res.status(201).json({ company, user: { id: user.id, username: user.username, name: user.name, role: user.role } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Edit company details
@@ -132,7 +132,7 @@ router.put('/companies/:id', async (req, res) => {
     if (name) data.name = name;
     const company = await prisma.company.update({ where: { id: req.params.id }, data });
     res.json(company);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Toggle company active status
@@ -143,7 +143,7 @@ router.put('/companies/:id/toggle-status', async (req, res) => {
     if (!company) return res.status(404).json({ error: 'Company not found' });
     const updated = await prisma.company.update({ where: { id: req.params.id }, data: { isActive: !company.isActive } });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Delete company and all data
@@ -169,7 +169,7 @@ router.delete('/companies/:id', async (req, res) => {
     await prisma.company.delete({ where: { id: companyId } });
 
     res.json({ message: `Company "${company.name}" and all data deleted` });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Upload company logo (saves to settings)
@@ -186,7 +186,7 @@ router.put('/companies/:id/logo', async (req, res) => {
       create: { key: 'companyLogo', value: logo, companyId },
     });
     res.json({ message: 'Logo updated' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Add user to existing company
@@ -211,7 +211,7 @@ router.post('/companies/:id/users', async (req, res) => {
     });
 
     res.status(201).json({ id: user.id, username: user.username, name: user.name, role: user.role, createdAt: user.createdAt });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Reset admin password
@@ -230,7 +230,7 @@ router.post('/users/:id/reset-password', async (req, res) => {
     const hashed = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({ where: { id: req.params.id }, data: { password: hashed } });
     res.json({ message: 'Password reset successfully' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 module.exports = router;
