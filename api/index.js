@@ -1074,7 +1074,7 @@ app.get('/api/v1/reports/inventory', authenticate, async (req, res) => {
       const turnoverRate = (unitsSold90d / avgStock) * 4;
       const isDeadStock = p.stock > 0 && (daysSinceLastSale === null || daysSinceLastSale > 90);
       const isLowStock = p.stock <= p.reorderLevel;
-      const margin = sellingPrice > 0 ? ((sellingPrice - costPrice) / sellingPrice) * 100 : 0;
+      const margin = costPrice > 0 ? ((sellingPrice - costPrice) / costPrice) * 100 : 0;
       productDetails.push({ id: p.id, name: p.name, sku: p.sku, category: p.category, stock: p.stock, reorderLevel: p.reorderLevel, costPrice, sellingPrice, margin, stockValue, potentialRevenue, potentialProfit, unitsSold90d, totalUnitsSold, turnoverRate, lastSoldDate, daysSinceLastSale, isDeadStock, isLowStock });
     });
     const deadStockItems = productDetails.filter(p => p.isDeadStock);
@@ -1138,7 +1138,7 @@ app.get('/api/v1/reports/export/csv', authenticate, async (req, res) => {
         const lastSoldDate = allSoldDates.length > 0 ? new Date(Math.max(...allSoldDates)) : null;
         const daysSinceLastSale = lastSoldDate ? Math.floor((now - lastSoldDate) / (1000 * 60 * 60 * 24)) : null;
         const isDeadStock = p.stock > 0 && (daysSinceLastSale === null || daysSinceLastSale > 90);
-        const margin = sellingPrice > 0 ? ((sellingPrice - costPrice) / sellingPrice) * 100 : 0;
+        const margin = costPrice > 0 ? ((sellingPrice - costPrice) / costPrice) * 100 : 0;
         data.push({ Product: p.name, SKU: p.sku, Category: p.category || '', Stock: p.stock, 'Cost Price': costPrice, 'Selling Price': sellingPrice, 'Stock Value': p.stock * costPrice, 'Potential Revenue': p.stock * sellingPrice, 'Margin %': margin.toFixed(1), 'Sold (90d)': unitsSold90d, 'Last Sold': lastSoldDate ? lastSoldDate.toISOString().slice(0, 10) : 'Never', Status: isDeadStock ? 'Dead Stock' : p.stock <= p.reorderLevel ? 'Low Stock' : 'OK' });
       });
       filename = 'inventory-report.csv';
