@@ -80,6 +80,8 @@ export const getSalesReport = (params) => api.get('/reports/sales', { params });
 export const getExpenseReport = (params) => api.get('/reports/expenses', { params });
 export const getProductReport = (params) => api.get('/reports/products', { params });
 export const getCustomerReport = (params) => api.get('/reports/customers', { params });
+export const getCreditReport = () => api.get('/reports/credit');
+export const getInventoryReport = () => api.get('/reports/inventory');
 export const exportCSV = (type, params) => api.get('/reports/export/csv', {
   params: { type, ...params },
   responseType: type === 'pnl' ? 'blob' : 'text'

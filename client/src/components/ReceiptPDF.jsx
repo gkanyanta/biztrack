@@ -3,7 +3,7 @@ import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/render
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: 'Helvetica' },
   header: { marginBottom: 20, borderBottom: '1 solid #333', paddingBottom: 10, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  logo: { width: 60, height: 60, objectFit: 'contain' },
+  logo: { width: 80, height: 80, objectFit: 'contain' },
   headerText: { flex: 1 },
   businessName: { fontSize: 18, fontWeight: 'bold', fontFamily: 'Helvetica-Bold' },
   receiptTitle: { fontSize: 14, marginTop: 4, color: '#555' },

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getPnlReport, getSalesReport, getExpenseReport, getProductReport, getCustomerReport, getGrowthReport, exportCSV } from '../services/api';
+import { getPnlReport, getSalesReport, getExpenseReport, getProductReport, getCustomerReport, getGrowthReport, getCreditReport, getInventoryReport, exportCSV } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -7,7 +7,7 @@ import { FiDownload, FiTrendingUp } from 'react-icons/fi';
 import { saveAs } from 'file-saver';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend
+  LineChart, Line, Legend, PieChart, Pie, Cell
 } from 'recharts';
 
 export default function Reports() {
@@ -18,14 +18,21 @@ export default function Reports() {
   const [growthData, setGrowthData] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const [creditData, setCreditData] = useState(null);
+  const [inventoryData, setInventoryData] = useState(null);
+
   const tabs = [
     { id: 'pnl', label: 'P&L Statement' },
     { id: 'sales', label: 'Sales' },
     { id: 'expenses', label: 'Expenses' },
     { id: 'products', label: 'Products' },
     { id: 'customers', label: 'Customers' },
+    { id: 'credit', label: 'Credit/Debt' },
+    { id: 'inventory', label: 'Inventory Valuation' },
     { id: 'growth', label: 'Growth & Projections' },
   ];
+
+  const autoLoadTabs = ['growth', 'credit', 'inventory'];
 
   const loadReport = async () => {
     setLoading(true);
@@ -33,7 +40,15 @@ export default function Reports() {
       if (activeTab === 'growth') {
         const res = await getGrowthReport();
         setGrowthData(res.data);
-        setData(null);
+        setData(null); setCreditData(null); setInventoryData(null);
+      } else if (activeTab === 'credit') {
+        const res = await getCreditReport();
+        setCreditData(res.data);
+        setData(null); setGrowthData(null); setInventoryData(null);
+      } else if (activeTab === 'inventory') {
+        const res = await getInventoryReport();
+        setInventoryData(res.data);
+        setData(null); setGrowthData(null); setCreditData(null);
       } else {
         const params = { from: from || undefined, to: to || undefined };
         let res;
@@ -45,15 +60,14 @@ export default function Reports() {
           case 'customers': res = await getCustomerReport(params); break;
         }
         setData(res.data);
-        setGrowthData(null);
+        setGrowthData(null); setCreditData(null); setInventoryData(null);
       }
     } catch { toast.error('Error loading report'); }
     setLoading(false);
   };
 
-  // Auto-load growth report when tab switches to it
   useEffect(() => {
-    if (activeTab === 'growth') loadReport();
+    if (autoLoadTabs.includes(activeTab)) loadReport();
   }, [activeTab]);
 
   const handleExport = async (type) => {
@@ -75,15 +89,15 @@ export default function Reports() {
       {/* Tabs */}
       <div className="flex gap-1 overflow-x-auto bg-gray-100 rounded-lg p-1">
         {tabs.map(tab => (
-          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setData(null); setGrowthData(null); }}
+          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setData(null); setGrowthData(null); setCreditData(null); setInventoryData(null); }}
             className={`px-3 py-2 text-sm rounded-md whitespace-nowrap transition-colors ${activeTab === tab.id ? 'bg-white text-gray-800 font-medium shadow-sm' : 'text-gray-600 hover:text-gray-800'}`}>
             {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Filters - hide for growth tab */}
-      {activeTab !== 'growth' && (
+      {/* Filters - hide for auto-load tabs */}
+      {!autoLoadTabs.includes(activeTab) && (
         <div className="flex flex-wrap gap-3 items-center">
           <input type="date" value={from} onChange={e => setFrom(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none" />
@@ -266,7 +280,33 @@ export default function Reports() {
         </div>
       )}
 
-      {!loading && !data && !growthData && activeTab !== 'growth' && (
+      {/* Credit/Debt Report */}
+      {!loading && creditData && activeTab === 'credit' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button onClick={() => handleExport('credit')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+              <FiDownload size={14} /> Export CSV
+            </button>
+          </div>
+          <CreditReport data={creditData} />
+        </div>
+      )}
+
+      {/* Inventory Valuation Report */}
+      {!loading && inventoryData && activeTab === 'inventory' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button onClick={() => handleExport('inventory')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+              <FiDownload size={14} /> Export CSV
+            </button>
+          </div>
+          <InventoryReport data={inventoryData} />
+        </div>
+      )}
+
+      {!loading && !data && !growthData && !creditData && !inventoryData && !autoLoadTabs.includes(activeTab) && (
         <div className="text-center text-gray-500 py-12">
           Select a date range and click Generate to view the report
         </div>
@@ -399,6 +439,259 @@ function GrowthReport({ data }) {
                   <td className="p-3 text-right text-red-500">{formatMoney(p.gap)}</td>
                   <td className="p-3 text-right">{formatMoney(p.targetTrajectory.adSpendNeeded)}</td>
                   <td className="p-3 text-right">{formatMoney(p.targetTrajectory.inventoryNeeded)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const AGING_COLORS = ['#10B981', '#F59E0B', '#F97316', '#EF4444', '#991B1B'];
+
+function CreditReport({ data }) {
+  const { totalOutstanding, overdueTotal, totalCreditIssued, totalCollected, collectionRate, aging, agingDetails, paymentTrends, totalDebtors } = data;
+
+  const agingChartData = [
+    { name: 'Current', value: aging.current },
+    { name: '1-30 days', value: aging.days30 },
+    { name: '31-60 days', value: aging.days60 },
+    { name: '61-90 days', value: aging.days90 },
+    { name: '90+ days', value: aging.days90plus },
+  ].filter(d => d.value > 0);
+
+  return (
+    <div className="space-y-6">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Total Outstanding</p>
+          <p className="text-2xl font-bold mt-1 text-red-600">{formatMoney(totalOutstanding)}</p>
+          <p className="text-xs text-gray-400 mt-1">{totalDebtors} debtor(s)</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Overdue</p>
+          <p className="text-2xl font-bold mt-1 text-amber-600">{formatMoney(overdueTotal)}</p>
+          <p className="text-xs text-gray-400 mt-1">Past due date</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Collection Rate</p>
+          <p className={`text-2xl font-bold mt-1 ${collectionRate >= 70 ? 'text-green-600' : collectionRate >= 40 ? 'text-amber-600' : 'text-red-600'}`}>{collectionRate.toFixed(1)}%</p>
+          <p className="text-xs text-gray-400 mt-1">{formatMoney(totalCollected)} of {formatMoney(totalCreditIssued)}</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Current (Not Due)</p>
+          <p className="text-2xl font-bold mt-1 text-green-600">{formatMoney(aging.current)}</p>
+          <p className="text-xs text-gray-400 mt-1">Within due date</p>
+        </div>
+      </div>
+
+      {/* Aging chart + breakdown */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Aging Breakdown</h3>
+          {agingChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={agingChartData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
+                  {agingChartData.map((_, i) => <Cell key={i} fill={AGING_COLORS[i % AGING_COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v) => formatMoney(v)} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-gray-400 text-sm text-center py-8">No outstanding credit</p>
+          )}
+        </div>
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Aging Summary</h3>
+          <div className="space-y-3">
+            {[
+              { label: 'Current (Not Due)', value: aging.current, color: 'bg-green-500' },
+              { label: '1-30 Days Overdue', value: aging.days30, color: 'bg-yellow-500' },
+              { label: '31-60 Days Overdue', value: aging.days60, color: 'bg-orange-500' },
+              { label: '61-90 Days Overdue', value: aging.days90, color: 'bg-red-500' },
+              { label: '90+ Days Overdue', value: aging.days90plus, color: 'bg-red-800' },
+            ].map(b => (
+              <div key={b.label} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${b.color}`} />
+                  <span className="text-sm text-gray-600">{b.label}</span>
+                </div>
+                <span className="text-sm font-medium">{formatMoney(b.value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Payment collection trends */}
+      {paymentTrends.length > 0 && (
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Monthly Collections (Last 6 Months)</h3>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={paymentTrends}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v) => formatMoney(v)} />
+              <Bar dataKey="amount" fill="#3B82F6" name="Collected" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Debtor details table */}
+      {agingDetails.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+          <div className="p-4 border-b border-gray-100">
+            <h3 className="text-sm font-semibold text-gray-700">Outstanding Debts</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-gray-50">
+                  <th className="text-left p-3 font-medium text-gray-600">Order</th>
+                  <th className="text-left p-3 font-medium text-gray-600">Customer</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Total</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Paid</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Balance</th>
+                  <th className="text-center p-3 font-medium text-gray-600">Aging</th>
+                  <th className="text-center p-3 font-medium text-gray-600">Days Overdue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agingDetails.map(d => (
+                  <tr key={d.id} className="border-b border-gray-50">
+                    <td className="p-3 font-medium">{d.orderNumber}</td>
+                    <td className="p-3">{d.customerName}<br/><span className="text-xs text-gray-400">{d.customerPhone}</span></td>
+                    <td className="p-3 text-right">{formatMoney(d.totalPrice)}</td>
+                    <td className="p-3 text-right">{formatMoney(d.amountPaid)}</td>
+                    <td className="p-3 text-right font-semibold text-red-600">{formatMoney(d.balance)}</td>
+                    <td className="p-3 text-center">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        d.bucket === 'Current' ? 'bg-green-100 text-green-700' :
+                        d.bucket === '1-30 days' ? 'bg-yellow-100 text-yellow-700' :
+                        d.bucket === '31-60 days' ? 'bg-orange-100 text-orange-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>{d.bucket}</span>
+                    </td>
+                    <td className="p-3 text-center">{d.daysOverdue > 0 ? d.daysOverdue : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CATEGORY_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'];
+
+function InventoryReport({ data }) {
+  const { summary, products, categoryBreakdown } = data;
+
+  return (
+    <div className="space-y-6">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Stock Value (Cost)</p>
+          <p className="text-2xl font-bold mt-1 text-gray-800">{formatMoney(summary.totalStockValue)}</p>
+          <p className="text-xs text-gray-400 mt-1">{summary.totalProducts} products</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Potential Revenue</p>
+          <p className="text-2xl font-bold mt-1 text-blue-600">{formatMoney(summary.totalPotentialRevenue)}</p>
+          <p className="text-xs text-gray-400 mt-1">If all stock sold</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Potential Profit</p>
+          <p className="text-2xl font-bold mt-1 text-green-600">{formatMoney(summary.totalPotentialProfit)}</p>
+          <p className="text-xs text-gray-400 mt-1">Revenue - Cost</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Dead Stock</p>
+          <p className="text-2xl font-bold mt-1 text-red-600">{formatMoney(summary.deadStockValue)}</p>
+          <p className="text-xs text-gray-400 mt-1">{summary.deadStockCount} item(s) not sold in 90+ days</p>
+        </div>
+      </div>
+
+      {/* Alerts */}
+      {(summary.deadStockCount > 0 || summary.lowStockCount > 0) && (
+        <div className="flex gap-4 flex-wrap">
+          {summary.deadStockCount > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+              <span className="font-medium">{summary.deadStockCount} dead stock item(s)</span> — {formatMoney(summary.deadStockValue)} tied up in unsold inventory (90+ days)
+            </div>
+          )}
+          {summary.lowStockCount > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+              <span className="font-medium">{summary.lowStockCount} item(s)</span> at or below reorder level
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Category breakdown chart */}
+      {categoryBreakdown.length > 0 && (
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Stock Value by Category</h3>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={categoryBreakdown}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v) => formatMoney(v)} />
+              <Legend />
+              <Bar dataKey="stockValue" fill="#3B82F6" name="Stock Value (Cost)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="potentialRevenue" fill="#10B981" name="Potential Revenue" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Product details table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+        <div className="p-4 border-b border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700">Product Inventory Details</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50">
+                <th className="text-left p-3 font-medium text-gray-600">Product</th>
+                <th className="text-right p-3 font-medium text-gray-600">Stock</th>
+                <th className="text-right p-3 font-medium text-gray-600">Cost</th>
+                <th className="text-right p-3 font-medium text-gray-600">Stock Value</th>
+                <th className="text-right p-3 font-medium text-gray-600">Margin</th>
+                <th className="text-right p-3 font-medium text-gray-600">Sold (90d)</th>
+                <th className="text-right p-3 font-medium text-gray-600">Turnover</th>
+                <th className="text-center p-3 font-medium text-gray-600">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {products.map(p => (
+                <tr key={p.id} className={`border-b border-gray-50 ${p.isDeadStock ? 'bg-red-50' : p.isLowStock ? 'bg-amber-50' : ''}`}>
+                  <td className="p-3">
+                    <span className="font-medium">{p.name}</span>
+                    <br/><span className="text-xs text-gray-400">{p.sku}{p.category ? ` · ${p.category}` : ''}</span>
+                  </td>
+                  <td className="p-3 text-right">{p.stock}</td>
+                  <td className="p-3 text-right">{formatMoney(p.costPrice)}</td>
+                  <td className="p-3 text-right font-medium">{formatMoney(p.stockValue)}</td>
+                  <td className="p-3 text-right">{p.margin.toFixed(1)}%</td>
+                  <td className="p-3 text-right">{p.unitsSold90d}</td>
+                  <td className="p-3 text-right">{p.turnoverRate.toFixed(1)}x</td>
+                  <td className="p-3 text-center">
+                    {p.isDeadStock && <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">Dead</span>}
+                    {!p.isDeadStock && p.isLowStock && <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Low</span>}
+                    {!p.isDeadStock && !p.isLowStock && <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">OK</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
