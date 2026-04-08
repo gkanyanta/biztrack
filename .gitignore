@@ -6,5 +6,7 @@ dist/
 *.log
 *.dump
 *.sql
+*.sql.gz
+backups/
 local_backup_*.json
 neon_backup_*.json
