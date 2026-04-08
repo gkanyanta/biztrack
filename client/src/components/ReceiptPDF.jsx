@@ -2,11 +2,12 @@ import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/render
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: 'Helvetica' },
-  header: { marginBottom: 20, borderBottom: '1 solid #333', paddingBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  header: { marginBottom: 20, borderBottom: '1 solid #333', paddingBottom: 10, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   logo: { width: 60, height: 60, objectFit: 'contain' },
   headerText: { flex: 1 },
   businessName: { fontSize: 18, fontWeight: 'bold', fontFamily: 'Helvetica-Bold' },
   receiptTitle: { fontSize: 14, marginTop: 4, color: '#555' },
+  companyDetail: { fontSize: 8, color: '#555', marginTop: 1 },
   row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   section: { marginBottom: 15 },
   sectionTitle: { fontSize: 11, fontWeight: 'bold', fontFamily: 'Helvetica-Bold', marginBottom: 6, color: '#333', borderBottom: '0.5 solid #ccc', paddingBottom: 3 },
@@ -61,6 +62,11 @@ export default function ReceiptPDF({ sale, settings = {} }) {
           {settings.companyLogo && <Image style={styles.logo} src={settings.companyLogo} />}
           <View style={styles.headerText}>
             <Text style={styles.businessName}>{businessName}</Text>
+            {settings.companyAddress && <Text style={styles.companyDetail}>{settings.companyAddress}</Text>}
+            {settings.companyTpin && <Text style={styles.companyDetail}>TPIN: {settings.companyTpin}</Text>}
+            {settings.companyPhone && <Text style={styles.companyDetail}>Tel: {settings.companyPhone}</Text>}
+            {settings.companyEmail && <Text style={styles.companyDetail}>Email: {settings.companyEmail}</Text>}
+            {settings.companyWebsite && <Text style={styles.companyDetail}>Web: {settings.companyWebsite}</Text>}
             <Text style={styles.receiptTitle}>RECEIPT / INVOICE</Text>
           </View>
         </View>

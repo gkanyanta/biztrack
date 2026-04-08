@@ -95,6 +95,45 @@ export default function Settings() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Company Address</label>
+            <textarea value={settings.companyAddress || ''}
+              onChange={e => setSettings({...settings, companyAddress: e.target.value})}
+              rows={2}
+              placeholder="e.g. Plot 123, Cairo Road, Lusaka"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">TPIN Number</label>
+            <input type="text" value={settings.companyTpin || ''}
+              onChange={e => setSettings({...settings, companyTpin: e.target.value})}
+              placeholder="e.g. 1234567890"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+            <input type="text" value={settings.companyPhone || ''}
+              onChange={e => setSettings({...settings, companyPhone: e.target.value})}
+              placeholder="e.g. +260 97 1234567"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+            <input type="email" value={settings.companyEmail || ''}
+              onChange={e => setSettings({...settings, companyEmail: e.target.value})}
+              placeholder="e.g. info@company.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Website</label>
+            <input type="text" value={settings.companyWebsite || ''}
+              onChange={e => setSettings({...settings, companyWebsite: e.target.value})}
+              placeholder="e.g. www.company.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="border-t border-gray-200 pt-4 mt-2">
+            <h4 className="text-sm font-medium text-gray-500 mb-3">Currency</h4>
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Currency Code</label>
             <input type="text" value={settings.currency || ''}
               onChange={e => setSettings({...settings, currency: e.target.value})}
