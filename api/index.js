@@ -399,7 +399,7 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
       const costPrice = parseFloat(product.costPrice);
       const qty = parseInt(item.qty);
       const totalPrice = qty * unitPrice;
-      return { productId: item.productId, qty, unitPrice, costPrice, totalPrice };
+      return { productId: item.productId, qty, unitPrice, costPrice, totalPrice, serialNumber: item.serialNumber || null };
     });
 
     const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
@@ -501,7 +501,7 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
         const costPrice = parseFloat(product.costPrice);
         const qty = parseInt(item.qty);
         const totalPrice = qty * unitPrice;
-        return { productId: item.productId, qty, unitPrice, costPrice, totalPrice };
+        return { productId: item.productId, qty, unitPrice, costPrice, totalPrice, serialNumber: item.serialNumber || null };
       });
       await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
       await prisma.saleItem.createMany({ data: saleItems.map(i => ({ ...i, saleId: req.params.id })) });
