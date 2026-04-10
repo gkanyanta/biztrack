@@ -110,15 +110,16 @@ model Sale {
 }
 
 model SaleItem {
-  id         String  @id @default(cuid())
-  saleId     String
-  sale       Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  productId  String
-  product    Product @relation(fields: [productId], references: [id])
-  qty        Int
-  unitPrice  Decimal @db.Decimal(10, 2)
-  costPrice  Decimal @db.Decimal(10, 2)
-  totalPrice Decimal @db.Decimal(10, 2)
+  id           String  @id @default(cuid())
+  saleId       String
+  sale         Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product @relation(fields: [productId], references: [id])
+  qty          Int
+  unitPrice    Decimal @db.Decimal(10, 2)
+  costPrice    Decimal @db.Decimal(10, 2)
+  totalPrice   Decimal @db.Decimal(10, 2)
+  serialNumber String?
 }
 
 model OrderStatusLog {

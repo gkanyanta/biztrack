@@ -122,7 +122,10 @@ export default function ReceiptPDF({ sale, settings = {} }) {
           </View>
           {items.map((item, idx) => (
             <View key={idx} style={styles.tableRow}>
-              <Text style={styles.col1}>{item.product?.name || 'Product'}</Text>
+              <View style={styles.col1}>
+                <Text>{item.product?.name || 'Product'}</Text>
+                {item.serialNumber && <Text style={{ fontSize: 8, color: '#666', marginTop: 1 }}>S/N: {item.serialNumber}</Text>}
+              </View>
               <Text style={styles.col2}>{item.qty}</Text>
               <Text style={styles.col3}>{formatMoney(item.unitPrice, currency)}</Text>
               <Text style={styles.col4}>{formatMoney(item.totalPrice, currency)}</Text>

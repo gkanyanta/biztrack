@@ -103,7 +103,7 @@ router.post('/', validateSale, async (req, res) => {
       const product = productMap[item.productId];
       const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
       const qty = parseInt(item.qty);
-      return { productId: item.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice: qty * unitPrice };
+      return { productId: item.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice: qty * unitPrice, serialNumber: item.serialNumber || null };
     });
     const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
     const discount = parseFloat(data.discount) || 0;
@@ -185,7 +185,7 @@ router.put('/:id', async (req, res) => {
         const product = productMap[item.productId];
         const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
         const qty = parseInt(item.qty);
-        return { saleId: req.params.id, productId: item.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice: qty * unitPrice };
+        return { saleId: req.params.id, productId: item.productId, qty, unitPrice, costPrice: parseFloat(product.costPrice), totalPrice: qty * unitPrice, serialNumber: item.serialNumber || null };
       });
       await prisma.saleItem.createMany({ data: saleItems });
 

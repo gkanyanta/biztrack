@@ -7,7 +7,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge, PaymentBadge } from '../components/StatusBadge';
 import ReceiptButton from '../components/ReceiptButton';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera } from 'react-icons/fi';
+import BarcodeScanner from '../components/BarcodeScanner';
 
 export default function Sales() {
   const [sales, setSales] = useState([]);
@@ -22,6 +23,7 @@ export default function Sales() {
   const [showDetail, setShowDetail] = useState(null);
   const [productSearch, setProductSearch] = useState('');
   const [showProductPicker, setShowProductPicker] = useState(false);
+  const [scanningItemIdx, setScanningItemIdx] = useState(null);
 
   // Line items for the order
   const [orderItems, setOrderItems] = useState([]);
@@ -53,14 +55,19 @@ export default function Sales() {
     if (existing) {
       setOrderItems(orderItems.map(i => i.productId === product.id ? { ...i, qty: i.qty + 1 } : i));
     } else {
-      setOrderItems([...orderItems, { productId: product.id, name: product.name, sku: product.sku, qty: 1, unitPrice: parseFloat(product.sellingPrice), stock: product.stock }]);
+      setOrderItems([...orderItems, { productId: product.id, name: product.name, sku: product.sku, qty: 1, unitPrice: parseFloat(product.sellingPrice), stock: product.stock, serialNumber: '' }]);
     }
     setShowProductPicker(false);
     setProductSearch('');
   };
 
   const updateItem = (idx, field, value) => {
-    setOrderItems(orderItems.map((item, i) => i === idx ? { ...item, [field]: field === 'qty' ? parseInt(value) || 1 : parseFloat(value) || 0 } : item));
+    setOrderItems(orderItems.map((item, i) => {
+      if (i !== idx) return item;
+      if (field === 'qty') return { ...item, qty: parseInt(value) || 1 };
+      if (field === 'serialNumber') return { ...item, serialNumber: value };
+      return { ...item, [field]: parseFloat(value) || 0 };
+    }));
   };
 
   const removeItem = (idx) => {
@@ -77,7 +84,7 @@ export default function Sales() {
   const openEdit = (sale) => {
     setEditing(sale);
     setOrderItems((sale.items || []).map(i => ({
-      productId: i.productId, name: i.product?.name || 'Product', sku: i.product?.sku || '', qty: i.qty, unitPrice: parseFloat(i.unitPrice), stock: i.product?.stock || 0
+      productId: i.productId, name: i.product?.name || 'Product', sku: i.product?.sku || '', qty: i.qty, unitPrice: parseFloat(i.unitPrice), stock: i.product?.stock || 0, serialNumber: i.serialNumber || ''
     })));
     setForm({
       customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
@@ -105,7 +112,7 @@ export default function Sales() {
     try {
       const data = {
         ...form,
-        items: orderItems.map(i => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice })),
+        items: orderItems.map(i => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice, serialNumber: i.serialNumber || null })),
         shippingCost: parseFloat(form.shippingCost) || 0,
         shippingCharge: parseFloat(form.shippingCharge) || 0,
         discount: parseFloat(form.discount) || 0,
@@ -321,18 +328,29 @@ export default function Sales() {
             ) : (
               <div className="space-y-2">
                 {orderItems.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-800 text-sm truncate">{item.name}</div>
-                      <div className="text-xs text-gray-400">{item.sku}</div>
+                  <div key={idx} className="bg-gray-50 rounded-lg p-2 border border-gray-200 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-gray-800 text-sm truncate">{item.name}</div>
+                        <div className="text-xs text-gray-400">{item.sku}</div>
+                      </div>
+                      <input type="number" min="1" value={item.qty} onChange={e => updateItem(idx, 'qty', e.target.value)}
+                        className="w-16 border border-gray-300 rounded px-2 py-1 text-sm text-center outline-none focus:ring-1 focus:ring-blue-500" />
+                      <span className="text-gray-400 text-xs">x</span>
+                      <input type="number" step="0.01" value={item.unitPrice} onChange={e => updateItem(idx, 'unitPrice', e.target.value)}
+                        className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-blue-500" />
+                      <span className="text-sm font-medium text-gray-700 w-24 text-right">{formatMoney(item.qty * item.unitPrice)}</span>
+                      <button type="button" onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600"><FiX size={16} /></button>
                     </div>
-                    <input type="number" min="1" value={item.qty} onChange={e => updateItem(idx, 'qty', e.target.value)}
-                      className="w-16 border border-gray-300 rounded px-2 py-1 text-sm text-center outline-none focus:ring-1 focus:ring-blue-500" />
-                    <span className="text-gray-400 text-xs">x</span>
-                    <input type="number" step="0.01" value={item.unitPrice} onChange={e => updateItem(idx, 'unitPrice', e.target.value)}
-                      className="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-blue-500" />
-                    <span className="text-sm font-medium text-gray-700 w-24 text-right">{formatMoney(item.qty * item.unitPrice)}</span>
-                    <button type="button" onClick={() => removeItem(idx)} className="p-1 text-red-400 hover:text-red-600"><FiX size={16} /></button>
+                    <div className="flex items-center gap-1 pl-1">
+                      <span className="text-xs text-gray-400">S/N:</span>
+                      <input type="text" placeholder="Serial number" value={item.serialNumber || ''} onChange={e => updateItem(idx, 'serialNumber', e.target.value)}
+                        className="flex-1 border border-gray-200 rounded px-2 py-0.5 text-xs outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      <button type="button" onClick={() => setScanningItemIdx(idx)} title="Scan barcode"
+                        className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded">
+                        <FiCamera size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 <div className="flex justify-end text-sm font-semibold text-gray-800 pr-10">
@@ -501,6 +519,7 @@ export default function Sales() {
                     <div>
                       <span className="font-medium text-gray-800">{item.product?.name || 'Product'}</span>
                       <span className="text-gray-400 ml-2">x{item.qty} @ {formatMoney(item.unitPrice)}</span>
+                      {item.serialNumber && <div className="text-xs text-gray-500">S/N: {item.serialNumber}</div>}
                     </div>
                     <span className="font-medium">{formatMoney(item.totalPrice)}</span>
                   </div>
@@ -584,6 +603,13 @@ export default function Sales() {
           </div>
         )}
       </Modal>
+
+      {scanningItemIdx !== null && (
+        <BarcodeScanner
+          onScan={(code) => { updateItem(scanningItemIdx, 'serialNumber', code); setScanningItemIdx(null); }}
+          onClose={() => setScanningItemIdx(null)}
+        />
+      )}
 
       <ConfirmDialog isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete}
         title="Delete Sale" message={`Delete order ${deleteConfirm?.orderNumber}? Stock will be restored if applicable.`} />
