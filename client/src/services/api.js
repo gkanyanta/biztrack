@@ -97,6 +97,11 @@ export const getCommissionSummary = (params) => api.get('/consultants/commission
 export const recordCommissionPayment = (consultantId, data) => api.post(`/consultants/${consultantId}/payments`, data);
 export const getCommissionPayments = (consultantId) => api.get(`/consultants/${consultantId}/payments`);
 
+// Store (public)
+export const getStoreInfo = (slug) => api.get(`/store/${slug}/info`);
+export const getStoreProducts = (slug, params) => api.get(`/store/${slug}/products`, { params });
+export const placeStoreOrder = (slug, data) => api.post(`/store/${slug}/order`, data);
+
 // Inventory
 export const getInventory = (params) => api.get('/inventory', { params });
 

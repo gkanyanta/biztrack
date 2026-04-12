@@ -15,6 +15,7 @@ import Settings from './pages/Settings';
 import CreditTracker from './pages/CreditTracker';
 import Inventory from './pages/Inventory';
 import Consultants from './pages/Consultants';
+import Store from './pages/Store';
 import SuperadminPanel from './pages/SuperadminPanel';
 
 function PrivateRoute({ children }) {
@@ -34,6 +35,7 @@ function AppRoutes() {
 
   return (
     <Routes>
+      <Route path="/store/:slug" element={<Store />} />
       <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
