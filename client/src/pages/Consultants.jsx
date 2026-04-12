@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant } from '../services/api';
+import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant, getSettings } from '../services/api';
 import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
+import PayStatementPDF from '../components/PayStatementPDF';
+import { pdf } from '@react-pdf/renderer';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload } from 'react-icons/fi';
 
 export default function Consultants() {
   const [consultants, setConsultants] = useState([]);
@@ -86,16 +88,52 @@ export default function Consultants() {
     setShowPaymentForm(true);
   };
 
+  const generatePayStatement = async (consultant, payment, consultantDetail) => {
+    try {
+      let settings = {};
+      try { const res = await getSettings(); settings = res.data; } catch {}
+      const salesForPeriod = (consultantDetail?.sales || []).filter(s => {
+        if (!payment.periodFrom && !payment.periodTo) return true;
+        const d = new Date(s.date);
+        if (payment.periodFrom && d < new Date(payment.periodFrom)) return false;
+        if (payment.periodTo && d > new Date(payment.periodTo + 'T23:59:59.999Z')) return false;
+        return true;
+      });
+      const summaryData = {
+        totalSales: consultantDetail?.totalSales || 0,
+        commissionEarned: consultantDetail?.commissionEarned || 0,
+        commissionPaid: consultantDetail?.commissionPaid || 0,
+        allowancePaid: consultantDetail?.allowancePaid || 0,
+        balance: consultantDetail?.balance || 0,
+      };
+      const blob = await pdf(
+        <PayStatementPDF consultant={consultant} payment={payment} sales={salesForPeriod} summary={summaryData} settings={settings} />
+      ).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const typeLabel = payment.type === 'commission' ? 'Commission' : 'Allowance';
+      a.download = `PayStatement-${consultant.name.replace(/\s+/g, '_')}-${typeLabel}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to generate pay statement:', err);
+      toast.error('Failed to generate pay statement');
+    }
+  };
+
   const handlePayment = async (e) => {
     e.preventDefault();
     try {
-      await recordCommissionPayment(showDetail.id, paymentForm);
+      const { data: payment } = await recordCommissionPayment(showDetail.id, paymentForm);
       toast.success('Payment recorded');
       setShowPaymentForm(false);
       // Refresh detail
       const { data } = await getConsultant(showDetail.id);
       setShowDetail(data);
       loadData();
+      // Auto-generate pay statement PDF
+      await generatePayStatement(showDetail, payment, data);
     } catch (err) { toast.error(err.response?.data?.error || 'Error recording payment'); }
   };
 
@@ -336,6 +374,7 @@ export default function Consultants() {
                         <th className="text-right p-2 font-medium text-gray-600">Amount</th>
                         <th className="text-left p-2 font-medium text-gray-600">Method</th>
                         <th className="text-left p-2 font-medium text-gray-600">Reference</th>
+                        <th className="text-center p-2 font-medium text-gray-600">PDF</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -350,6 +389,12 @@ export default function Consultants() {
                           <td className="p-2 text-right font-medium">{formatMoney(p.amount)}</td>
                           <td className="p-2 text-gray-600">{p.paymentMethod || '-'}</td>
                           <td className="p-2 text-gray-600">{p.reference || '-'}</td>
+                          <td className="p-2 text-center">
+                            <button onClick={() => generatePayStatement(showDetail, p, showDetail)}
+                              className="p-1 text-blue-500 hover:text-blue-700" title="Download Pay Statement">
+                              <FiDownload size={14} />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
