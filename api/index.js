@@ -47,13 +47,13 @@ app.use(express.json({ limit: '2mb' }));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'biztrack-default-secret';
 
-// Tiered commission: first N sales at base rate, rest at tier rate
-function calcCommission(totalSales, commissionRate, tierThreshold, tierRate) {
+// Tiered commission: first N products at base rate, rest at tier rate
+function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRate) {
   const base = parseFloat(commissionRate);
   const tier = parseFloat(tierRate);
   const threshold = parseInt(tierThreshold) || 50;
-  if (totalSales <= threshold) return totalSales * base;
-  return (threshold * base) + ((totalSales - threshold) * tier);
+  if (totalProductsSold <= threshold) return totalProductsSold * base;
+  return (threshold * base) + ((totalProductsSold - threshold) * tier);
 }
 
 // Auth middleware
@@ -925,15 +925,16 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
       const byConsultant = consultants.map(c => {
         const cSales = consultantSales.filter(s => s.consultantId === c.id);
         const cTotalSales = cSales.length;
+        const cProductsSold = cSales.reduce((s, r) => s + r.items.reduce((q, i) => q + i.qty, 0), 0);
         const cRevenue = cSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
         const cCOGS = cSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
         const cGrossProfit = cRevenue - cCOGS;
-        const cCommissionEarned = calcCommission(cTotalSales, c.commissionRate, c.tierThreshold, c.tierRate);
+        const cCommissionEarned = calcCommission(cProductsSold, c.commissionRate, c.tierThreshold, c.tierRate);
         const cPaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cAllowancePaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cNetProfit = cGrossProfit - cCommissionEarned;
         const conversionRate = cTotalSales > 0 ? (cRevenue / cTotalSales) : 0;
-        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotalSales, revenue: cRevenue, grossProfit: cGrossProfit, commissionEarned: cCommissionEarned, commissionPaid: cPaid, allowancePaid: cAllowancePaid, netProfit: cNetProfit, avgOrderValue: conversionRate, balance: cCommissionEarned - cPaid };
+        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotalSales, productsSold: cProductsSold, revenue: cRevenue, grossProfit: cGrossProfit, commissionEarned: cCommissionEarned, commissionPaid: cPaid, allowancePaid: cAllowancePaid, netProfit: cNetProfit, avgOrderValue: conversionRate, balance: cCommissionEarned - cPaid };
       });
 
       const totalCommissionEarned = byConsultant.reduce((s, c) => s + c.commissionEarned, 0);
@@ -1450,13 +1451,14 @@ app.get('/api/v1/consultants/commission-summary', authenticate, async (req, res)
     const summary = consultants.map(c => {
       const cSales = sales.filter(s => s.consultantId === c.id);
       const totalSales = cSales.length;
+      const totalProductsSold = cSales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-      const commissionEarned = calcCommission(totalSales, c.commissionRate, c.tierThreshold, c.tierRate);
+      const commissionEarned = calcCommission(totalProductsSold, c.commissionRate, c.tierThreshold, c.tierRate);
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const balance = commissionEarned - commissionPaid;
-      return { consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive }, totalSales, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance };
+      return { consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive }, totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance };
     });
     const totals = { totalSales: summary.reduce((s, c) => s + c.totalSales, 0), totalRevenue: summary.reduce((s, c) => s + c.totalRevenue, 0), totalCommissionEarned: summary.reduce((s, c) => s + c.commissionEarned, 0), totalCommissionPaid: summary.reduce((s, c) => s + c.commissionPaid, 0), totalAllowancePaid: summary.reduce((s, c) => s + c.allowancePaid, 0), totalBalance: summary.reduce((s, c) => s + c.balance, 0) };
     res.json({ summary, totals });
@@ -1483,12 +1485,13 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
     const sales = await prisma.sale.findMany({ where: { consultantId: consultant.id, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId: consultant.id, companyId }, orderBy: { createdAt: 'desc' } });
     const totalSales = sales.length;
+    const totalProductsSold = sales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const commissionEarned = calcCommission(totalSales, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate);
+    const commissionEarned = calcCommission(totalProductsSold, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
-    res.json({ ...consultant, totalSales, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance, sales, payments });
+    res.json({ ...consultant, totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance, sales, payments });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

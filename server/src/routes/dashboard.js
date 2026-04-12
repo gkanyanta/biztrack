@@ -139,13 +139,14 @@ router.get('/', async (req, res) => {
       const byConsultant = consultants2.map(c => {
         const cSales = consultantSales2.filter(s => s.consultantId === c.id);
         const cTotal = cSales.length;
+        const cProdSold = cSales.reduce((s, r) => s + r.items.reduce((q, i) => q + i.qty, 0), 0);
         const cRev = cSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
         const cCOGS = cSales.reduce((s, r) => s + saleCOGS(r), 0);
         const cGP = cRev - cCOGS;
-        const cComm = calcComm(cTotal, c.commissionRate, c.tierThreshold, c.tierRate);
+        const cComm = calcComm(cProdSold, c.commissionRate, c.tierThreshold, c.tierRate);
         const cPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cAllPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
-        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotal, revenue: cRev, grossProfit: cGP, commissionEarned: cComm, commissionPaid: cPaid, allowancePaid: cAllPaid, netProfit: cGP - cComm, avgOrderValue: cTotal > 0 ? cRev / cTotal : 0, balance: cComm - cPaid };
+        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotal, productsSold: cProdSold, revenue: cRev, grossProfit: cGP, commissionEarned: cComm, commissionPaid: cPaid, allowancePaid: cAllPaid, netProfit: cGP - cComm, avgOrderValue: cTotal > 0 ? cRev / cTotal : 0, balance: cComm - cPaid };
       });
       const totalCommEarned = byConsultant.reduce((s, c) => s + c.commissionEarned, 0);
       consultantImpact = {

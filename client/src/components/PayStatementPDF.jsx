@@ -92,12 +92,12 @@ export default function PayStatementPDF({ consultant, payment, sales = [], summa
         <View style={[styles.section, { marginTop: 15 }]}>
           <Text style={styles.sectionTitle}>Commission Structure</Text>
           <View style={styles.row}>
-            <Text style={styles.label}>Base Rate (first {consultant.tierThreshold || 50} sales/month)</Text>
-            <Text style={styles.value}>{formatMoney(consultant.commissionRate, currency)} per sale</Text>
+            <Text style={styles.label}>Base Rate (first {consultant.tierThreshold || 50} products/month)</Text>
+            <Text style={styles.value}>{formatMoney(consultant.commissionRate, currency)} per product</Text>
           </View>
           <View style={styles.row}>
-            <Text style={styles.label}>Tier Rate (after {consultant.tierThreshold || 50} sales)</Text>
-            <Text style={styles.value}>{formatMoney(consultant.tierRate || 30, currency)} per sale</Text>
+            <Text style={styles.label}>Tier Rate (after {consultant.tierThreshold || 50} products)</Text>
+            <Text style={styles.value}>{formatMoney(consultant.tierRate || 30, currency)} per product</Text>
           </View>
           <View style={styles.row}>
             <Text style={styles.label}>Monthly Communication Allowance</Text>

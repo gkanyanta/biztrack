@@ -245,9 +245,9 @@ export default function Dashboard() {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <div className="bg-indigo-50 rounded-lg p-3">
-              <p className="text-xs text-gray-500">Consultant Sales</p>
+              <p className="text-xs text-gray-500">Consultant Orders</p>
               <p className="text-xl font-bold text-indigo-700">{data.consultantImpact.consultantSalesCount}</p>
-              <p className="text-xs text-gray-400">{data.consultantImpact.consultantSharePercent.toFixed(0)}% of all sales</p>
+              <p className="text-xs text-gray-400">{data.consultantImpact.consultantSharePercent.toFixed(0)}% of all orders</p>
             </div>
             <div className="bg-blue-50 rounded-lg p-3">
               <p className="text-xs text-gray-500">Revenue via Consultants</p>
@@ -273,9 +273,9 @@ export default function Dashboard() {
                 <thead>
                   <tr className="bg-gray-50 border-b">
                     <th className="text-left p-2 font-medium text-gray-600">Consultant</th>
-                    <th className="text-right p-2 font-medium text-gray-600">Sales</th>
+                    <th className="text-right p-2 font-medium text-gray-600">Orders</th>
+                    <th className="text-right p-2 font-medium text-gray-600">Products</th>
                     <th className="text-right p-2 font-medium text-gray-600 hidden sm:table-cell">Revenue</th>
-                    <th className="text-right p-2 font-medium text-gray-600 hidden md:table-cell">Avg Order</th>
                     <th className="text-right p-2 font-medium text-gray-600">Commission</th>
                     <th className="text-right p-2 font-medium text-gray-600 hidden sm:table-cell">Your Profit</th>
                   </tr>
@@ -285,8 +285,8 @@ export default function Dashboard() {
                     <tr key={c.id} className="border-b border-gray-50">
                       <td className="p-2 font-medium text-gray-800">{c.name}</td>
                       <td className="p-2 text-right">{c.totalSales}</td>
+                      <td className="p-2 text-right font-medium">{c.productsSold || 0}</td>
                       <td className="p-2 text-right hidden sm:table-cell">{formatMoney(c.revenue)}</td>
-                      <td className="p-2 text-right hidden md:table-cell">{formatMoney(c.avgOrderValue)}</td>
                       <td className="p-2 text-right text-orange-600">{formatMoney(c.commissionEarned)}</td>
                       <td className="p-2 text-right hidden sm:table-cell text-green-600 font-medium">{formatMoney(c.netProfit)}</td>
                     </tr>
@@ -295,8 +295,8 @@ export default function Dashboard() {
                   <tr className="bg-gray-50 font-medium">
                     <td className="p-2 text-gray-600">Direct (no consultant)</td>
                     <td className="p-2 text-right">{data.consultantImpact.directSalesCount}</td>
+                    <td className="p-2 text-right">-</td>
                     <td className="p-2 text-right hidden sm:table-cell">{formatMoney(data.consultantImpact.directRevenue)}</td>
-                    <td className="p-2 text-right hidden md:table-cell">-</td>
                     <td className="p-2 text-right">-</td>
                     <td className="p-2 text-right hidden sm:table-cell">-</td>
                   </tr>

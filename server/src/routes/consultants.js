@@ -1,13 +1,13 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 
-// Tiered commission: first N sales at base rate, rest at tier rate
-function calcCommission(totalSales, commissionRate, tierThreshold, tierRate) {
+// Tiered commission: first N products at base rate, rest at tier rate
+function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRate) {
   const base = parseFloat(commissionRate);
   const tier = parseFloat(tierRate);
   const threshold = parseInt(tierThreshold) || 50;
-  if (totalSales <= threshold) return totalSales * base;
-  return (threshold * base) + ((totalSales - threshold) * tier);
+  if (totalProductsSold <= threshold) return totalProductsSold * base;
+  return (threshold * base) + ((totalProductsSold - threshold) * tier);
 }
 
 router.use(authenticate);
@@ -44,15 +44,16 @@ router.get('/commission-summary', async (req, res) => {
     const summary = consultants.map(c => {
       const cSales = sales.filter(s => s.consultantId === c.id);
       const totalSales = cSales.length;
+      const totalProductsSold = cSales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-      const commissionEarned = calcCommission(totalSales, c.commissionRate, c.tierThreshold, c.tierRate);
+      const commissionEarned = calcCommission(totalProductsSold, c.commissionRate, c.tierThreshold, c.tierRate);
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const balance = commissionEarned - commissionPaid;
       return {
         consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive },
-        totalSales, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance
+        totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance
       };
     });
 
@@ -89,13 +90,14 @@ router.get('/:id', async (req, res) => {
     });
 
     const totalSales = sales.length;
+    const totalProductsSold = sales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const commissionEarned = calcCommission(totalSales, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate);
+    const commissionEarned = calcCommission(totalProductsSold, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
 
-    res.json({ ...consultant, totalSales, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance, sales, payments });
+    res.json({ ...consultant, totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance, sales, payments });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

@@ -136,8 +136,9 @@ export default function Reports() {
           {/* Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-              <p className="text-xs text-gray-500">Total Consultant Sales</p>
-              <p className="text-2xl font-bold text-gray-800">{consultantData.totals.totalSales}</p>
+              <p className="text-xs text-gray-500">Total Products Sold</p>
+              <p className="text-2xl font-bold text-gray-800">{consultantData.summary.reduce((s, c) => s + (c.totalProductsSold || 0), 0)}</p>
+              <p className="text-xs text-gray-400">{consultantData.totals.totalSales} orders</p>
             </div>
             <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
               <p className="text-xs text-gray-500">Revenue via Consultants</p>
@@ -177,9 +178,9 @@ export default function Reports() {
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="text-left p-3 font-medium text-gray-600">Consultant</th>
-                  <th className="text-right p-3 font-medium text-gray-600">Sales</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Products</th>
+                  <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Orders</th>
                   <th className="text-right p-3 font-medium text-gray-600">Revenue</th>
-                  <th className="text-right p-3 font-medium text-gray-600 hidden md:table-cell">Avg Order</th>
                   <th className="text-right p-3 font-medium text-gray-600">Commission</th>
                   <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Paid</th>
                   <th className="text-right p-3 font-medium text-gray-600">Balance</th>
@@ -192,9 +193,9 @@ export default function Reports() {
                       <span className="font-medium text-gray-800">{c.consultant.name}</span>
                       {!c.consultant.isActive && <span className="text-xs text-red-500 ml-1">(inactive)</span>}
                     </td>
-                    <td className="p-3 text-right font-medium">{c.totalSales}</td>
+                    <td className="p-3 text-right font-medium">{c.totalProductsSold || 0}</td>
+                    <td className="p-3 text-right hidden sm:table-cell">{c.totalSales}</td>
                     <td className="p-3 text-right">{formatMoney(c.totalRevenue)}</td>
-                    <td className="p-3 text-right hidden md:table-cell">{c.totalSales > 0 ? formatMoney(c.totalRevenue / c.totalSales) : '-'}</td>
                     <td className="p-3 text-right text-orange-600 font-medium">{formatMoney(c.commissionEarned)}</td>
                     <td className="p-3 text-right hidden sm:table-cell text-green-600">{formatMoney(c.commissionPaid)}</td>
                     <td className="p-3 text-right">
@@ -206,9 +207,9 @@ export default function Reports() {
               <tfoot>
                 <tr className="bg-gray-50 font-semibold">
                   <td className="p-3 text-gray-800">Total</td>
-                  <td className="p-3 text-right">{consultantData.totals.totalSales}</td>
+                  <td className="p-3 text-right">{consultantData.summary.reduce((s, c) => s + (c.totalProductsSold || 0), 0)}</td>
+                  <td className="p-3 text-right hidden sm:table-cell">{consultantData.totals.totalSales}</td>
                   <td className="p-3 text-right">{formatMoney(consultantData.totals.totalRevenue)}</td>
-                  <td className="p-3 text-right hidden md:table-cell">{consultantData.totals.totalSales > 0 ? formatMoney(consultantData.totals.totalRevenue / consultantData.totals.totalSales) : '-'}</td>
                   <td className="p-3 text-right text-orange-600">{formatMoney(consultantData.totals.totalCommissionEarned)}</td>
                   <td className="p-3 text-right hidden sm:table-cell text-green-600">{formatMoney(consultantData.totals.totalCommissionPaid)}</td>
                   <td className="p-3 text-right text-red-600">{formatMoney(consultantData.totals.totalBalance)}</td>

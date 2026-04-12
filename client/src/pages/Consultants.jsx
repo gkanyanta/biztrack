@@ -183,7 +183,7 @@ export default function Consultants() {
                 <th className="text-left p-3 font-medium text-gray-600">Name</th>
                 <th className="text-left p-3 font-medium text-gray-600 hidden sm:table-cell">Phone</th>
                 <th className="text-right p-3 font-medium text-gray-600">Rate</th>
-                <th className="text-right p-3 font-medium text-gray-600">Sales</th>
+                <th className="text-right p-3 font-medium text-gray-600">Products</th>
                 <th className="text-right p-3 font-medium text-gray-600 hidden md:table-cell">Earned</th>
                 <th className="text-right p-3 font-medium text-gray-600 hidden md:table-cell">Paid</th>
                 <th className="text-right p-3 font-medium text-gray-600">Balance</th>
@@ -204,7 +204,7 @@ export default function Consultants() {
                       <span>{formatMoney(c.commissionRate)}</span>
                       <span className="text-xs text-gray-400">/{formatMoney(c.tierRate || 30)}</span>
                     </td>
-                    <td className="p-3 text-right font-medium text-gray-800">{s?.totalSales || 0}</td>
+                    <td className="p-3 text-right font-medium text-gray-800">{s?.totalProductsSold || 0}</td>
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionEarned || 0)}</td>
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionPaid || 0)}</td>
                     <td className="p-3 text-right font-medium">
@@ -258,7 +258,7 @@ export default function Consultants() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tier After (sales/month)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tier After (products/month)</label>
               <input type="number" value={form.tierThreshold} onChange={e => setForm({...form, tierThreshold: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
@@ -273,7 +273,7 @@ export default function Consultants() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div className="sm:col-span-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
-              First {form.tierThreshold || 50} sales: {formatMoney(form.commissionRate || 50)}/sale, then {formatMoney(form.tierRate || 30)}/sale after that
+              First {form.tierThreshold || 50} products: {formatMoney(form.commissionRate || 50)}/product, then {formatMoney(form.tierRate || 30)}/product after that
             </div>
           </div>
           <div>
@@ -295,8 +295,9 @@ export default function Consultants() {
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500">Total Sales</div>
-                <div className="text-lg font-bold">{showDetail.totalSales || 0}</div>
+                <div className="text-xs text-gray-500">Products Sold</div>
+                <div className="text-lg font-bold">{showDetail.totalProductsSold || 0}</div>
+                <div className="text-xs text-gray-400">{showDetail.totalSales || 0} orders</div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <div className="text-xs text-gray-500">Revenue Generated</div>
@@ -341,20 +342,23 @@ export default function Consultants() {
                         <th className="text-left p-2 font-medium text-gray-600">Order</th>
                         <th className="text-left p-2 font-medium text-gray-600">Date</th>
                         <th className="text-left p-2 font-medium text-gray-600">Customer</th>
+                        <th className="text-right p-2 font-medium text-gray-600">Products</th>
                         <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                        <th className="text-right p-2 font-medium text-gray-600">Commission</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {showDetail.sales.slice(0, 20).map(s => (
+                      {showDetail.sales.slice(0, 20).map(s => {
+                        const qty = (s.items || []).reduce((sum, i) => sum + i.qty, 0);
+                        return (
                         <tr key={s.id} className="border-b border-gray-50">
                           <td className="p-2 text-gray-800">{s.orderNumber}</td>
                           <td className="p-2 text-gray-600">{formatDate(s.date)}</td>
                           <td className="p-2 text-gray-600">{s.customerName || '-'}</td>
+                          <td className="p-2 text-right font-medium">{qty}</td>
                           <td className="p-2 text-right">{formatMoney(s.totalPrice)}</td>
-                          <td className="p-2 text-right text-orange-600">{formatMoney(showDetail.commissionRate)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
