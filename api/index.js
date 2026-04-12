@@ -354,7 +354,7 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
 app.get('/api/v1/sales', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { status, paymentStatus, paymentType, from, to, customerId, search, creditOverdue } = req.query;
+    const { status, paymentStatus, paymentType, from, to, customerId, consultantId, search, creditOverdue } = req.query;
     const where = { companyId };
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
@@ -363,7 +363,8 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
-    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { createdAt: 'desc' } });
+    if (consultantId) where.consultantId = consultantId;
+    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true, consultant: true }, orderBy: { createdAt: 'desc' } });
     res.json(sales);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -371,7 +372,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     res.json(sale);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -442,11 +443,12 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
         shippingCost, shippingCharge, discount,
         status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
         paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
+        consultantId: data.consultantId || null,
         customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
         companyId,
         items: { create: saleItems }
       },
-      include: { items: { include: { product: true } }, customer: true }
+      include: { items: { include: { product: true } }, customer: true, consultant: true }
     });
 
     if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
@@ -484,6 +486,7 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
       ...(raw.paymentType !== undefined && { paymentType: raw.paymentType }),
       ...(raw.creditDueDate !== undefined && { creditDueDate: raw.creditDueDate ? new Date(raw.creditDueDate) : null }),
       ...(raw.creditNotes !== undefined && { creditNotes: raw.creditNotes || null }),
+      ...(raw.consultantId !== undefined && { consultantId: raw.consultantId || null }),
     };
     Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
 
@@ -535,7 +538,7 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
       }
     }
 
-    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { items: { include: { product: true } }, customer: true } });
+    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { items: { include: { product: true } }, customer: true, consultant: true } });
     res.json(sale);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -1322,12 +1325,14 @@ app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, 
     const companyId = req.params.id;
     const company = await prisma.company.findUnique({ where: { id: companyId } });
     if (!company) return res.status(404).json({ error: 'Company not found' });
+    await prisma.commissionPayment.deleteMany({ where: { companyId } });
     await prisma.debtReminder.deleteMany({ where: { companyId } });
     await prisma.creditPayment.deleteMany({ where: { companyId } });
     await prisma.orderStatusLog.deleteMany({ where: { companyId } });
     await prisma.stockLog.deleteMany({ where: { companyId } });
     await prisma.saleItem.deleteMany({ where: { sale: { companyId } } });
     await prisma.sale.deleteMany({ where: { companyId } });
+    await prisma.consultant.deleteMany({ where: { companyId } });
     await prisma.product.deleteMany({ where: { companyId } });
     await prisma.customer.deleteMany({ where: { companyId } });
     await prisma.expense.deleteMany({ where: { companyId } });
@@ -1374,6 +1379,128 @@ app.post('/api/v1/superadmin/users/:id/reset-password', authenticate, requireSup
     const hashed = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({ where: { id: req.params.id }, data: { password: hashed } });
     res.json({ message: 'Password reset successfully' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- CONSULTANTS ----
+app.get('/api/v1/consultants/commission-summary', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { from, to, consultantId } = req.query;
+    const saleWhere = { companyId, status: { not: 'Cancelled' }, consultantId: { not: null } };
+    if (consultantId) saleWhere.consultantId = consultantId;
+    if (from || to) { saleWhere.date = {}; if (from) saleWhere.date.gte = new Date(from); if (to) saleWhere.date.lte = new Date(to + 'T23:59:59.999Z'); }
+    const sales = await prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } });
+    const consultants = await prisma.consultant.findMany({ where: { companyId } });
+    const payments = await prisma.commissionPayment.findMany({ where: { companyId } });
+    const summary = consultants.map(c => {
+      const cSales = sales.filter(s => s.consultantId === c.id);
+      const totalSales = cSales.length;
+      const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
+      const commissionEarned = totalSales * parseFloat(c.commissionRate);
+      const cPayments = payments.filter(p => p.consultantId === c.id);
+      const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+      const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+      const balance = commissionEarned - commissionPaid;
+      return { consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive }, totalSales, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance };
+    });
+    const totals = { totalSales: summary.reduce((s, c) => s + c.totalSales, 0), totalRevenue: summary.reduce((s, c) => s + c.totalRevenue, 0), totalCommissionEarned: summary.reduce((s, c) => s + c.commissionEarned, 0), totalCommissionPaid: summary.reduce((s, c) => s + c.commissionPaid, 0), totalAllowancePaid: summary.reduce((s, c) => s + c.allowancePaid, 0), totalBalance: summary.reduce((s, c) => s + c.balance, 0) };
+    res.json({ summary, totals });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/consultants', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { active } = req.query;
+    const where = { companyId };
+    if (active === 'true') where.isActive = true;
+    if (active === 'false') where.isActive = false;
+    const consultants = await prisma.consultant.findMany({ where, orderBy: { createdAt: 'desc' } });
+    res.json(consultants);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    const sales = await prisma.sale.findMany({ where: { consultantId: consultant.id, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
+    const payments = await prisma.commissionPayment.findMany({ where: { consultantId: consultant.id, companyId }, orderBy: { createdAt: 'desc' } });
+    const totalSales = sales.length;
+    const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
+    const commissionEarned = totalSales * parseFloat(consultant.commissionRate);
+    const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const balance = commissionEarned - commissionPaid;
+    res.json({ ...consultant, totalSales, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance, sales, payments });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/consultants', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { name, phone, whatsapp, commissionRate, monthlyAllowance, notes } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const consultant = await prisma.consultant.create({ data: { name, phone: phone || null, whatsapp: whatsapp || null, commissionRate: parseFloat(commissionRate) || 50, monthlyAllowance: parseFloat(monthlyAllowance) || 400, notes: notes || null, companyId } });
+    res.status(201).json(consultant);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.put('/api/v1/consultants/:id', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const existing = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!existing) return res.status(404).json({ error: 'Consultant not found' });
+    const raw = req.body;
+    const data = {
+      ...(raw.name !== undefined && { name: raw.name }),
+      ...(raw.phone !== undefined && { phone: raw.phone || null }),
+      ...(raw.whatsapp !== undefined && { whatsapp: raw.whatsapp || null }),
+      ...(raw.commissionRate !== undefined && { commissionRate: parseFloat(raw.commissionRate) }),
+      ...(raw.monthlyAllowance !== undefined && { monthlyAllowance: parseFloat(raw.monthlyAllowance) }),
+      ...(raw.isActive !== undefined && { isActive: raw.isActive }),
+      ...(raw.notes !== undefined && { notes: raw.notes || null }),
+    };
+    const consultant = await prisma.consultant.update({ where: { id: req.params.id }, data });
+    res.json(consultant);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.delete('/api/v1/consultants/:id', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const existing = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!existing) return res.status(404).json({ error: 'Consultant not found' });
+    const salesCount = await prisma.sale.count({ where: { consultantId: req.params.id } });
+    if (salesCount > 0) {
+      await prisma.consultant.update({ where: { id: req.params.id }, data: { isActive: false } });
+      return res.json({ message: 'Consultant deactivated (has existing sales)' });
+    }
+    await prisma.commissionPayment.deleteMany({ where: { consultantId: req.params.id } });
+    await prisma.consultant.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Consultant deleted' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    const { amount, type, periodFrom, periodTo, paymentMethod, reference, notes } = req.body;
+    if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: 'Invalid amount' });
+    const payment = await prisma.commissionPayment.create({ data: { consultantId: consultant.id, amount: parseFloat(amount), type: type || 'commission', periodFrom: periodFrom ? new Date(periodFrom) : null, periodTo: periodTo ? new Date(periodTo) : null, paymentMethod: paymentMethod || null, reference: reference || null, notes: notes || null, companyId } });
+    res.status(201).json(payment);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const payments = await prisma.commissionPayment.findMany({ where: { consultantId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
+    res.json(payments);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
