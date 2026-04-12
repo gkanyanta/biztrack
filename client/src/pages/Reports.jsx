@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getPnlReport, getSalesReport, getExpenseReport, getProductReport, getCustomerReport, getGrowthReport, getCreditReport, getInventoryReport, exportCSV } from '../services/api';
+import { getPnlReport, getSalesReport, getExpenseReport, getProductReport, getCustomerReport, getGrowthReport, getCreditReport, getInventoryReport, getCommissionSummary, exportCSV } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -20,6 +20,7 @@ export default function Reports() {
 
   const [creditData, setCreditData] = useState(null);
   const [inventoryData, setInventoryData] = useState(null);
+  const [consultantData, setConsultantData] = useState(null);
 
   const tabs = [
     { id: 'pnl', label: 'P&L Statement' },
@@ -29,6 +30,7 @@ export default function Reports() {
     { id: 'customers', label: 'Customers' },
     { id: 'credit', label: 'Credit/Debt' },
     { id: 'inventory', label: 'Inventory Valuation' },
+    { id: 'consultants', label: 'Consultants' },
     { id: 'growth', label: 'Growth & Projections' },
   ];
 
@@ -49,6 +51,11 @@ export default function Reports() {
         const res = await getInventoryReport();
         setInventoryData(res.data);
         setData(null); setGrowthData(null); setCreditData(null);
+      } else if (activeTab === 'consultants') {
+        const params = { from: from || undefined, to: to || undefined };
+        const res = await getCommissionSummary(params);
+        setConsultantData(res.data);
+        setData(null); setGrowthData(null); setCreditData(null); setInventoryData(null);
       } else {
         const params = { from: from || undefined, to: to || undefined };
         let res;
@@ -60,7 +67,7 @@ export default function Reports() {
           case 'customers': res = await getCustomerReport(params); break;
         }
         setData(res.data);
-        setGrowthData(null); setCreditData(null); setInventoryData(null);
+        setGrowthData(null); setCreditData(null); setInventoryData(null); setConsultantData(null);
       }
     } catch { toast.error('Error loading report'); }
     setLoading(false);
@@ -89,7 +96,7 @@ export default function Reports() {
       {/* Tabs */}
       <div className="flex gap-1 overflow-x-auto bg-gray-100 rounded-lg p-1">
         {tabs.map(tab => (
-          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setData(null); setGrowthData(null); setCreditData(null); setInventoryData(null); }}
+          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setData(null); setGrowthData(null); setCreditData(null); setInventoryData(null); setConsultantData(null); }}
             className={`px-3 py-2 text-sm rounded-md whitespace-nowrap transition-colors ${activeTab === tab.id ? 'bg-white text-gray-800 font-medium shadow-sm' : 'text-gray-600 hover:text-gray-800'}`}>
             {tab.label}
           </button>
@@ -121,6 +128,125 @@ export default function Reports() {
       {/* Growth & Projections Report */}
       {!loading && activeTab === 'growth' && growthData && (
         <GrowthReport data={growthData} />
+      )}
+
+      {/* Consultant Report */}
+      {!loading && consultantData && activeTab === 'consultants' && (
+        <div className="space-y-4">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Total Consultant Sales</p>
+              <p className="text-2xl font-bold text-gray-800">{consultantData.totals.totalSales}</p>
+            </div>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Revenue via Consultants</p>
+              <p className="text-2xl font-bold text-blue-600">{formatMoney(consultantData.totals.totalRevenue)}</p>
+            </div>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Total Commission Earned</p>
+              <p className="text-2xl font-bold text-orange-600">{formatMoney(consultantData.totals.totalCommissionEarned)}</p>
+            </div>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Balance Owed</p>
+              <p className="text-2xl font-bold text-red-600">{formatMoney(consultantData.totals.totalBalance)}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Commission Paid Out</p>
+              <p className="text-xl font-bold text-green-600">{formatMoney(consultantData.totals.totalCommissionPaid)}</p>
+            </div>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Allowance Paid Out</p>
+              <p className="text-xl font-bold text-blue-600">{formatMoney(consultantData.totals.totalAllowancePaid)}</p>
+            </div>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+              <p className="text-xs text-gray-500">Total Consultant Cost</p>
+              <p className="text-xl font-bold text-gray-800">{formatMoney(consultantData.totals.totalCommissionPaid + consultantData.totals.totalAllowancePaid)}</p>
+            </div>
+          </div>
+
+          {/* Per Consultant Table */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
+            <div className="p-4 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-800">Performance by Consultant</h3>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="text-left p-3 font-medium text-gray-600">Consultant</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Sales</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Revenue</th>
+                  <th className="text-right p-3 font-medium text-gray-600 hidden md:table-cell">Avg Order</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Commission</th>
+                  <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Paid</th>
+                  <th className="text-right p-3 font-medium text-gray-600">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {consultantData.summary.map(c => (
+                  <tr key={c.consultant.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="p-3">
+                      <span className="font-medium text-gray-800">{c.consultant.name}</span>
+                      {!c.consultant.isActive && <span className="text-xs text-red-500 ml-1">(inactive)</span>}
+                    </td>
+                    <td className="p-3 text-right font-medium">{c.totalSales}</td>
+                    <td className="p-3 text-right">{formatMoney(c.totalRevenue)}</td>
+                    <td className="p-3 text-right hidden md:table-cell">{c.totalSales > 0 ? formatMoney(c.totalRevenue / c.totalSales) : '-'}</td>
+                    <td className="p-3 text-right text-orange-600 font-medium">{formatMoney(c.commissionEarned)}</td>
+                    <td className="p-3 text-right hidden sm:table-cell text-green-600">{formatMoney(c.commissionPaid)}</td>
+                    <td className="p-3 text-right">
+                      <span className={c.balance > 0 ? 'text-red-600 font-medium' : 'text-green-600'}>{formatMoney(c.balance)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-50 font-semibold">
+                  <td className="p-3 text-gray-800">Total</td>
+                  <td className="p-3 text-right">{consultantData.totals.totalSales}</td>
+                  <td className="p-3 text-right">{formatMoney(consultantData.totals.totalRevenue)}</td>
+                  <td className="p-3 text-right hidden md:table-cell">{consultantData.totals.totalSales > 0 ? formatMoney(consultantData.totals.totalRevenue / consultantData.totals.totalSales) : '-'}</td>
+                  <td className="p-3 text-right text-orange-600">{formatMoney(consultantData.totals.totalCommissionEarned)}</td>
+                  <td className="p-3 text-right hidden sm:table-cell text-green-600">{formatMoney(consultantData.totals.totalCommissionPaid)}</td>
+                  <td className="p-3 text-right text-red-600">{formatMoney(consultantData.totals.totalBalance)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* ROI Analysis */}
+          {consultantData.totals.totalRevenue > 0 && (
+            <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+              <h3 className="font-semibold text-gray-800 mb-4">Consultant ROI Analysis</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <p className="text-xs text-gray-500 mb-1">Cost per Sale</p>
+                  <p className="text-lg font-bold text-gray-800">
+                    {consultantData.totals.totalSales > 0 ? formatMoney((consultantData.totals.totalCommissionEarned + consultantData.totals.totalAllowancePaid) / consultantData.totals.totalSales) : '-'}
+                  </p>
+                  <p className="text-xs text-gray-400">commission + allowance / sales</p>
+                </div>
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <p className="text-xs text-gray-500 mb-1">Revenue per K1 Commission</p>
+                  <p className="text-lg font-bold text-blue-600">
+                    {consultantData.totals.totalCommissionEarned > 0 ? formatMoney(consultantData.totals.totalRevenue / consultantData.totals.totalCommissionEarned) : '-'}
+                  </p>
+                  <p className="text-xs text-gray-400">return on commission spend</p>
+                </div>
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <p className="text-xs text-gray-500 mb-1">Commission as % of Revenue</p>
+                  <p className="text-lg font-bold text-orange-600">
+                    {consultantData.totals.totalRevenue > 0 ? ((consultantData.totals.totalCommissionEarned / consultantData.totals.totalRevenue) * 100).toFixed(1) : 0}%
+                  </p>
+                  <p className="text-xs text-gray-400">of consultant-generated revenue</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* P&L Report */}

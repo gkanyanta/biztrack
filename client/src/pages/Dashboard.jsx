@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getDashboard } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave } from 'react-icons/fi';
+import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave, FiUserCheck } from 'react-icons/fi';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend
@@ -232,6 +232,78 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Consultant Impact */}
+      {data.consultantImpact && (
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2 mb-4">
+            <FiUserCheck className="text-indigo-600" size={18} />
+            <h3 className="text-sm font-bold text-gray-800">Consultant Impact (This Month)</h3>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="bg-indigo-50 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Consultant Sales</p>
+              <p className="text-xl font-bold text-indigo-700">{data.consultantImpact.consultantSalesCount}</p>
+              <p className="text-xs text-gray-400">{data.consultantImpact.consultantSharePercent.toFixed(0)}% of all sales</p>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Revenue via Consultants</p>
+              <p className="text-xl font-bold text-blue-700">{formatMoney(data.consultantImpact.consultantRevenue)}</p>
+              <p className="text-xs text-gray-400">{data.consultantImpact.revenueSharePercent.toFixed(0)}% of revenue</p>
+            </div>
+            <div className="bg-orange-50 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Commission Cost</p>
+              <p className="text-xl font-bold text-orange-700">{formatMoney(data.consultantImpact.totalCommissionEarned)}</p>
+              <p className="text-xs text-gray-400">total earned</p>
+            </div>
+            <div className="bg-green-50 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Net After Commission</p>
+              <p className="text-xl font-bold text-green-700">{formatMoney(data.consultantImpact.netProfitAfterCommission)}</p>
+              <p className="text-xs text-gray-400">your profit from their sales</p>
+            </div>
+          </div>
+
+          {/* Per consultant breakdown */}
+          {data.consultantImpact.byConsultant.filter(c => c.totalSales > 0 || c.isActive).length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b">
+                    <th className="text-left p-2 font-medium text-gray-600">Consultant</th>
+                    <th className="text-right p-2 font-medium text-gray-600">Sales</th>
+                    <th className="text-right p-2 font-medium text-gray-600 hidden sm:table-cell">Revenue</th>
+                    <th className="text-right p-2 font-medium text-gray-600 hidden md:table-cell">Avg Order</th>
+                    <th className="text-right p-2 font-medium text-gray-600">Commission</th>
+                    <th className="text-right p-2 font-medium text-gray-600 hidden sm:table-cell">Your Profit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.consultantImpact.byConsultant.filter(c => c.totalSales > 0 || c.isActive).map(c => (
+                    <tr key={c.id} className="border-b border-gray-50">
+                      <td className="p-2 font-medium text-gray-800">{c.name}</td>
+                      <td className="p-2 text-right">{c.totalSales}</td>
+                      <td className="p-2 text-right hidden sm:table-cell">{formatMoney(c.revenue)}</td>
+                      <td className="p-2 text-right hidden md:table-cell">{formatMoney(c.avgOrderValue)}</td>
+                      <td className="p-2 text-right text-orange-600">{formatMoney(c.commissionEarned)}</td>
+                      <td className="p-2 text-right hidden sm:table-cell text-green-600 font-medium">{formatMoney(c.netProfit)}</td>
+                    </tr>
+                  ))}
+                  {/* Direct sales row */}
+                  <tr className="bg-gray-50 font-medium">
+                    <td className="p-2 text-gray-600">Direct (no consultant)</td>
+                    <td className="p-2 text-right">{data.consultantImpact.directSalesCount}</td>
+                    <td className="p-2 text-right hidden sm:table-cell">{formatMoney(data.consultantImpact.directRevenue)}</td>
+                    <td className="p-2 text-right hidden md:table-cell">-</td>
+                    <td className="p-2 text-right">-</td>
+                    <td className="p-2 text-right hidden sm:table-cell">-</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

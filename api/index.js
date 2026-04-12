@@ -910,7 +910,52 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
       reinvestment: { perSale: reinvestPerSale, percentOfProfit: reinvestPercentOfProfit, monthlyAdBudget: additionalAdBudgetNeeded, monthlyInventory: additionalInventoryCost, totalMonthly: totalReinvestmentNeeded, avgProfitPerSale, roas: effectiveRoas }
     };
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth, savings });
+    // ---- CONSULTANT IMPACT ----
+    const consultants = await prisma.consultant.findMany({ where: { companyId } });
+    let consultantImpact = null;
+    if (consultants.length > 0) {
+      const consultantSales = thisMonthSales.filter(s => s.consultantId);
+      const directSales = thisMonthSales.filter(s => !s.consultantId);
+      const consultantRevenue = consultantSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+      const directRevenue = directSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+      const consultantCOGS = consultantSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
+      const consultantGrossProfit = consultantRevenue - consultantCOGS;
+      const commissionPayments = await prisma.commissionPayment.findMany({ where: { companyId } });
+
+      const byConsultant = consultants.map(c => {
+        const cSales = consultantSales.filter(s => s.consultantId === c.id);
+        const cTotalSales = cSales.length;
+        const cRevenue = cSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+        const cCOGS = cSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
+        const cGrossProfit = cRevenue - cCOGS;
+        const cCommissionEarned = calcCommission(cTotalSales, c.commissionRate, c.tierThreshold, c.tierRate);
+        const cPaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
+        const cAllowancePaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
+        const cNetProfit = cGrossProfit - cCommissionEarned;
+        const conversionRate = cTotalSales > 0 ? (cRevenue / cTotalSales) : 0;
+        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotalSales, revenue: cRevenue, grossProfit: cGrossProfit, commissionEarned: cCommissionEarned, commissionPaid: cPaid, allowancePaid: cAllowancePaid, netProfit: cNetProfit, avgOrderValue: conversionRate, balance: cCommissionEarned - cPaid };
+      });
+
+      const totalCommissionEarned = byConsultant.reduce((s, c) => s + c.commissionEarned, 0);
+      const totalCommissionCost = totalCommissionEarned + consultants.reduce((s, c) => s + parseFloat(c.monthlyAllowance), 0);
+
+      consultantImpact = {
+        totalConsultants: consultants.filter(c => c.isActive).length,
+        consultantSalesCount: consultantSales.length,
+        directSalesCount: directSales.length,
+        consultantRevenue,
+        directRevenue,
+        consultantGrossProfit,
+        totalCommissionEarned,
+        totalCommissionCost,
+        netProfitAfterCommission: consultantGrossProfit - totalCommissionEarned,
+        consultantSharePercent: thisMonthOrders > 0 ? (consultantSales.length / thisMonthOrders) * 100 : 0,
+        revenueSharePercent: thisMonthRevenue > 0 ? (consultantRevenue / thisMonthRevenue) * 100 : 0,
+        byConsultant,
+      };
+    }
+
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth, savings, consultantImpact });
   } catch (err) { console.error('DASHBOARD ERROR:', err); res.status(500).json({ error: err.message, stack: err.stack }); }
 });
 
