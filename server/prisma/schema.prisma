@@ -218,6 +218,8 @@ model Consultant {
   phone            String?
   whatsapp         String?
   commissionRate   Decimal            @db.Decimal(10, 2) @default(50)
+  tierThreshold    Int                @default(50)
+  tierRate         Decimal            @db.Decimal(10, 2) @default(30)
   monthlyAllowance Decimal            @db.Decimal(10, 2) @default(400)
   isActive         Boolean            @default(true)
   notes            String?

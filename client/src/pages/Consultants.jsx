@@ -19,7 +19,7 @@ export default function Consultants() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
-  const emptyForm = { name: '', phone: '', whatsapp: '', commissionRate: '50', monthlyAllowance: '400', notes: '' };
+  const emptyForm = { name: '', phone: '', whatsapp: '', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', notes: '' };
   const [form, setForm] = useState(emptyForm);
   const emptyPayment = { amount: '', type: 'commission', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
@@ -43,7 +43,8 @@ export default function Consultants() {
     setEditing(c);
     setForm({
       name: c.name, phone: c.phone || '', whatsapp: c.whatsapp || '',
-      commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, notes: c.notes || ''
+      commissionRate: c.commissionRate, tierThreshold: c.tierThreshold || '50', tierRate: c.tierRate || '30',
+      monthlyAllowance: c.monthlyAllowance, notes: c.notes || ''
     });
     setShowForm(true);
   };
@@ -143,7 +144,7 @@ export default function Consultants() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left p-3 font-medium text-gray-600">Name</th>
                 <th className="text-left p-3 font-medium text-gray-600 hidden sm:table-cell">Phone</th>
-                <th className="text-right p-3 font-medium text-gray-600">Rate/Sale</th>
+                <th className="text-right p-3 font-medium text-gray-600">Rate</th>
                 <th className="text-right p-3 font-medium text-gray-600">Sales</th>
                 <th className="text-right p-3 font-medium text-gray-600 hidden md:table-cell">Earned</th>
                 <th className="text-right p-3 font-medium text-gray-600 hidden md:table-cell">Paid</th>
@@ -161,7 +162,10 @@ export default function Consultants() {
                       {!c.isActive && <span className="text-xs text-red-500 bg-red-50 px-1.5 py-0.5 rounded">Inactive</span>}
                     </td>
                     <td className="p-3 text-gray-600 hidden sm:table-cell">{c.phone || '-'}</td>
-                    <td className="p-3 text-right text-gray-800">{formatMoney(c.commissionRate)}</td>
+                    <td className="p-3 text-right text-gray-800">
+                      <span>{formatMoney(c.commissionRate)}</span>
+                      <span className="text-xs text-gray-400">/{formatMoney(c.tierRate || 30)}</span>
+                    </td>
                     <td className="p-3 text-right font-medium text-gray-800">{s?.totalSales || 0}</td>
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionEarned || 0)}</td>
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionPaid || 0)}</td>
@@ -211,14 +215,27 @@ export default function Consultants() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Commission per Sale (ZMW)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Base Rate per Sale (ZMW)</label>
               <input type="number" step="0.01" value={form.commissionRate} onChange={e => setForm({...form, commissionRate: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tier After (sales/month)</label>
+              <input type="number" value={form.tierThreshold} onChange={e => setForm({...form, tierThreshold: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Rate After Tier (ZMW)</label>
+              <input type="number" step="0.01" value={form.tierRate} onChange={e => setForm({...form, tierRate: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Allowance (ZMW)</label>
               <input type="number" step="0.01" value={form.monthlyAllowance} onChange={e => setForm({...form, monthlyAllowance: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="sm:col-span-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
+              First {form.tierThreshold || 50} sales: {formatMoney(form.commissionRate || 50)}/sale, then {formatMoney(form.tierRate || 30)}/sale after that
             </div>
           </div>
           <div>

@@ -47,6 +47,15 @@ app.use(express.json({ limit: '2mb' }));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'biztrack-default-secret';
 
+// Tiered commission: first N sales at base rate, rest at tier rate
+function calcCommission(totalSales, commissionRate, tierThreshold, tierRate) {
+  const base = parseFloat(commissionRate);
+  const tier = parseFloat(tierRate);
+  const threshold = parseInt(tierThreshold) || 50;
+  if (totalSales <= threshold) return totalSales * base;
+  return (threshold * base) + ((totalSales - threshold) * tier);
+}
+
 // Auth middleware
 function authenticate(req, res, next) {
   const header = req.headers.authorization;
@@ -1397,7 +1406,7 @@ app.get('/api/v1/consultants/commission-summary', authenticate, async (req, res)
       const cSales = sales.filter(s => s.consultantId === c.id);
       const totalSales = cSales.length;
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-      const commissionEarned = totalSales * parseFloat(c.commissionRate);
+      const commissionEarned = calcCommission(totalSales, c.commissionRate, c.tierThreshold, c.tierRate);
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
@@ -1430,7 +1439,7 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId: consultant.id, companyId }, orderBy: { createdAt: 'desc' } });
     const totalSales = sales.length;
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const commissionEarned = totalSales * parseFloat(consultant.commissionRate);
+    const commissionEarned = calcCommission(totalSales, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
@@ -1441,9 +1450,9 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
 app.post('/api/v1/consultants', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { name, phone, whatsapp, commissionRate, monthlyAllowance, notes } = req.body;
+    const { name, phone, whatsapp, commissionRate, tierThreshold, tierRate, monthlyAllowance, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
-    const consultant = await prisma.consultant.create({ data: { name, phone: phone || null, whatsapp: whatsapp || null, commissionRate: parseFloat(commissionRate) || 50, monthlyAllowance: parseFloat(monthlyAllowance) || 400, notes: notes || null, companyId } });
+    const consultant = await prisma.consultant.create({ data: { name, phone: phone || null, whatsapp: whatsapp || null, commissionRate: parseFloat(commissionRate) || 50, tierThreshold: parseInt(tierThreshold) || 50, tierRate: parseFloat(tierRate) || 30, monthlyAllowance: parseFloat(monthlyAllowance) || 400, notes: notes || null, companyId } });
     res.status(201).json(consultant);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -1459,6 +1468,8 @@ app.put('/api/v1/consultants/:id', authenticate, async (req, res) => {
       ...(raw.phone !== undefined && { phone: raw.phone || null }),
       ...(raw.whatsapp !== undefined && { whatsapp: raw.whatsapp || null }),
       ...(raw.commissionRate !== undefined && { commissionRate: parseFloat(raw.commissionRate) }),
+      ...(raw.tierThreshold !== undefined && { tierThreshold: parseInt(raw.tierThreshold) }),
+      ...(raw.tierRate !== undefined && { tierRate: parseFloat(raw.tierRate) }),
       ...(raw.monthlyAllowance !== undefined && { monthlyAllowance: parseFloat(raw.monthlyAllowance) }),
       ...(raw.isActive !== undefined && { isActive: raw.isActive }),
       ...(raw.notes !== undefined && { notes: raw.notes || null }),

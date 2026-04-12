@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Consultant" ADD COLUMN "tierThreshold" INTEGER NOT NULL DEFAULT 50;
+ALTER TABLE "Consultant" ADD COLUMN "tierRate" DECIMAL(10,2) NOT NULL DEFAULT 30;
