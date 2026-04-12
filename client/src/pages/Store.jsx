@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
-import { getStoreInfo, getStoreProducts, placeStoreOrder } from '../services/api';
-import { FiShoppingCart, FiPlus, FiMinus, FiTrash2, FiX, FiPackage, FiCheck, FiPhone, FiMapPin, FiSearch } from 'react-icons/fi';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { getStoreInfo, getStoreProducts, placeStoreOrder, getPaymentStatus } from '../services/api';
+import { FiShoppingCart, FiPlus, FiMinus, FiTrash2, FiX, FiPackage, FiCheck, FiPhone, FiMapPin, FiSearch, FiCreditCard, FiLoader } from 'react-icons/fi';
 
 function formatMoney(amount, symbol = 'K') {
   const num = parseFloat(amount) || 0;
@@ -10,6 +10,7 @@ function formatMoney(amount, symbol = 'K') {
 
 export default function Store() {
   const { slug } = useParams();
+  const [searchParams] = useSearchParams();
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -21,15 +22,25 @@ export default function Store() {
   const [showCart, setShowCart] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [orderResult, setOrderResult] = useState(null);
+  const [paymentResult, setPaymentResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [payOnline, setPayOnline] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({ customerName: '', customerPhone: '', customerCity: '', deliveryAddress: '', notes: '' });
 
   useEffect(() => {
+    const orderId = searchParams.get('order');
     Promise.all([getStoreInfo(slug), getStoreProducts(slug)])
-      .then(([infoRes, prodRes]) => {
+      .then(async ([infoRes, prodRes]) => {
         setStore(infoRes.data);
         setProducts(prodRes.data.products);
         setCategories(prodRes.data.categories);
+        // Check if returning from payment
+        if (orderId) {
+          try {
+            const { data } = await getPaymentStatus(slug, orderId);
+            setPaymentResult(data);
+          } catch { setPaymentResult({ paymentStatus: 'Unknown', orderNumber: '' }); }
+        }
       })
       .catch(err => setError(err.response?.status === 404 ? 'Store not found' : 'Failed to load store'))
       .finally(() => setLoading(false));
@@ -67,8 +78,14 @@ export default function Store() {
     try {
       const { data } = await placeStoreOrder(slug, {
         ...checkoutForm,
+        payOnline,
         items: cart.map(c => ({ productId: c.productId, qty: c.qty })),
       });
+      if (data.paymentUrl) {
+        // Redirect to BroadPay checkout
+        window.location.href = data.paymentUrl;
+        return;
+      }
       setOrderResult(data);
       setCart([]);
       setShowCheckout(false);
@@ -94,6 +111,45 @@ export default function Store() {
       </div>
     </div>
   );
+
+  // Payment result (returning from BroadPay)
+  if (paymentResult) {
+    const isPaid = paymentResult.paymentStatus === 'Paid';
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
+          <div className={`w-16 h-16 ${isPaid ? 'bg-green-100' : 'bg-yellow-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+            {isPaid ? <FiCheck className="text-green-600" size={32} /> : <FiCreditCard className="text-yellow-600" size={32} />}
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">{isPaid ? 'Payment Successful!' : 'Payment Pending'}</h2>
+          <p className="text-gray-600 mb-4">
+            {isPaid ? 'Your payment has been confirmed. We will process your order shortly.' : 'Your payment is being processed. We will confirm once received.'}
+          </p>
+          {paymentResult.orderNumber && (
+            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+              <p className="text-sm text-gray-500">Order Number</p>
+              <p className="text-xl font-bold text-blue-600">{paymentResult.orderNumber}</p>
+            </div>
+          )}
+          <div className="bg-gray-50 rounded-lg p-4 mb-6">
+            <p className="text-sm text-gray-500">Total</p>
+            <p className="text-2xl font-bold text-gray-800">{formatMoney(paymentResult.totalPrice, store?.currency)}</p>
+            <p className={`text-sm font-medium mt-1 ${isPaid ? 'text-green-600' : 'text-yellow-600'}`}>
+              {isPaid ? 'Paid' : 'Awaiting Payment'}
+            </p>
+          </div>
+          {store?.phone && (
+            <a href={`https://wa.me/${store.phone.replace(/[^0-9]/g, '')}`}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 mb-3 w-full justify-center">
+              <FiPhone size={16} /> Contact us on WhatsApp
+            </a>
+          )}
+          <button onClick={() => { setPaymentResult(null); window.history.replaceState({}, '', `/store/${slug}`); }}
+            className="text-blue-600 hover:text-blue-800 text-sm">Continue Shopping</button>
+        </div>
+      </div>
+    );
+  }
 
   // Order success
   if (orderResult) return (
@@ -356,12 +412,29 @@ export default function Store() {
                   placeholder="Any special instructions" className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
 
+              {store?.paymentEnabled && (
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Payment Method</p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setPayOnline(false)}
+                      className={`flex-1 py-2.5 text-sm rounded-lg border flex items-center justify-center gap-1.5 transition-colors ${!payOnline ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}>
+                      <FiPhone size={14} /> Pay Later
+                    </button>
+                    <button type="button" onClick={() => setPayOnline(true)}
+                      className={`flex-1 py-2.5 text-sm rounded-lg border flex items-center justify-center gap-1.5 transition-colors ${payOnline ? 'bg-green-600 text-white border-green-600' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}>
+                      <FiCreditCard size={14} /> Pay Now
+                    </button>
+                  </div>
+                  {payOnline && <p className="text-xs text-gray-400 mt-2">You'll be redirected to a secure payment page (Visa, Mastercard, Mobile Money)</p>}
+                </div>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowCheckout(false)}
                   className="flex-1 py-2.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Back</button>
                 <button type="submit" disabled={submitting}
-                  className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                  {submitting ? 'Placing Order...' : `Place Order - ${formatMoney(cartTotal, currency)}`}
+                  className={`flex-1 py-2.5 text-white rounded-lg text-sm font-medium disabled:opacity-50 ${payOnline ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                  {submitting ? 'Processing...' : payOnline ? `Pay ${formatMoney(cartTotal, currency)}` : `Place Order - ${formatMoney(cartTotal, currency)}`}
                 </button>
               </div>
             </form>

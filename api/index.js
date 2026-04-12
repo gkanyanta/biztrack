@@ -1444,7 +1444,7 @@ app.get('/api/v1/store/:slug/info', async (req, res) => {
     if (!company || !company.isActive) return res.status(404).json({ error: 'Store not found' });
     const settings = await prisma.setting.findMany({ where: { companyId: company.id } });
     const s = {}; settings.forEach(st => { s[st.key] = st.value; });
-    res.json({ name: s.businessName || company.name, slug: company.slug, logo: s.companyLogo || null, phone: s.companyPhone || null, email: s.companyEmail || null, address: s.companyAddress || null, website: s.companyWebsite || null, currency: s.currencySymbol || s.currency || 'K', whatsapp: s.whatsappNumber || null, storeMessage: s.storeMessage || null });
+    res.json({ name: s.businessName || company.name, slug: company.slug, logo: s.companyLogo || null, phone: s.companyPhone || null, email: s.companyEmail || null, address: s.companyAddress || null, website: s.companyWebsite || null, currency: s.currencySymbol || s.currency || 'K', whatsapp: s.whatsappNumber || null, storeMessage: s.storeMessage || null, paymentEnabled: !!(s.broadpayPublicKey) });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -1513,7 +1513,62 @@ app.post('/api/v1/store/:slug/order', async (req, res) => {
       data: { orderNumber, totalPrice, shippingCost, shippingCharge, status: 'Pending', paymentStatus: 'Unpaid', paymentType: 'Cash', source: 'Online Store', customerId, customerName: data.customerName, customerPhone: data.customerPhone, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null, companyId, items: { create: saleItems } }
     });
     await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: 'New', toStatus: 'Pending', companyId } });
+
+    // BroadPay online payment
+    const settings = await prisma.setting.findMany({ where: { companyId } });
+    const settingsMap = {}; settings.forEach(s => { settingsMap[s.key] = s.value; });
+    const publicKey = settingsMap.broadpayPublicKey;
+
+    if (publicKey && data.payOnline) {
+      const baseUrl = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || '';
+      const nameParts = data.customerName.trim().split(/\s+/);
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || firstName;
+      const checkoutPayload = {
+        merchantPublicKey: publicKey, transactionName: `Order ${orderNumber}`, amount: totalPrice, currency: 'ZMW',
+        transactionReference: sale.id, customerFirstName: firstName, customerLastName: lastName,
+        customerEmail: data.customerEmail || `${data.customerPhone}@store.local`, customerPhone: data.customerPhone,
+        customerAddr: data.deliveryAddress || '', customerCity: data.customerCity || '', customerState: '', customerCountryCode: 'ZM', customerPostalCode: '',
+        webhookUrl: `${baseUrl}/api/v1/store/webhook/broadpay`,
+        returnUrl: `${baseUrl}/store/${req.params.slug}/payment-result?order=${sale.id}`,
+        autoReturn: true, chargeMe: false,
+      };
+      try {
+        const bpRes = await fetch('https://checkout.broadpay.io/gateway/api/v1/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutPayload) });
+        const bpResult = await bpRes.json();
+        if (!bpResult.isError && bpResult.paymentUrl) {
+          return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentUrl: bpResult.paymentUrl, paymentReference: bpResult.reference, message: 'Redirecting to payment...' });
+        }
+      } catch (payErr) { console.error('BroadPay error:', payErr); }
+    }
+
     res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, message: 'Order placed successfully! We will contact you shortly to confirm.' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// BroadPay webhook
+app.post('/api/v1/store/webhook/broadpay', async (req, res) => {
+  try {
+    const { reference, status, transactionReference } = req.body;
+    const saleId = transactionReference || reference;
+    if (!saleId) return res.status(400).json({ error: 'Missing reference' });
+    const sale = await prisma.sale.findFirst({ where: { id: saleId } });
+    if (!sale) return res.status(404).json({ error: 'Sale not found' });
+    if (status === 'SUCCESSFUL' || status === 'successful' || status === 'SUCCESS') {
+      await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Online Payment', amountPaid: parseFloat(sale.totalPrice) } });
+    }
+    res.json({ status: 'ok' });
+  } catch (err) { console.error('Webhook error:', err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Payment status check
+app.get('/api/v1/store/:slug/payment-status/:saleId', async (req, res) => {
+  try {
+    const company = await prisma.company.findUnique({ where: { slug: req.params.slug } });
+    if (!company) return res.status(404).json({ error: 'Store not found' });
+    const sale = await prisma.sale.findFirst({ where: { id: req.params.saleId, companyId: company.id }, select: { orderNumber: true, totalPrice: true, paymentStatus: true, shippingCharge: true } });
+    if (!sale) return res.status(404).json({ error: 'Order not found' });
+    res.json(sale);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

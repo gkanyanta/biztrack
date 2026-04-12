@@ -151,6 +151,33 @@ export default function Settings() {
           </button>
         </div>
       </div>
+
+      {/* Payment Gateway */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">Online Payment (Lenco/BroadPay)</h3>
+        <p className="text-xs text-gray-400 mb-4">Enable customers to pay online via Visa, Mastercard, MTN Mobile Money, or Airtel Money</p>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">BroadPay Public Key</label>
+            <input type="text" value={settings.broadpayPublicKey || ''}
+              onChange={e => setSettings({...settings, broadpayPublicKey: e.target.value})}
+              placeholder="Enter your BroadPay/Lenco public key"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
+            <p className="text-xs text-gray-400 mt-1">Get this from your Lenco dashboard. Leave blank to disable online payments.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Store Welcome Message</label>
+            <input type="text" value={settings.storeMessage || ''}
+              onChange={e => setSettings({...settings, storeMessage: e.target.value})}
+              placeholder="e.g. Free delivery on orders over K500!"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <button onClick={handleSave}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            Save Settings
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

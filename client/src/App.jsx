@@ -36,6 +36,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/store/:slug" element={<Store />} />
+      <Route path="/store/:slug/payment-result" element={<Store />} />
       <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
