@@ -3,7 +3,7 @@ import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck
 } from 'react-icons/fi';
 
 const adminNavItems = [
@@ -13,6 +13,7 @@ const adminNavItems = [
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
+  { path: '/consultants', icon: FiUserCheck, label: 'Consultants' },
   { path: '/customers', icon: FiUsers, label: 'Customers' },
   { path: '/shipping', icon: FiTruck, label: 'Shipping' },
   { path: '/reports', icon: FiBarChart2, label: 'Reports' },

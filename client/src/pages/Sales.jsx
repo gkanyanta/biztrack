@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getSales, createSale, updateSale, updateSaleStatus, deleteSale, getProducts, getShippingRates, recordCreditPayment, getSale } from '../services/api';
+import { getSales, createSale, updateSale, updateSaleStatus, deleteSale, getProducts, getShippingRates, recordCreditPayment, getSale, getConsultants } from '../services/api';
 import { formatMoney, formatDate, formatDateTime, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_METHODS, SOURCES, PAYMENT_TYPES } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -14,6 +14,7 @@ export default function Sales() {
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState([]);
   const [shippingRates, setShippingRates] = useState([]);
+  const [consultants, setConsultants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -31,7 +32,8 @@ export default function Sales() {
     customerName: '', customerPhone: '', customerCity: '', deliveryAddress: '',
     shippingCost: '', shippingCharge: '', discount: '0', paymentMethod: '',
     paymentStatus: 'Unpaid', source: '', notes: '', date: '',
-    paymentType: 'Cash', amountPaid: '', creditDueDate: '', creditNotes: ''
+    paymentType: 'Cash', amountPaid: '', creditDueDate: '', creditNotes: '',
+    consultantId: ''
   };
   const [form, setForm] = useState(emptyForm);
   const [creditPaymentForm, setCreditPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
@@ -48,6 +50,7 @@ export default function Sales() {
   useEffect(() => {
     getProducts().then(res => setProducts(res.data.filter(p => p.isActive)));
     getShippingRates().then(res => setShippingRates(res.data));
+    getConsultants({ active: 'true' }).then(res => setConsultants(res.data)).catch(() => {});
   }, []);
 
   const addProduct = (product) => {
@@ -94,7 +97,8 @@ export default function Sales() {
       paymentStatus: sale.paymentStatus, source: sale.source || '', notes: sale.notes || '',
       date: sale.date ? sale.date.slice(0, 10) : '',
       paymentType: sale.paymentType || 'Cash', amountPaid: sale.amountPaid || '',
-      creditDueDate: sale.creditDueDate ? sale.creditDueDate.slice(0, 10) : '', creditNotes: sale.creditNotes || ''
+      creditDueDate: sale.creditDueDate ? sale.creditDueDate.slice(0, 10) : '', creditNotes: sale.creditNotes || '',
+      consultantId: sale.consultantId || ''
     });
     setShowForm(true);
   };
@@ -117,6 +121,7 @@ export default function Sales() {
         shippingCharge: parseFloat(form.shippingCharge) || 0,
         discount: parseFloat(form.discount) || 0,
         amountPaid: parseFloat(form.amountPaid) || 0,
+        consultantId: form.consultantId || null,
       };
       if (data.date) data.date = new Date(data.date).toISOString();
       if (editing) {
@@ -457,6 +462,16 @@ export default function Sales() {
               <input type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
+            {consultants.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Sold By (Consultant)</label>
+                <select value={form.consultantId} onChange={e => setForm({...form, consultantId: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">Direct Sale (No Consultant)</option>
+                  {consultants.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
           </div>
 
           {orderItems.length > 0 && (

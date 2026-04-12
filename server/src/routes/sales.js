@@ -4,7 +4,7 @@ const { validateSale } = require('../middleware/validate');
 
 router.use(authenticate);
 
-const saleInclude = { items: { include: { product: true } }, customer: true };
+const saleInclude = { items: { include: { product: true } }, customer: true, consultant: true };
 
 // ---- CREDIT SUMMARY (must be before /:id routes) ----
 router.get('/credit/summary', async (req, res) => {
@@ -36,12 +36,13 @@ router.get('/', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { status, paymentStatus, paymentType, from, to, customerId, search, creditOverdue } = req.query;
+    const { status, paymentStatus, paymentType, from, to, customerId, consultantId, search, creditOverdue } = req.query;
     const where = { companyId };
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
     if (paymentType) where.paymentType = paymentType;
     if (customerId) where.customerId = customerId;
+    if (consultantId) where.consultantId = consultantId;
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }, { customerPhone: { contains: search, mode: 'insensitive' } }]; }
@@ -127,6 +128,7 @@ router.post('/', validateSale, async (req, res) => {
         totalPrice, shippingCost, shippingCharge, discount,
         status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
         paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
+        consultantId: data.consultantId || null,
         customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null,
         deliveryAddress: data.deliveryAddress || null, notes: data.notes || null, companyId,
         items: { create: saleItems },
@@ -171,6 +173,7 @@ router.put('/:id', async (req, res) => {
       ...(raw.paymentType !== undefined && { paymentType: raw.paymentType }),
       ...(raw.creditDueDate !== undefined && { creditDueDate: raw.creditDueDate ? new Date(raw.creditDueDate) : null }),
       ...(raw.creditNotes !== undefined && { creditNotes: raw.creditNotes || null }),
+      ...(raw.consultantId !== undefined && { consultantId: raw.consultantId || null }),
     };
 
     // Update items if provided

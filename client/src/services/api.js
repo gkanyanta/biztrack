@@ -87,6 +87,16 @@ export const exportCSV = (type, params) => api.get('/reports/export/csv', {
   responseType: type === 'pnl' ? 'blob' : 'text'
 });
 
+// Consultants
+export const getConsultants = (params) => api.get('/consultants', { params });
+export const getConsultant = (id) => api.get(`/consultants/${id}`);
+export const createConsultant = (data) => api.post('/consultants', data);
+export const updateConsultant = (id, data) => api.put(`/consultants/${id}`, data);
+export const deleteConsultant = (id) => api.delete(`/consultants/${id}`);
+export const getCommissionSummary = (params) => api.get('/consultants/commission-summary', { params });
+export const recordCommissionPayment = (consultantId, data) => api.post(`/consultants/${consultantId}/payments`, data);
+export const getCommissionPayments = (consultantId) => api.get(`/consultants/${consultantId}/payments`);
+
 // Inventory
 export const getInventory = (params) => api.get('/inventory', { params });
 

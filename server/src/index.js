@@ -56,6 +56,7 @@ app.use('/api/v1/dashboard', require('./routes/dashboard'));
 app.use('/api/v1/reports', require('./routes/reports'));
 app.use('/api/v1/settings', require('./routes/settings'));
 app.use('/api/v1/inventory', require('./routes/inventory'));
+app.use('/api/v1/consultants', require('./routes/consultants'));
 app.use('/api/v1/superadmin', require('./routes/superadmin'));
 
 // Error handling middleware

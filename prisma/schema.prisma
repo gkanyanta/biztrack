@@ -15,17 +15,19 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users           User[]
-  products        Product[]
-  sales           Sale[]
-  customers       Customer[]
-  expenses        Expense[]
-  shippingRates   ShippingRate[]
-  settings        Setting[]
-  stockLogs       StockLog[]
-  orderStatusLogs OrderStatusLog[]
-  creditPayments  CreditPayment[]
-  debtReminders   DebtReminder[]
+  users              User[]
+  products           Product[]
+  sales              Sale[]
+  customers          Customer[]
+  expenses           Expense[]
+  shippingRates      ShippingRate[]
+  settings           Setting[]
+  stockLogs          StockLog[]
+  orderStatusLogs    OrderStatusLog[]
+  creditPayments     CreditPayment[]
+  debtReminders      DebtReminder[]
+  consultants        Consultant[]
+  commissionPayments CommissionPayment[]
 }
 
 model User {
@@ -101,6 +103,8 @@ model Sale {
   amountPaid      Decimal          @db.Decimal(10, 2) @default(0)
   creditDueDate   DateTime?
   creditNotes     String?
+  consultantId    String?
+  consultant      Consultant?      @relation(fields: [consultantId], references: [id])
   items           SaleItem[]
   statusHistory   OrderStatusLog[]
   creditPayments  CreditPayment[]
@@ -206,4 +210,37 @@ model DebtReminder {
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
   sentAt    DateTime @default(now())
+}
+
+model Consultant {
+  id               String             @id @default(cuid())
+  name             String
+  phone            String?
+  whatsapp         String?
+  commissionRate   Decimal            @db.Decimal(10, 2) @default(50)
+  monthlyAllowance Decimal            @db.Decimal(10, 2) @default(400)
+  isActive         Boolean            @default(true)
+  notes            String?
+  companyId        String
+  company          Company            @relation(fields: [companyId], references: [id])
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  sales            Sale[]
+  commissionPayments CommissionPayment[]
+}
+
+model CommissionPayment {
+  id            String     @id @default(cuid())
+  consultantId  String
+  consultant    Consultant @relation(fields: [consultantId], references: [id])
+  amount        Decimal    @db.Decimal(10, 2)
+  type          String     @default("commission")
+  periodFrom    DateTime?
+  periodTo      DateTime?
+  paymentMethod String?
+  reference     String?
+  notes         String?
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id])
+  createdAt     DateTime   @default(now())
 }

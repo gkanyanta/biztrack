@@ -14,6 +14,7 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import CreditTracker from './pages/CreditTracker';
 import Inventory from './pages/Inventory';
+import Consultants from './pages/Consultants';
 import SuperadminPanel from './pages/SuperadminPanel';
 
 function PrivateRoute({ children }) {
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="shipping" element={<Shipping />} />
         <Route path="credit" element={<CreditTracker />} />
         <Route path="inventory" element={<Inventory />} />
+        <Route path="consultants" element={<Consultants />} />
         <Route path="reports" element={<Reports />} />
         <Route path="settings" element={<Settings />} />
       </Route>
