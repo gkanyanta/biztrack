@@ -101,6 +101,7 @@ export const getCommissionPayments = (consultantId) => api.get(`/consultants/${c
 export const getStoreInfo = (slug) => api.get(`/store/${slug}/info`);
 export const getStoreProducts = (slug, params) => api.get(`/store/${slug}/products`, { params });
 export const placeStoreOrder = (slug, data) => api.post(`/store/${slug}/order`, data);
+export const verifyStorePayment = (slug, data) => api.post(`/store/${slug}/verify-payment`, data);
 export const getPaymentStatus = (slug, saleId) => api.get(`/store/${slug}/payment-status/${saleId}`);
 
 // Inventory

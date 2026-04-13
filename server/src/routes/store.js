@@ -22,7 +22,8 @@ router.get('/:slug/info', async (req, res) => {
       currency: s.currencySymbol || s.currency || 'K',
       whatsapp: s.whatsappNumber || null,
       storeMessage: s.storeMessage || null,
-      paymentEnabled: !!(s.broadpayPublicKey),
+      paymentEnabled: !!(s.lencoPublicKey || s.broadpayPublicKey),
+      lencoPublicKey: s.lencoPublicKey || s.broadpayPublicKey || null,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -105,81 +106,54 @@ router.post('/:slug/order', async (req, res) => {
     settings.forEach(s => { settingsMap[s.key] = s.value; });
     const publicKey = settingsMap.broadpayPublicKey;
 
-    if (publicKey && data.payOnline) {
-      const baseUrl = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || `https://${req.headers.host}`;
-      const nameParts = data.customerName.trim().split(/\s+/);
-      const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || firstName;
-
-      const checkoutPayload = {
-        merchantPublicKey: publicKey,
-        transactionName: `Order ${orderNumber}`,
-        amount: totalPrice,
-        currency: 'ZMW',
-        transactionReference: sale.id,
-        customerFirstName: firstName,
-        customerLastName: lastName,
-        customerEmail: data.customerEmail || `${data.customerPhone}@store.local`,
-        customerPhone: data.customerPhone,
-        customerAddr: data.deliveryAddress || '',
-        customerCity: data.customerCity || '',
-        customerState: '',
-        customerCountryCode: 'ZM',
-        customerPostalCode: '',
-        webhookUrl: `https://${req.headers.host}/api/v1/store/webhook/broadpay`,
-        returnUrl: `${baseUrl}/store/${req.params.slug}/payment-result?order=${sale.id}`,
-        autoReturn: true,
-        chargeMe: false,
-      };
-      console.log('BroadPay checkout request:', JSON.stringify({ ...checkoutPayload, merchantPublicKey: '***' }));
-      try {
-        const response = await fetch('https://checkout.broadpay.io/gateway/api/v1/checkout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(checkoutPayload),
-        });
-        const text = await response.text();
-        console.log('BroadPay response:', text);
-        const result = JSON.parse(text);
-        if (!result.isError && result.paymentUrl) {
-          return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentUrl: result.paymentUrl, paymentReference: result.reference, message: 'Redirecting to payment...' });
-        }
-        console.error('BroadPay returned error:', result);
-        return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentError: result.message || 'Payment gateway error', message: 'Order placed but payment failed. We will contact you to arrange payment.' });
-      } catch (payErr) {
-        console.error('BroadPay fetch error:', payErr.message);
-        return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentError: payErr.message, message: 'Order placed but payment could not be initiated. We will contact you to arrange payment.' });
-      }
-    }
-
-    // Fallback: no online payment
-    res.status(201).json({
-      orderNumber: sale.orderNumber,
-      total: totalPrice,
-      shippingCharge,
-      message: 'Order placed successfully! We will contact you shortly to confirm.',
-    });
+    res.status(201).json({ orderNumber: sale.orderNumber, saleId: sale.id, total: totalPrice, shippingCharge, message: 'Order placed successfully!' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// BroadPay webhook
-router.post('/webhook/broadpay', async (req, res) => {
+// Verify Lenco payment
+router.post('/:slug/verify-payment', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
-    const { reference, status, transactionReference } = req.body;
-    const saleId = transactionReference || reference;
-    if (!saleId) return res.status(400).json({ error: 'Missing reference' });
-
-    const sale = await prisma.sale.findFirst({ where: { id: saleId } });
-    if (!sale) return res.status(404).json({ error: 'Sale not found' });
-
-    if (status === 'SUCCESSFUL' || status === 'successful' || status === 'SUCCESS') {
-      await prisma.sale.update({
-        where: { id: sale.id },
-        data: { paymentStatus: 'Paid', paymentMethod: 'Online Payment', amountPaid: parseFloat(sale.totalPrice) }
-      });
+    const company = await prisma.company.findUnique({ where: { slug: req.params.slug } });
+    if (!company) return res.status(404).json({ error: 'Store not found' });
+    const { reference, saleId } = req.body;
+    if (!reference || !saleId) return res.status(400).json({ error: 'Missing reference or saleId' });
+    const sale = await prisma.sale.findFirst({ where: { id: saleId, companyId: company.id } });
+    if (!sale) return res.status(404).json({ error: 'Order not found' });
+    const settings = await prisma.setting.findMany({ where: { companyId: company.id } });
+    const settingsMap = {}; settings.forEach(s => { settingsMap[s.key] = s.value; });
+    const secretKey = settingsMap.lencoSecretKey;
+    if (secretKey) {
+      try {
+        const verifyRes = await fetch(`https://api.lenco.co/access/v2/collections/status/${reference}`, {
+          headers: { 'Authorization': `Bearer ${secretKey}`, 'Content-Type': 'application/json' }
+        });
+        const verifyData = await verifyRes.json();
+        if (verifyData.status === true && verifyData.data?.status === 'successful') {
+          await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Lenco Online', amountPaid: parseFloat(sale.totalPrice) } });
+          return res.json({ verified: true, paymentStatus: 'Paid' });
+        }
+      } catch (verifyErr) { console.error('Lenco verify error:', verifyErr.message); }
     }
+    await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Lenco Online', amountPaid: parseFloat(sale.totalPrice) } });
+    res.json({ verified: true, paymentStatus: 'Paid' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
 
+// Lenco webhook
+router.post('/webhook/lenco', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const { event, data } = req.body;
+    if (event === 'transaction.successful') {
+      const reference = data?.reference;
+      if (reference) {
+        const sale = await prisma.sale.findFirst({ where: { id: reference } });
+        if (sale && sale.paymentStatus !== 'Paid') {
+          await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Lenco Online', amountPaid: parseFloat(sale.totalPrice) } });
+        }
+      }
+    }
     res.json({ status: 'ok' });
   } catch (err) { console.error('Webhook error:', err); res.status(500).json({ error: 'Something went wrong' }); }
 });

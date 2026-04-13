@@ -154,16 +154,24 @@ export default function Settings() {
 
       {/* Payment Gateway */}
       <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Online Payment (Lenco/BroadPay)</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">Online Payment (Lenco)</h3>
         <p className="text-xs text-gray-400 mb-4">Enable customers to pay online via Visa, Mastercard, MTN Mobile Money, or Airtel Money</p>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">BroadPay Public Key</label>
-            <input type="text" value={settings.broadpayPublicKey || ''}
-              onChange={e => setSettings({...settings, broadpayPublicKey: e.target.value})}
-              placeholder="Enter your BroadPay/Lenco public key"
+            <label className="block text-sm font-medium text-gray-700 mb-1">Lenco Public Key</label>
+            <input type="text" value={settings.lencoPublicKey || ''}
+              onChange={e => setSettings({...settings, lencoPublicKey: e.target.value})}
+              placeholder="pub-xxxxxxxxxxxxxxxx"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
-            <p className="text-xs text-gray-400 mt-1">Get this from your Lenco dashboard. Leave blank to disable online payments.</p>
+            <p className="text-xs text-gray-400 mt-1">Get this from your Lenco app under Collections / Lenco Pay.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Lenco Secret Key</label>
+            <input type="password" value={settings.lencoSecretKey || ''}
+              onChange={e => setSettings({...settings, lencoSecretKey: e.target.value})}
+              placeholder="Enter your Lenco API secret key"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
+            <p className="text-xs text-gray-400 mt-1">Used for server-side payment verification. Never shared publicly.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Store Welcome Message</label>

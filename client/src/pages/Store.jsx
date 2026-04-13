@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { getStoreInfo, getStoreProducts, placeStoreOrder, getPaymentStatus } from '../services/api';
+import { getStoreInfo, getStoreProducts, placeStoreOrder, verifyStorePayment, getPaymentStatus } from '../services/api';
 import { FiShoppingCart, FiPlus, FiMinus, FiTrash2, FiX, FiPackage, FiCheck, FiPhone, FiMapPin, FiSearch, FiCreditCard, FiLoader } from 'react-icons/fi';
 
 function formatMoney(amount, symbol = 'K') {
@@ -31,6 +31,16 @@ export default function Store() {
   const [submitting, setSubmitting] = useState(false);
   const [payOnline, setPayOnline] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({ customerName: '', customerPhone: '', customerCity: '', deliveryAddress: '', notes: '' });
+
+  // Load Lenco SDK
+  useEffect(() => {
+    if (document.getElementById('lenco-sdk')) return;
+    const script = document.createElement('script');
+    script.id = 'lenco-sdk';
+    script.src = 'https://pay.lenco.co/js/v1/inline.js';
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
 
   useEffect(() => {
     const orderId = searchParams.get('order');
@@ -88,17 +98,53 @@ export default function Store() {
     try {
       const { data } = await placeStoreOrder(slug, {
         ...checkoutForm,
-        payOnline,
         items: cart.map(c => ({ productId: c.productId, qty: c.qty })),
       });
-      if (data.paymentUrl) {
-        // Redirect to BroadPay checkout
-        window.location.href = data.paymentUrl;
+
+      // If paying online with Lenco
+      if (payOnline && store?.lencoPublicKey && typeof window.LencoPay !== 'undefined') {
+        const nameParts = checkoutForm.customerName.trim().split(/\s+/);
+        setShowCheckout(false);
+        window.LencoPay.getPaid({
+          key: store.lencoPublicKey,
+          reference: data.saleId,
+          email: checkoutForm.customerEmail || `${checkoutForm.customerPhone}@store.local`,
+          amount: data.total,
+          currency: 'ZMW',
+          channels: ['card', 'mobile-money'],
+          label: `Order ${data.orderNumber}`,
+          customer: {
+            firstName: nameParts[0] || '',
+            lastName: nameParts.slice(1).join(' ') || nameParts[0] || '',
+            phone: checkoutForm.customerPhone,
+          },
+          billing: {
+            city: checkoutForm.customerCity || '',
+            country: 'ZM',
+          },
+          onSuccess: async (response) => {
+            try {
+              await verifyStorePayment(slug, { reference: response.reference, saleId: data.saleId });
+            } catch {}
+            setOrderResult({ ...data, paid: true, message: 'Payment successful! Your order is confirmed.' });
+            setCart([]);
+            setShowCart(false);
+          },
+          onClose: () => {
+            setOrderResult({ ...data, paid: false, message: 'Order placed. Payment was not completed — we will contact you to arrange payment.' });
+            setCart([]);
+            setShowCart(false);
+          },
+          onConfirmationPending: () => {
+            setOrderResult({ ...data, paid: false, message: 'Payment is being confirmed. We will update you once confirmed.' });
+            setCart([]);
+            setShowCart(false);
+          },
+        });
+        setSubmitting(false);
         return;
       }
-      if (data.paymentError) {
-        console.error('Payment error:', data.paymentError);
-      }
+
       setOrderResult(data);
       setCart([]);
       setShowCheckout(false);
@@ -168,10 +214,10 @@ export default function Store() {
   if (orderResult) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <FiCheck className="text-green-600" size={32} />
+        <div className={`w-16 h-16 ${orderResult.paid ? 'bg-green-100' : 'bg-blue-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+          {orderResult.paid ? <FiCheck className="text-green-600" size={32} /> : <FiShoppingCart className="text-blue-600" size={32} />}
         </div>
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">Order Placed!</h2>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">{orderResult.paid ? 'Payment Successful!' : 'Order Placed!'}</h2>
         <p className="text-gray-600 mb-4">{orderResult.message}</p>
         <div className="bg-gray-50 rounded-lg p-4 mb-4">
           <p className="text-sm text-gray-500">Order Number</p>
@@ -431,7 +477,7 @@ export default function Store() {
                   placeholder="Any special instructions" className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
 
-              {store?.paymentEnabled && (
+              {store?.lencoPublicKey && (
                 <div className="bg-gray-50 rounded-lg p-3">
                   <p className="text-sm font-medium text-gray-700 mb-2">Payment Method</p>
                   <div className="flex gap-2">
