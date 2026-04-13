@@ -20,12 +20,18 @@ import SuperadminPanel from './pages/SuperadminPanel';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
+  if (isStoreDomain) return children;
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
   return user ? children : <Navigate to="/login" />;
 }
 
+// Custom store domains map
+const STORE_DOMAINS = ['store.privtech.net'];
+const isStoreDomain = STORE_DOMAINS.includes(window.location.hostname);
+
 function DashboardRouter() {
   const { user } = useAuth();
+  if (isStoreDomain) return <Store />;
   if (user?.role === 'superadmin') return <Navigate to="/superadmin" />;
   return <Dashboard />;
 }
@@ -37,6 +43,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/store/:slug" element={<Store />} />
       <Route path="/store/:slug/payment-result" element={<Store />} />
+      <Route path="/shop" element={<Store />} />
+      <Route path="/payment-result" element={<Store />} />
       <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>

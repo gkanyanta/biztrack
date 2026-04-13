@@ -10,6 +10,7 @@
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/(.*)", "destination": "/index.html", "has": [{ "type": "host", "value": "store.privtech.net" }] },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

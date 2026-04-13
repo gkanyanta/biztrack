@@ -8,9 +8,16 @@ function formatMoney(amount, symbol = 'K') {
   return `${symbol}${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+// Map custom store domains to company slugs
+const STORE_DOMAINS = {
+  'store.privtech.net': 'privtech-solutions',
+};
+
 export default function Store() {
-  const { slug } = useParams();
+  const { slug: paramSlug } = useParams();
   const [searchParams] = useSearchParams();
+  // Auto-detect store from custom domain
+  const slug = paramSlug || STORE_DOMAINS[window.location.hostname] || '';
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -71,6 +78,11 @@ export default function Store() {
 
   const cartTotal = cart.reduce((sum, c) => sum + c.price * c.qty, 0);
   const cartCount = cart.reduce((sum, c) => sum + c.qty, 0);
+
+  const buyNow = (product) => {
+    setCart([{ productId: product.id, name: product.name, price: parseFloat(product.sellingPrice), qty: 1, stock: product.stock, imageUrl: product.imageUrl }]);
+    setShowCheckout(true);
+  };
 
   const handleCheckout = async (e) => {
     e.preventDefault();
@@ -269,10 +281,16 @@ export default function Store() {
                           </button>
                         </div>
                       ) : (
-                        <button onClick={() => addToCart(p)}
-                          className="w-full py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 flex items-center justify-center gap-1.5">
-                          <FiPlus size={14} /> Add to Cart
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => addToCart(p)}
+                            className="flex-1 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 flex items-center justify-center gap-1">
+                            <FiPlus size={12} /> Add to Cart
+                          </button>
+                          <button onClick={() => buyNow(p)}
+                            className="flex-1 py-2 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 flex items-center justify-center gap-1">
+                            <FiShoppingCart size={12} /> Buy Now
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

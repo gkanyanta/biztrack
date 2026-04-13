@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getProducts, createProduct, updateProduct, deleteProduct, bulkRestock, getStockLog } from '../services/api';
 import { formatMoney, calcMargin } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle, FiPackage } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle, FiPackage, FiUpload, FiImage } from 'react-icons/fi';
 
 export default function Products() {
   const [products, setProducts] = useState([]);
@@ -25,6 +25,17 @@ export default function Products() {
     costPrice: '', sellingPrice: '', stock: '0', reorderLevel: '5',
     supplier: '', imageUrl: ''
   });
+  const imageInputRef = useRef(null);
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Please select an image'); return; }
+    if (file.size > 1024 * 1024) { toast.error('Image must be under 1MB'); return; }
+    const reader = new FileReader();
+    reader.onload = () => setForm(f => ({ ...f, imageUrl: reader.result }));
+    reader.readAsDataURL(file);
+  };
 
   const loadProducts = () => {
     setLoading(true);
@@ -161,8 +172,17 @@ export default function Products() {
               {products.map(p => (
                 <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 ${!p.isActive ? 'opacity-50' : ''}`}>
                   <td className="p-3">
-                    <div className="font-medium text-gray-800">{p.name}</div>
-                    <div className="text-xs text-gray-500 md:hidden">{p.sku}</div>
+                    <div className="flex items-center gap-2.5">
+                      {p.imageUrl ? (
+                        <img src={p.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0 border border-gray-200" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0"><FiPackage className="text-gray-300" size={16} /></div>
+                      )}
+                      <div>
+                        <div className="font-medium text-gray-800">{p.name}</div>
+                        <div className="text-xs text-gray-500 md:hidden">{p.sku}</div>
+                      </div>
+                    </div>
                   </td>
                   <td className="p-3 text-gray-600 hidden md:table-cell">{p.sku}</td>
                   <td className="p-3 text-gray-600 hidden lg:table-cell">{p.category || '-'}</td>
@@ -252,6 +272,30 @@ export default function Products() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea value={form.description} onChange={e => setForm({...form, description: e.target.value})} rows={2}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Product Image</label>
+            {form.imageUrl ? (
+              <div className="flex items-start gap-4">
+                <img src={form.imageUrl} alt="Product" className="h-24 w-24 object-cover rounded-lg border border-gray-200" />
+                <div className="flex flex-col gap-2">
+                  <button type="button" onClick={() => imageInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
+                    <FiUpload size={14} /> Change
+                  </button>
+                  <button type="button" onClick={() => { setForm({...form, imageUrl: ''}); if (imageInputRef.current) imageInputRef.current.value = ''; }}
+                    className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-800">
+                    <FiTrash2 size={14} /> Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={() => imageInputRef.current?.click()}
+                className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors w-full justify-center">
+                <FiImage size={16} /> Upload Image (max 1MB)
+              </button>
+            )}
+            <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
