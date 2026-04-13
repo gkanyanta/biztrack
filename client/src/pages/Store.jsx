@@ -8,16 +8,9 @@ function formatMoney(amount, symbol = 'K') {
   return `${symbol}${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// Map custom store domains to company slugs
-const DOMAIN_STORE_MAP = {
-  'store.privtech.net': 'privtech-solutions',
-};
-
 export default function Store() {
-  const { slug: paramSlug } = useParams();
+  const { slug } = useParams();
   const [searchParams] = useSearchParams();
-  // Auto-detect store from custom domain
-  const slug = paramSlug || DOMAIN_STORE_MAP[window.location.hostname] || '';
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
