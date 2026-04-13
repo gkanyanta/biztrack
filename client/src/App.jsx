@@ -18,20 +18,18 @@ import Consultants from './pages/Consultants';
 import Store from './pages/Store';
 import SuperadminPanel from './pages/SuperadminPanel';
 
+// Custom store domains — render store directly, skip admin
+const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
+const isStoreDomain = window.location.hostname in STORE_DOMAINS;
+
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
-  if (isStoreDomain) return children;
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
   return user ? children : <Navigate to="/login" />;
 }
 
-// Custom store domains map
-const STORE_DOMAINS = ['store.privtech.net'];
-const isStoreDomain = STORE_DOMAINS.includes(window.location.hostname);
-
 function DashboardRouter() {
   const { user } = useAuth();
-  if (isStoreDomain) return <Store />;
   if (user?.role === 'superadmin') return <Navigate to="/superadmin" />;
   return <Dashboard />;
 }
@@ -39,12 +37,19 @@ function DashboardRouter() {
 function AppRoutes() {
   const { user } = useAuth();
 
+  // If on a store domain, only render the store — no admin routes
+  if (isStoreDomain) {
+    return (
+      <Routes>
+        <Route path="*" element={<Store />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       <Route path="/store/:slug" element={<Store />} />
       <Route path="/store/:slug/payment-result" element={<Store />} />
-      <Route path="/shop" element={<Store />} />
-      <Route path="/payment-result" element={<Store />} />
       <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>

@@ -1522,26 +1522,39 @@ app.post('/api/v1/store/:slug/order', async (req, res) => {
     const publicKey = settingsMap.broadpayPublicKey;
 
     if (publicKey && data.payOnline) {
-      const baseUrl = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || '';
+      const baseUrl = req.headers.origin || req.headers.referer?.replace(/\/$/, '') || `https://${req.headers.host}`;
       const nameParts = data.customerName.trim().split(/\s+/);
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || firstName;
+
+      // Determine return URL — if on store domain, use root path
+      const returnHost = baseUrl;
+      const returnUrl = `${returnHost}/store/${req.params.slug}/payment-result?order=${sale.id}`;
+
       const checkoutPayload = {
         merchantPublicKey: publicKey, transactionName: `Order ${orderNumber}`, amount: totalPrice, currency: 'ZMW',
         transactionReference: sale.id, customerFirstName: firstName, customerLastName: lastName,
         customerEmail: data.customerEmail || `${data.customerPhone}@store.local`, customerPhone: data.customerPhone,
         customerAddr: data.deliveryAddress || '', customerCity: data.customerCity || '', customerState: '', customerCountryCode: 'ZM', customerPostalCode: '',
-        webhookUrl: `${baseUrl}/api/v1/store/webhook/broadpay`,
-        returnUrl: `${baseUrl}/store/${req.params.slug}/payment-result?order=${sale.id}`,
-        autoReturn: true, chargeMe: false,
+        webhookUrl: `https://${req.headers.host}/api/v1/store/webhook/broadpay`,
+        returnUrl, autoReturn: true, chargeMe: false,
       };
+      console.log('BroadPay checkout request:', JSON.stringify({ ...checkoutPayload, merchantPublicKey: '***' }));
       try {
         const bpRes = await fetch('https://checkout.broadpay.io/gateway/api/v1/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(checkoutPayload) });
-        const bpResult = await bpRes.json();
+        const bpText = await bpRes.text();
+        console.log('BroadPay response:', bpText);
+        const bpResult = JSON.parse(bpText);
         if (!bpResult.isError && bpResult.paymentUrl) {
           return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentUrl: bpResult.paymentUrl, paymentReference: bpResult.reference, message: 'Redirecting to payment...' });
         }
-      } catch (payErr) { console.error('BroadPay error:', payErr); }
+        // BroadPay returned an error — include it in response so we can debug
+        console.error('BroadPay returned error:', bpResult);
+        return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentError: bpResult.message || 'Payment gateway error', message: 'Order placed but payment failed. We will contact you to arrange payment.' });
+      } catch (payErr) {
+        console.error('BroadPay fetch error:', payErr.message);
+        return res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, paymentError: payErr.message, message: 'Order placed but payment could not be initiated. We will contact you to arrange payment.' });
+      }
     }
 
     res.status(201).json({ orderNumber: sale.orderNumber, total: totalPrice, shippingCharge, message: 'Order placed successfully! We will contact you shortly to confirm.' });

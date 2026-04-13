@@ -9,7 +9,7 @@ function formatMoney(amount, symbol = 'K') {
 }
 
 // Map custom store domains to company slugs
-const STORE_DOMAINS = {
+const DOMAIN_STORE_MAP = {
   'store.privtech.net': 'privtech-solutions',
 };
 
@@ -17,7 +17,7 @@ export default function Store() {
   const { slug: paramSlug } = useParams();
   const [searchParams] = useSearchParams();
   // Auto-detect store from custom domain
-  const slug = paramSlug || STORE_DOMAINS[window.location.hostname] || '';
+  const slug = paramSlug || DOMAIN_STORE_MAP[window.location.hostname] || '';
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -97,6 +97,9 @@ export default function Store() {
         // Redirect to BroadPay checkout
         window.location.href = data.paymentUrl;
         return;
+      }
+      if (data.paymentError) {
+        console.error('Payment error:', data.paymentError);
       }
       setOrderResult(data);
       setCart([]);
