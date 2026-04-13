@@ -288,7 +288,7 @@ export default function Store() {
                 <div key={p.id} className="bg-white rounded-2xl border border-slate-100 overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group">
                   <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden relative">
                     {p.imageUrl ? (
-                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      <img src={p.imageUrl} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                     ) : (
                       <FiPackage className="text-slate-300" size={40} />
                     )}

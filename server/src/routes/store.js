@@ -11,10 +11,11 @@ router.get('/:slug/info', async (req, res) => {
     const settings = await prisma.setting.findMany({ where: { companyId: company.id } });
     const s = {};
     settings.forEach(st => { s[st.key] = st.value; });
+    const hasLogo = !!(s.companyLogo);
     res.json({
       name: s.businessName || company.name,
       slug: company.slug,
-      logo: s.companyLogo || null,
+      logo: hasLogo ? `/api/v1/store/${req.params.slug}/logo` : null,
       phone: s.companyPhone || null,
       email: s.companyEmail || null,
       address: s.companyAddress || null,
@@ -28,6 +29,36 @@ router.get('/:slug/info', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// Serve logo as cached image
+router.get('/:slug/logo', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const company = await prisma.company.findUnique({ where: { slug: req.params.slug } });
+    if (!company) return res.status(404).end();
+    const setting = await prisma.setting.findFirst({ where: { companyId: company.id, key: 'companyLogo' } });
+    if (!setting?.value) return res.status(404).end();
+    const match = setting.value.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (!match) return res.status(404).end();
+    const buffer = Buffer.from(match[2], 'base64');
+    res.set({ 'Content-Type': match[1], 'Cache-Control': 'public, max-age=86400', 'Content-Length': buffer.length });
+    res.send(buffer);
+  } catch { res.status(500).end(); }
+});
+
+// Serve product image as cached image
+router.get('/product-image/:id', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const product = await prisma.product.findUnique({ where: { id: req.params.id }, select: { imageUrl: true } });
+    if (!product?.imageUrl) return res.status(404).end();
+    const match = product.imageUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (!match) return res.status(404).end();
+    const buffer = Buffer.from(match[2], 'base64');
+    res.set({ 'Content-Type': match[1], 'Cache-Control': 'public, max-age=86400', 'Content-Length': buffer.length });
+    res.send(buffer);
+  } catch { res.status(500).end(); }
+});
+
 // Get active products
 router.get('/:slug/products', async (req, res) => {
   try {
@@ -39,9 +70,10 @@ router.get('/:slug/products', async (req, res) => {
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
     const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, imageUrl: true, stock: true }, orderBy: { name: 'asc' } });
+    const productsWithUrls = products.map(p => ({ ...p, imageUrl: p.imageUrl ? `/api/v1/store/product-image/${p.id}` : null }));
     const allProducts = await prisma.product.findMany({ where: { companyId: company.id, isActive: true, stock: { gt: 0 } }, select: { category: true }, distinct: ['category'] });
     const categories = allProducts.map(p => p.category).filter(Boolean).sort();
-    res.json({ products, categories });
+    res.json({ products: productsWithUrls, categories });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

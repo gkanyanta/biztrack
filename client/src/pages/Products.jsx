@@ -31,9 +31,26 @@ export default function Products() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) { toast.error('Please select an image'); return; }
-    if (file.size > 1024 * 1024) { toast.error('Image must be under 1MB'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5MB'); return; }
+    // Compress image via canvas
+    const img = new Image();
     const reader = new FileReader();
-    reader.onload = () => setForm(f => ({ ...f, imageUrl: reader.result }));
+    reader.onload = (ev) => {
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxSize = 600;
+        let w = img.width, h = img.height;
+        if (w > maxSize || h > maxSize) {
+          if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+          else { w = Math.round(w * maxSize / h); h = maxSize; }
+        }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL('image/jpeg', 0.7);
+        setForm(f => ({ ...f, imageUrl: compressed }));
+      };
+      img.src = ev.target.result;
+    };
     reader.readAsDataURL(file);
   };
 
