@@ -8,9 +8,14 @@ function formatMoney(amount, symbol = 'K') {
   return `${symbol}${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const DOMAIN_STORE_MAP = {
+  'store.privtech.net': 'privtech-solutions',
+};
+
 export default function Store() {
-  const { slug } = useParams();
+  const { slug: paramSlug } = useParams();
   const [searchParams] = useSearchParams();
+  const slug = paramSlug || DOMAIN_STORE_MAP[window.location.hostname] || '';
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);

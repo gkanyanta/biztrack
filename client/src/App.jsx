@@ -18,6 +18,10 @@ import Consultants from './pages/Consultants';
 import Store from './pages/Store';
 import SuperadminPanel from './pages/SuperadminPanel';
 
+// Store domains — serve store directly, no admin
+const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
+const isStoreDomain = window.location.hostname in STORE_DOMAINS;
+
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>;
@@ -32,6 +36,14 @@ function DashboardRouter() {
 
 function AppRoutes() {
   const { user } = useAuth();
+
+  if (isStoreDomain) {
+    return (
+      <Routes>
+        <Route path="*" element={<Store />} />
+      </Routes>
+    );
+  }
 
   return (
     <Routes>
