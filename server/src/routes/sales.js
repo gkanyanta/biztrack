@@ -239,11 +239,25 @@ router.put('/:id/status', async (req, res) => {
 
     if (!wasDeducted && shouldDeduct) {
       for (const item of sale.items) {
-        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
-        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+        let deductedFromConsultant = false;
+        // If sale has a consultant, try to deduct from their stock first
+        if (sale.consultantId) {
+          const cStock = await prisma.consultantStock.findUnique({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } } });
+          if (cStock && cStock.qty >= item.qty) {
+            await prisma.consultantStock.update({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } }, data: { qty: { decrement: item.qty } } });
+            await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale (consultant stock)', saleId: sale.id, companyId } });
+            deductedFromConsultant = true;
+          }
+        }
+        // Fall back to main stock
+        if (!deductedFromConsultant) {
+          await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+          await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+        }
       }
     } else if (wasDeducted && !shouldDeduct) {
       for (const item of sale.items) {
+        // Return to main stock (simplest approach)
         await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
         await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert', saleId: sale.id, companyId } });
       }

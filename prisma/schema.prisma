@@ -28,6 +28,8 @@ model Company {
   debtReminders      DebtReminder[]
   consultants        Consultant[]
   commissionPayments CommissionPayment[]
+  consultantStock    ConsultantStock[]
+  stockTransfers     StockTransfer[]
 }
 
 model User {
@@ -58,8 +60,10 @@ model Product {
   company      Company    @relation(fields: [companyId], references: [id])
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
-  saleItems    SaleItem[]
-  stockLogs    StockLog[]
+  saleItems       SaleItem[]
+  stockLogs       StockLog[]
+  consultantStock ConsultantStock[]
+  stockTransfers  StockTransfer[]
 
   @@unique([companyId, sku])
 }
@@ -227,8 +231,10 @@ model Consultant {
   company          Company            @relation(fields: [companyId], references: [id])
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
-  sales            Sale[]
+  sales              Sale[]
   commissionPayments CommissionPayment[]
+  stock              ConsultantStock[]
+  stockTransfers     StockTransfer[]
 }
 
 model CommissionPayment {
@@ -241,6 +247,34 @@ model CommissionPayment {
   periodTo      DateTime?
   paymentMethod String?
   reference     String?
+  notes         String?
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id])
+  createdAt     DateTime   @default(now())
+}
+
+model ConsultantStock {
+  id            String     @id @default(cuid())
+  consultantId  String
+  consultant    Consultant @relation(fields: [consultantId], references: [id])
+  productId     String
+  product       Product    @relation(fields: [productId], references: [id])
+  qty           Int        @default(0)
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id])
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([consultantId, productId])
+}
+
+model StockTransfer {
+  id            String     @id @default(cuid())
+  consultantId  String
+  consultant    Consultant @relation(fields: [consultantId], references: [id])
+  productId     String
+  product       Product    @relation(fields: [productId], references: [id])
+  qty           Int
+  direction     String     @default("to_consultant")
   notes         String?
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id])

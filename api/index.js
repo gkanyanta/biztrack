@@ -566,8 +566,19 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
     const shouldDeduct = stockDeductStatuses.includes(status);
     if (!wasDeducted && shouldDeduct) {
       for (const item of sale.items) {
-        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
-        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+        let deductedFromConsultant = false;
+        if (sale.consultantId) {
+          const cStock = await prisma.consultantStock.findUnique({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } } });
+          if (cStock && cStock.qty >= item.qty) {
+            await prisma.consultantStock.update({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } }, data: { qty: { decrement: item.qty } } });
+            await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale (consultant stock)', saleId: sale.id, companyId } });
+            deductedFromConsultant = true;
+          }
+        }
+        if (!deductedFromConsultant) {
+          await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+          await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
+        }
       }
     } else if (wasDeducted && !shouldDeduct) {
       for (const item of sale.items) {
@@ -1743,6 +1754,60 @@ app.get('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(payments);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- CONSULTANT STOCK ----
+app.get('/api/v1/consultants/:id/stock', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const stock = await prisma.consultantStock.findMany({ where: { consultantId: req.params.id, companyId, qty: { gt: 0 } }, include: { product: { select: { id: true, name: true, sku: true, sellingPrice: true } } } });
+    res.json(stock);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/consultants/:id/stock/transfer', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    const { productId, qty, notes } = req.body;
+    if (!productId || !qty || parseInt(qty) <= 0) return res.status(400).json({ error: 'Product and quantity required' });
+    const quantity = parseInt(qty);
+    const product = await prisma.product.findFirst({ where: { id: productId, companyId } });
+    if (!product) return res.status(400).json({ error: 'Product not found' });
+    if (product.stock < quantity) return res.status(400).json({ error: `Only ${product.stock} in main stock` });
+    await prisma.product.update({ where: { id: productId }, data: { stock: { decrement: quantity } } });
+    await prisma.stockLog.create({ data: { productId, change: -quantity, reason: `Transfer to ${consultant.name}`, companyId } });
+    await prisma.consultantStock.upsert({ where: { consultantId_productId: { consultantId: consultant.id, productId } }, update: { qty: { increment: quantity } }, create: { consultantId: consultant.id, productId, qty: quantity, companyId } });
+    await prisma.stockTransfer.create({ data: { consultantId: consultant.id, productId, qty: quantity, direction: 'to_consultant', notes: notes || null, companyId } });
+    res.status(201).json({ message: `${quantity} x ${product.name} transferred to ${consultant.name}` });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/consultants/:id/stock/return', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    const { productId, qty, notes } = req.body;
+    if (!productId || !qty || parseInt(qty) <= 0) return res.status(400).json({ error: 'Product and quantity required' });
+    const quantity = parseInt(qty);
+    const cStock = await prisma.consultantStock.findUnique({ where: { consultantId_productId: { consultantId: consultant.id, productId } } });
+    if (!cStock || cStock.qty < quantity) return res.status(400).json({ error: `Consultant only has ${cStock?.qty || 0} units` });
+    await prisma.product.update({ where: { id: productId }, data: { stock: { increment: quantity } } });
+    await prisma.stockLog.create({ data: { productId, change: quantity, reason: `Return from ${consultant.name}`, companyId } });
+    await prisma.consultantStock.update({ where: { consultantId_productId: { consultantId: consultant.id, productId } }, data: { qty: { decrement: quantity } } });
+    await prisma.stockTransfer.create({ data: { consultantId: consultant.id, productId, qty: quantity, direction: 'from_consultant', notes: notes || null, companyId } });
+    res.status(201).json({ message: `${quantity} units returned from ${consultant.name}` });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/consultants/:id/stock/transfers', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const transfers = await prisma.stockTransfer.findMany({ where: { consultantId: req.params.id, companyId }, include: { product: { select: { name: true, sku: true } } }, orderBy: { createdAt: 'desc' } });
+    res.json(transfers);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

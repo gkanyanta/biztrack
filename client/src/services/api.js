@@ -96,6 +96,10 @@ export const deleteConsultant = (id) => api.delete(`/consultants/${id}`);
 export const getCommissionSummary = (params) => api.get('/consultants/commission-summary', { params });
 export const recordCommissionPayment = (consultantId, data) => api.post(`/consultants/${consultantId}/payments`, data);
 export const getCommissionPayments = (consultantId) => api.get(`/consultants/${consultantId}/payments`);
+export const getConsultantStock = (consultantId) => api.get(`/consultants/${consultantId}/stock`);
+export const transferStockToConsultant = (consultantId, data) => api.post(`/consultants/${consultantId}/stock/transfer`, data);
+export const returnStockFromConsultant = (consultantId, data) => api.post(`/consultants/${consultantId}/stock/return`, data);
+export const getStockTransfers = (consultantId) => api.get(`/consultants/${consultantId}/stock/transfers`);
 
 // Store (public)
 export const getStoreInfo = (slug) => api.get(`/store/${slug}/info`);

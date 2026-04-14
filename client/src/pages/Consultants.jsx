@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant, getSettings } from '../services/api';
+import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts } from '../services/api';
 import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -7,7 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import PayStatementPDF from '../components/PayStatementPDF';
 import { pdf } from '@react-pdf/renderer';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft } from 'react-icons/fi';
 
 export default function Consultants() {
   const [consultants, setConsultants] = useState([]);
@@ -24,6 +24,12 @@ export default function Consultants() {
   const emptyForm = { name: '', phone: '', whatsapp: '', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', notes: '' };
   const [form, setForm] = useState(emptyForm);
   const emptyPayment = { amount: '', type: 'commission', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
+  const [showStockModal, setShowStockModal] = useState(null);
+  const [consultantStockList, setConsultantStockList] = useState([]);
+  const [stockTransfers, setStockTransfers] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
+  const [transferForm, setTransferForm] = useState({ productId: '', qty: '', notes: '' });
+  const [transferDirection, setTransferDirection] = useState('to_consultant');
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
 
   const loadData = () => {
@@ -139,6 +145,37 @@ export default function Consultants() {
 
   const getSummaryFor = (id) => summary?.summary?.find(s => s.consultant.id === id);
 
+  const openStockModal = async (consultant) => {
+    setShowStockModal(consultant);
+    setTransferForm({ productId: '', qty: '', notes: '' });
+    setTransferDirection('to_consultant');
+    try {
+      const [stockRes, transferRes, prodRes] = await Promise.all([
+        getConsultantStock(consultant.id),
+        getStockTransfers(consultant.id),
+        allProducts.length ? Promise.resolve({ data: allProducts }) : getProducts()
+      ]);
+      setConsultantStockList(stockRes.data);
+      setStockTransfers(transferRes.data);
+      if (!allProducts.length) setAllProducts(prodRes.data.filter(p => p.isActive));
+    } catch { toast.error('Error loading stock data'); }
+  };
+
+  const handleTransfer = async (e) => {
+    e.preventDefault();
+    if (!showStockModal) return;
+    try {
+      const fn = transferDirection === 'to_consultant' ? transferStockToConsultant : returnStockFromConsultant;
+      const { data } = await fn(showStockModal.id, transferForm);
+      toast.success(data.message);
+      setTransferForm({ productId: '', qty: '', notes: '' });
+      // Refresh stock
+      const [stockRes, transferRes] = await Promise.all([getConsultantStock(showStockModal.id), getStockTransfers(showStockModal.id)]);
+      setConsultantStockList(stockRes.data);
+      setStockTransfers(transferRes.data);
+    } catch (err) { toast.error(err.response?.data?.error || 'Transfer failed'); }
+  };
+
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
       <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
@@ -215,6 +252,7 @@ export default function Consultants() {
                     <td className="p-3 text-right">
                       <div className="flex gap-1 justify-end">
                         <button onClick={() => openDetail(s || { consultant: c })} className="p-1.5 text-gray-400 hover:text-blue-600" title="View details"><FiEye size={15} /></button>
+                        <button onClick={() => openStockModal(c)} className="p-1.5 text-gray-400 hover:text-purple-600" title="Stock"><FiPackage size={15} /></button>
                         <button onClick={() => openPayment(c)} className="p-1.5 text-gray-400 hover:text-green-600" title="Record payment"><FiDollarSign size={15} /></button>
                         <button onClick={() => openEdit(c)} className="p-1.5 text-gray-400 hover:text-blue-600" title="Edit"><FiEdit2 size={15} /></button>
                         <button onClick={() => setDeleteConfirm(c)} className="p-1.5 text-gray-400 hover:text-red-600" title="Delete"><FiTrash2 size={15} /></button>
@@ -465,6 +503,110 @@ export default function Consultants() {
 
       <ConfirmDialog isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete}
         title="Remove Consultant" message={`Remove "${deleteConfirm?.name}"? If they have sales, they will be deactivated instead.`} />
+
+      {/* Stock Transfer Modal */}
+      <Modal isOpen={!!showStockModal} onClose={() => setShowStockModal(null)} title={`Stock - ${showStockModal?.name || ''}`} size="lg">
+        {showStockModal && (
+          <div className="space-y-4">
+            {/* Current Stock */}
+            <div>
+              <h3 className="font-medium text-gray-800 mb-2">Consultant's Inventory</h3>
+              {consultantStockList.length > 0 ? (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-gray-50 border-b">
+                      <th className="text-left p-2 font-medium text-gray-600">Product</th>
+                      <th className="text-left p-2 font-medium text-gray-600">SKU</th>
+                      <th className="text-right p-2 font-medium text-gray-600">Qty</th>
+                      <th className="text-right p-2 font-medium text-gray-600">Value</th>
+                    </tr></thead>
+                    <tbody>
+                      {consultantStockList.map(s => (
+                        <tr key={s.id} className="border-b border-gray-50">
+                          <td className="p-2 text-gray-800 font-medium">{s.product.name}</td>
+                          <td className="p-2 text-gray-500">{s.product.sku}</td>
+                          <td className="p-2 text-right font-bold">{s.qty}</td>
+                          <td className="p-2 text-right text-gray-600">{formatMoney(s.qty * parseFloat(s.product.sellingPrice))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot><tr className="bg-gray-50 font-semibold">
+                      <td className="p-2" colSpan={2}>Total</td>
+                      <td className="p-2 text-right">{consultantStockList.reduce((s, i) => s + i.qty, 0)}</td>
+                      <td className="p-2 text-right">{formatMoney(consultantStockList.reduce((s, i) => s + i.qty * parseFloat(i.product.sellingPrice), 0))}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 bg-gray-50 rounded-lg p-4 text-center">No stock assigned yet</p>
+              )}
+            </div>
+
+            {/* Transfer Form */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <div className="flex gap-2 mb-3">
+                <button onClick={() => setTransferDirection('to_consultant')}
+                  className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1 ${transferDirection === 'to_consultant' ? 'bg-purple-600 text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>
+                  <FiArrowRight size={12} /> Transfer To
+                </button>
+                <button onClick={() => setTransferDirection('from_consultant')}
+                  className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1 ${transferDirection === 'from_consultant' ? 'bg-orange-600 text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>
+                  <FiArrowLeft size={12} /> Return From
+                </button>
+              </div>
+              <form onSubmit={handleTransfer} className="flex flex-col sm:flex-row gap-2">
+                <select required value={transferForm.productId} onChange={e => setTransferForm({ ...transferForm, productId: e.target.value })}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">Select product</option>
+                  {(transferDirection === 'to_consultant' ? allProducts : consultantStockList.map(s => s.product)).map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
+                  ))}
+                </select>
+                <input type="number" min="1" required value={transferForm.qty} onChange={e => setTransferForm({ ...transferForm, qty: e.target.value })}
+                  placeholder="Qty" className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="text" value={transferForm.notes} onChange={e => setTransferForm({ ...transferForm, notes: e.target.value })}
+                  placeholder="Notes (optional)" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                <button type="submit" className={`px-4 py-2 text-sm text-white rounded-lg ${transferDirection === 'to_consultant' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-orange-600 hover:bg-orange-700'}`}>
+                  {transferDirection === 'to_consultant' ? 'Transfer' : 'Return'}
+                </button>
+              </form>
+            </div>
+
+            {/* Transfer History */}
+            {stockTransfers.length > 0 && (
+              <div>
+                <h3 className="font-medium text-gray-800 mb-2">Transfer History</h3>
+                <div className="max-h-48 overflow-auto border border-gray-200 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-gray-50 border-b">
+                      <th className="text-left p-2 font-medium text-gray-600">Date</th>
+                      <th className="text-left p-2 font-medium text-gray-600">Product</th>
+                      <th className="text-center p-2 font-medium text-gray-600">Direction</th>
+                      <th className="text-right p-2 font-medium text-gray-600">Qty</th>
+                      <th className="text-left p-2 font-medium text-gray-600">Notes</th>
+                    </tr></thead>
+                    <tbody>
+                      {stockTransfers.map(t => (
+                        <tr key={t.id} className="border-b border-gray-50">
+                          <td className="p-2 text-gray-600">{formatDate(t.createdAt)}</td>
+                          <td className="p-2 text-gray-800">{t.product.name}</td>
+                          <td className="p-2 text-center">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${t.direction === 'to_consultant' ? 'bg-purple-50 text-purple-700' : 'bg-orange-50 text-orange-700'}`}>
+                              {t.direction === 'to_consultant' ? 'Sent' : 'Returned'}
+                            </span>
+                          </td>
+                          <td className="p-2 text-right font-medium">{t.qty}</td>
+                          <td className="p-2 text-gray-500">{t.notes || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
