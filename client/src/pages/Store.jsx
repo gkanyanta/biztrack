@@ -318,8 +318,8 @@ export default function Store() {
                             <FiPlus size={12} /> Add to Cart
                           </button>
                           <button onClick={() => buyNow(p)}
-                            className="py-2.5 px-3 bg-emerald-600 text-white text-xs font-medium rounded-xl hover:bg-emerald-500 flex items-center justify-center gap-1 transition-colors">
-                            <FiZap size={12} />
+                            className="py-2.5 px-4 bg-emerald-600 text-white text-xs font-medium rounded-xl hover:bg-emerald-500 flex items-center justify-center gap-1 transition-colors">
+                            Buy Now
                           </button>
                         </div>
                       )}
