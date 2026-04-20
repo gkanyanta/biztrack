@@ -69,8 +69,10 @@ router.get('/:slug/products', async (req, res) => {
     const where = { companyId: company.id, isActive: true, stock: { gt: 0 } };
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
-    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, imageUrl: true, stock: true }, orderBy: { name: 'asc' } });
-    const productsWithUrls = products.map(p => ({ ...p, imageUrl: p.imageUrl ? `/api/v1/store/product-image/${p.id}` : null }));
+    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, stock: true }, orderBy: { name: 'asc' } });
+    const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
+    const imageIds = new Set(withImages.map(p => p.id));
+    const productsWithUrls = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
     const allProducts = await prisma.product.findMany({ where: { companyId: company.id, isActive: true, stock: { gt: 0 } }, select: { category: true }, distinct: ['category'] });
     const categories = allProducts.map(p => p.category).filter(Boolean).sort();
     res.json({ products: productsWithUrls, categories });

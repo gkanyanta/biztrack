@@ -26,7 +26,7 @@ export default function Products() {
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
     costPrice: '', sellingPrice: '', stock: '0', reorderLevel: '5',
-    supplier: '', imageUrl: ''
+    supplier: '', imageUrl: '', imageChanged: false
   });
   const imageInputRef = useRef(null);
 
@@ -50,7 +50,7 @@ export default function Products() {
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
         const compressed = canvas.toDataURL('image/jpeg', 0.7);
-        setForm(f => ({ ...f, imageUrl: compressed }));
+        setForm(f => ({ ...f, imageUrl: compressed, imageChanged: true }));
       };
       img.src = ev.target.result;
     };
@@ -68,7 +68,7 @@ export default function Products() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '' });
+    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '', imageChanged: false });
     setShowForm(true);
   };
 
@@ -77,7 +77,7 @@ export default function Products() {
     setForm({
       name: p.name, sku: p.sku, description: p.description || '', category: p.category || '',
       costPrice: p.costPrice, sellingPrice: p.sellingPrice, stock: String(p.stock), reorderLevel: String(p.reorderLevel),
-      supplier: p.supplier || '', imageUrl: p.imageUrl || ''
+      supplier: p.supplier || '', imageUrl: p.imageUrl || '', imageChanged: false
     });
     setShowForm(true);
   };
@@ -93,6 +93,8 @@ export default function Products() {
         reorderLevel: parseInt(form.reorderLevel),
         sku: form.sku || undefined
       };
+      if (editing && !form.imageChanged) delete data.imageUrl;
+      delete data.imageChanged;
       if (editing) {
         await updateProduct(editing.id, data);
         toast.success('Product updated');
@@ -311,7 +313,7 @@ export default function Products() {
                     className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
                     <FiUpload size={14} /> Change
                   </button>
-                  <button type="button" onClick={() => { setForm({...form, imageUrl: ''}); if (imageInputRef.current) imageInputRef.current.value = ''; }}
+                  <button type="button" onClick={() => { setForm({...form, imageUrl: '', imageChanged: true}); if (imageInputRef.current) imageInputRef.current.value = ''; }}
                     className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-800">
                     <FiTrash2 size={14} /> Remove
                   </button>

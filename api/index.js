@@ -258,7 +258,14 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
     const where = { companyId };
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { sku: { contains: search, mode: 'insensitive' } }]; }
     if (category) where.category = category;
-    let products = await prisma.product.findMany({ where, orderBy: { createdAt: 'desc' } });
+    let products = await prisma.product.findMany({
+      where,
+      select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
+    const imageIds = new Set(withImages.map(p => p.id));
+    products = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     res.json(products);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -1500,11 +1507,12 @@ app.get('/api/v1/store/:slug/products', async (req, res) => {
     const where = { companyId: company.id, isActive: true, stock: { gt: 0 } };
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
-    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, imageUrl: true, stock: true }, orderBy: { name: 'asc' } });
-    // Replace base64 images with URL references
+    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, stock: true }, orderBy: { name: 'asc' } });
+    const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
+    const imageIds = new Set(withImages.map(p => p.id));
     const productsWithUrls = products.map(p => ({
       ...p,
-      imageUrl: p.imageUrl ? `/api/v1/store/product-image/${p.id}` : null
+      imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null
     }));
     const allProducts = await prisma.product.findMany({ where: { companyId: company.id, isActive: true, stock: { gt: 0 } }, select: { category: true }, distinct: ['category'] });
     const categories = allProducts.map(p => p.category).filter(Boolean).sort();
