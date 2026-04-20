@@ -222,14 +222,20 @@ export default function Sales() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {filteredProducts.map(p => (
               <button key={p.id} onClick={() => { addProduct(p); if (!showForm) { setForm(emptyForm); setEditing(null); setShowForm(true); } }}
-                className="bg-white rounded-xl border border-gray-200 p-3 text-left hover:border-blue-400 hover:shadow-md transition-all group">
-                <div className="flex items-center justify-center w-10 h-10 bg-blue-50 rounded-lg mb-2 group-hover:bg-blue-100">
-                  <FiPackage className="text-blue-500" size={20} />
+                className="bg-white rounded-xl border border-gray-200 text-left hover:border-blue-400 hover:shadow-md transition-all group overflow-hidden">
+                <div className="aspect-square bg-gray-100 flex items-center justify-center overflow-hidden">
+                  {p.imageUrl ? (
+                    <img src={p.imageUrl} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
+                  ) : (
+                    <FiPackage className="text-gray-300" size={32} />
+                  )}
                 </div>
-                <div className="font-medium text-gray-800 text-sm truncate">{p.name}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{p.sku}</div>
-                <div className="font-bold text-blue-600 text-sm mt-1">{formatMoney(p.sellingPrice)}</div>
-                <div className={`text-xs mt-1 ${p.stock <= p.reorderLevel ? 'text-red-500 font-medium' : 'text-gray-400'}`}>{p.stock} in stock</div>
+                <div className="p-3">
+                  <div className="font-medium text-gray-800 text-sm truncate">{p.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{p.sku}</div>
+                  <div className="font-bold text-blue-600 text-sm mt-1">{formatMoney(p.sellingPrice)}</div>
+                  <div className={`text-xs mt-1 ${p.stock <= p.reorderLevel ? 'text-red-500 font-medium' : 'text-gray-400'}`}>{p.stock} in stock</div>
+                </div>
               </button>
             ))}
           </div>

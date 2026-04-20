@@ -200,9 +200,9 @@ export default function Products() {
                   <td className="p-3">
                     <div className="flex items-center gap-2.5">
                       {p.imageUrl ? (
-                        <img src={p.imageUrl} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0 border border-gray-200" />
+                        <img src={p.imageUrl} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-200" />
                       ) : (
-                        <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0"><FiPackage className="text-gray-300" size={16} /></div>
+                        <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0"><FiPackage className="text-gray-300" size={20} /></div>
                       )}
                       <div>
                         <div className="font-medium text-gray-800">{p.name}</div>
