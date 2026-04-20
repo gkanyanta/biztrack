@@ -3,6 +3,9 @@ import { getInventory, getCategories, getSettings } from '../services/api';
 import { formatMoney } from '../utils/format';
 import { FiSearch, FiPackage, FiTrendingUp, FiDollarSign, FiShoppingCart } from 'react-icons/fi';
 import toast from 'react-hot-toast';
+import Pagination from '../components/Pagination';
+import SortableHeader from '../components/SortableHeader';
+import useTableControls from '../hooks/useTableControls';
 
 export default function Inventory() {
   const [data, setData] = useState({ items: [], summary: {} });
@@ -45,6 +48,7 @@ export default function Inventory() {
 
   const fmt = (v) => formatMoney(v, currencySymbol);
   const s = data.summary;
+  const table = useTableControls(data.items || [], { pageSize: 25 });
 
   return (
     <div className="space-y-6">
@@ -133,24 +137,24 @@ export default function Inventory() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Product</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">SKU</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Stocked</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Sold</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">In Stock</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600 hidden md:table-cell">Cost Price</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600 hidden md:table-cell">Sell Price</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Cost Value</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Sell Value</th>
+                <th className="text-left px-4 py-3"><SortableHeader label="Product" sortKey="name" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left px-4 py-3 hidden sm:table-cell"><SortableHeader label="SKU" sortKey="sku" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-right px-4 py-3"><SortableHeader label="Stocked" sortKey="totalStocked" accessor={(r) => r.totalStocked} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right px-4 py-3"><SortableHeader label="Sold" sortKey="totalSold" accessor={(r) => r.totalSold} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right px-4 py-3"><SortableHeader label="In Stock" sortKey="currentStock" accessor={(r) => r.currentStock} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right px-4 py-3 hidden md:table-cell"><SortableHeader label="Cost Price" sortKey="costPrice" accessor={(r) => parseFloat(r.costPrice)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right px-4 py-3 hidden md:table-cell"><SortableHeader label="Sell Price" sortKey="sellingPrice" accessor={(r) => parseFloat(r.sellingPrice)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right px-4 py-3"><SortableHeader label="Cost Value" sortKey="stockCostValue" accessor={(r) => parseFloat(r.stockCostValue)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right px-4 py-3"><SortableHeader label="Sell Value" sortKey="stockSellValue" accessor={(r) => parseFloat(r.stockSellValue)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr><td colSpan={9} className="text-center py-8 text-gray-400">Loading...</td></tr>
-              ) : data.items.length === 0 ? (
+              ) : table.pageRows.length === 0 ? (
                 <tr><td colSpan={9} className="text-center py-8 text-gray-400">No inventory found</td></tr>
               ) : (
-                data.items.map(item => (
+                table.pageRows.map(item => (
                   <tr key={item.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-800">{item.name}</div>
@@ -172,7 +176,7 @@ export default function Inventory() {
                 ))
               )}
             </tbody>
-            {!loading && data.items.length > 0 && (
+            {!loading && table.pageRows.length > 0 && (
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-300 font-semibold">
                   <td className="px-4 py-3 text-gray-800">Totals</td>
@@ -189,6 +193,14 @@ export default function Inventory() {
             )}
           </table>
         </div>
+        {!loading && data.items.length > 0 && (
+          <div className="px-4 py-2 border-t border-gray-100">
+            <Pagination
+              page={table.page} totalPages={table.totalPages} total={table.total}
+              pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getDashboard } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
+import DateRangePicker from '../components/DateRangePicker';
 import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave, FiUserCheck } from 'react-icons/fi';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -14,18 +15,20 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [range, setRange] = useState({ from: '', to: '' });
 
   useEffect(() => {
-    getDashboard()
+    setLoading(true);
+    getDashboard({ from: range.from || undefined, to: range.to || undefined })
       .then(res => setData(res.data))
       .catch(err => {
         console.error('Dashboard error:', err.response?.data || err.message);
         setError(err.response?.data?.error || err.message);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [range.from, range.to]);
 
-  if (loading) return <LoadingSpinner />;
+  if (loading && !data) return <LoadingSpinner />;
   if (!data) return <p className="text-red-500">Failed to load dashboard{error ? `: ${error}` : ''}</p>;
 
   const g = data.growth;
@@ -45,6 +48,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {/* Date range filter */}
+      <div className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 flex items-center justify-between gap-2">
+        <DateRangePicker from={range.from} to={range.to} onChange={setRange} />
+        {loading && <span className="text-xs text-gray-400">Updating...</span>}
+      </div>
+
       {/* Growth Tracker - Top Priority */}
       {g && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-5 text-white shadow-lg">

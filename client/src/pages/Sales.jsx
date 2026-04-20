@@ -6,6 +6,10 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge, PaymentBadge } from '../components/StatusBadge';
 import ReceiptButton from '../components/ReceiptButton';
+import Pagination from '../components/Pagination';
+import SortableHeader from '../components/SortableHeader';
+import OrderTimeline from '../components/OrderTimeline';
+import useTableControls from '../hooks/useTableControls';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera } from 'react-icons/fi';
 import BarcodeScanner from '../components/BarcodeScanner';
@@ -194,6 +198,8 @@ export default function Sales() {
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase())
   );
 
+  const salesTable = useTableControls(sales, { pageSize: 25 });
+
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       {/* Quick Add from Product Tiles */}
@@ -254,22 +260,23 @@ export default function Sales() {
         </div>
 
         {loading ? <LoadingSpinner /> : (
+          <>
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="text-left p-3 font-medium text-gray-600">Order</th>
-                  <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">Items</th>
-                  <th className="text-left p-3 font-medium text-gray-600 hidden lg:table-cell">Customer</th>
-                  <th className="text-right p-3 font-medium text-gray-600">Total</th>
-                  <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Profit</th>
-                  <th className="text-center p-3 font-medium text-gray-600">Status</th>
-                  <th className="text-center p-3 font-medium text-gray-600 hidden sm:table-cell">Payment</th>
+                  <th className="text-left p-3"><SortableHeader label="Order" sortKey="orderNumber" sort={salesTable.sort} onToggle={salesTable.toggleSort} /></th>
+                  <th className="text-left p-3 hidden md:table-cell font-medium text-gray-600">Items</th>
+                  <th className="text-left p-3 hidden lg:table-cell"><SortableHeader label="Customer" sortKey="customerName" sort={salesTable.sort} onToggle={salesTable.toggleSort} /></th>
+                  <th className="text-right p-3"><SortableHeader label="Total" sortKey="totalPrice" accessor={(r) => parseFloat(r.totalPrice)} sort={salesTable.sort} onToggle={salesTable.toggleSort} align="right" /></th>
+                  <th className="text-right p-3 hidden sm:table-cell"><SortableHeader label="Profit" sortKey="profit" accessor={(r) => calcProfit(r)} sort={salesTable.sort} onToggle={salesTable.toggleSort} align="right" /></th>
+                  <th className="text-center p-3"><SortableHeader label="Status" sortKey="status" sort={salesTable.sort} onToggle={salesTable.toggleSort} align="center" /></th>
+                  <th className="text-center p-3 hidden sm:table-cell"><SortableHeader label="Payment" sortKey="paymentStatus" sort={salesTable.sort} onToggle={salesTable.toggleSort} align="center" /></th>
                   <th className="text-right p-3 font-medium text-gray-600">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {sales.map(s => (
+                {salesTable.pageRows.map(s => (
                   <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="p-3">
                       <div className="font-medium text-gray-800">{s.orderNumber}</div>
@@ -303,7 +310,7 @@ export default function Sales() {
                     </td>
                   </tr>
                 ))}
-                {sales.length === 0 && (
+                {salesTable.pageRows.length === 0 && (
                   <tr><td colSpan={8} className="p-8 text-center text-gray-500">
                     <FiShoppingCart className="mx-auto mb-2" size={32} />No sales found
                   </td></tr>
@@ -311,6 +318,15 @@ export default function Sales() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={salesTable.page}
+            totalPages={salesTable.totalPages}
+            total={salesTable.total}
+            pageSize={salesTable.pageSize}
+            onPageChange={salesTable.setPage}
+            onPageSizeChange={salesTable.setPageSize}
+          />
+          </>
         )}
       </div>
 
@@ -613,6 +629,9 @@ export default function Sales() {
                   </div>
                 )}
               </div>
+            )}
+            {showDetail.statusHistory?.length > 0 && (
+              <OrderTimeline statusHistory={showDetail.statusHistory} />
             )}
             {showDetail.notes && <div><span className="text-gray-500">Notes:</span> {showDetail.notes}</div>}
           </div>

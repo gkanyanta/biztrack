@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 body {
   margin: 0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -7,4 +9,55 @@ body {
 
 #root {
   min-height: 100vh;
+}
+
+/* Dark mode — pragmatic CSS-level overrides for common Tailwind utility classes.
+   Applied when <html class="dark">, toggled by useDarkMode. */
+.dark body { background-color: #0f172a; color: #e2e8f0; }
+
+.dark .bg-white { background-color: #1e293b !important; }
+.dark .bg-gray-50 { background-color: #0f172a !important; }
+.dark .bg-gray-100 { background-color: #334155 !important; }
+.dark .bg-blue-50 { background-color: #1e3a8a !important; }
+.dark .bg-green-50 { background-color: #14532d !important; }
+.dark .bg-red-50 { background-color: #7f1d1d !important; }
+.dark .bg-amber-50 { background-color: #78350f !important; }
+.dark .bg-purple-50 { background-color: #3b0764 !important; }
+.dark .bg-indigo-50 { background-color: #312e81 !important; }
+.dark .bg-orange-50 { background-color: #7c2d12 !important; }
+.dark .bg-yellow-50 { background-color: #713f12 !important; }
+.dark .bg-pink-50 { background-color: #831843 !important; }
+.dark .bg-emerald-50 { background-color: #064e3b !important; }
+.dark .bg-cyan-50 { background-color: #164e63 !important; }
+
+.dark .text-gray-900 { color: #f1f5f9 !important; }
+.dark .text-gray-800 { color: #e2e8f0 !important; }
+.dark .text-gray-700 { color: #cbd5e1 !important; }
+.dark .text-gray-600 { color: #94a3b8 !important; }
+.dark .text-gray-500 { color: #94a3b8 !important; }
+.dark .text-gray-400 { color: #64748b !important; }
+.dark .text-gray-300 { color: #475569 !important; }
+
+.dark .border-gray-100 { border-color: #334155 !important; }
+.dark .border-gray-200 { border-color: #334155 !important; }
+.dark .border-gray-300 { border-color: #475569 !important; }
+.dark .border-t { border-top-color: #334155; }
+.dark .border-b { border-bottom-color: #334155; }
+
+.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]) { border-color: #334155 !important; }
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: #334155 !important; }
+
+.dark input, .dark select, .dark textarea {
+  background-color: #1e293b;
+  color: #e2e8f0;
+  border-color: #475569;
+}
+.dark input::placeholder, .dark textarea::placeholder { color: #64748b; }
+
+.dark .hover\:bg-gray-50:hover { background-color: #334155 !important; }
+.dark .hover\:bg-gray-100:hover { background-color: #475569 !important; }
+.dark .hover\:bg-blue-50:hover { background-color: #1e3a8a !important; }
+
+.dark .shadow-sm, .dark .shadow-xl {
+  box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4);
 }

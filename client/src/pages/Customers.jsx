@@ -5,6 +5,9 @@ import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge } from '../components/StatusBadge';
+import Pagination from '../components/Pagination';
+import SortableHeader from '../components/SortableHeader';
+import useTableControls from '../hooks/useTableControls';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiUsers, FiEye } from 'react-icons/fi';
 
@@ -70,6 +73,7 @@ export default function Customers() {
   };
 
   const repeatCustomers = customers.filter(c => (c._count?.sales || 0) > 1).length;
+  const table = useTableControls(customers, { pageSize: 25 });
 
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
@@ -90,20 +94,21 @@ export default function Customers() {
       </div>
 
       {loading ? <LoadingSpinner /> : (
+        <>
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left p-3 font-medium text-gray-600">Name</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden sm:table-cell">Phone</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">City</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden lg:table-cell">Source</th>
-                <th className="text-center p-3 font-medium text-gray-600">Orders</th>
+                <th className="text-left p-3"><SortableHeader label="Name" sortKey="name" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden sm:table-cell"><SortableHeader label="Phone" sortKey="phone" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden md:table-cell"><SortableHeader label="City" sortKey="city" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden lg:table-cell"><SortableHeader label="Source" sortKey="source" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-center p-3"><SortableHeader label="Orders" sortKey="orders" accessor={(r) => r._count?.sales || 0} sort={table.sort} onToggle={table.toggleSort} align="center" /></th>
                 <th className="text-right p-3 font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {customers.map(c => (
+              {table.pageRows.map(c => (
                 <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="p-3">
                     <div className="font-medium text-gray-800">{c.name}</div>
@@ -126,7 +131,7 @@ export default function Customers() {
                   </td>
                 </tr>
               ))}
-              {customers.length === 0 && (
+              {table.pageRows.length === 0 && (
                 <tr><td colSpan={6} className="p-8 text-center text-gray-500">
                   <FiUsers className="mx-auto mb-2" size={32} />No customers found
                 </td></tr>
@@ -134,6 +139,11 @@ export default function Customers() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={table.page} totalPages={table.totalPages} total={table.total}
+          pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
+        />
+        </>
       )}
 
       <Modal isOpen={showForm} onClose={() => setShowForm(false)} title={editing ? 'Edit Customer' : 'Add Customer'} size="md">

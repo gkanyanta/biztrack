@@ -4,6 +4,9 @@ import { formatMoney, calcMargin } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Pagination from '../components/Pagination';
+import SortableHeader from '../components/SortableHeader';
+import useTableControls from '../hooks/useTableControls';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle, FiPackage, FiUpload, FiImage } from 'react-icons/fi';
 
@@ -139,6 +142,8 @@ export default function Products() {
     setStockLogs(res.data);
   };
 
+  const table = useTableControls(products, { pageSize: 25 });
+
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
       {/* Header */}
@@ -171,22 +176,23 @@ export default function Products() {
 
       {/* Products table */}
       {loading ? <LoadingSpinner /> : (
+        <>
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left p-3 font-medium text-gray-600">Product</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">SKU</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden lg:table-cell">Category</th>
-                <th className="text-right p-3 font-medium text-gray-600">Cost</th>
-                <th className="text-right p-3 font-medium text-gray-600">Price</th>
-                <th className="text-right p-3 font-medium text-gray-600 hidden sm:table-cell">Margin</th>
-                <th className="text-right p-3 font-medium text-gray-600">Stock</th>
+                <th className="text-left p-3"><SortableHeader label="Product" sortKey="name" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden md:table-cell"><SortableHeader label="SKU" sortKey="sku" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden lg:table-cell"><SortableHeader label="Category" sortKey="category" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-right p-3"><SortableHeader label="Cost" sortKey="costPrice" accessor={(r) => parseFloat(r.costPrice)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right p-3"><SortableHeader label="Price" sortKey="sellingPrice" accessor={(r) => parseFloat(r.sellingPrice)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right p-3 hidden sm:table-cell"><SortableHeader label="Margin" sortKey="margin" accessor={(r) => calcMargin(r.costPrice, r.sellingPrice)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right p-3"><SortableHeader label="Stock" sortKey="stock" accessor={(r) => r.stock} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
                 <th className="text-right p-3 font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {products.map(p => (
+              {table.pageRows.map(p => (
                 <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 ${!p.isActive ? 'opacity-50' : ''}`}>
                   <td className="p-3">
                     <div className="flex items-center gap-2.5">
@@ -222,7 +228,7 @@ export default function Products() {
                   </td>
                 </tr>
               ))}
-              {products.length === 0 && (
+              {table.pageRows.length === 0 && (
                 <tr><td colSpan={8} className="p-8 text-center text-gray-500">
                   <FiPackage className="mx-auto mb-2" size={32} />
                   No products found
@@ -231,6 +237,11 @@ export default function Products() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={table.page} totalPages={table.totalPages} total={table.total}
+          pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
+        />
+        </>
       )}
 
       {/* Create/Edit Modal */}

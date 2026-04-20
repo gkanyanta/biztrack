@@ -4,6 +4,9 @@ import { formatMoney, formatDate, EXPENSE_CATEGORIES, PAYMENT_METHODS } from '..
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Pagination from '../components/Pagination';
+import SortableHeader from '../components/SortableHeader';
+import useTableControls from '../hooks/useTableControls';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiDollarSign } from 'react-icons/fi';
 
@@ -70,6 +73,7 @@ export default function Expenses() {
   };
 
   const total = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
+  const table = useTableControls(expenses, { pageSize: 25 });
 
   // Group by category summary
   const byCat = {};
@@ -108,20 +112,21 @@ export default function Expenses() {
       </div>
 
       {loading ? <LoadingSpinner /> : (
+        <>
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left p-3 font-medium text-gray-600">Date</th>
-                <th className="text-left p-3 font-medium text-gray-600">Description</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden sm:table-cell">Category</th>
-                <th className="text-right p-3 font-medium text-gray-600">Amount</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">Payment</th>
+                <th className="text-left p-3"><SortableHeader label="Date" sortKey="date" accessor={(r) => new Date(r.date).getTime()} sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3"><SortableHeader label="Description" sortKey="description" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden sm:table-cell"><SortableHeader label="Category" sortKey="category" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-right p-3"><SortableHeader label="Amount" sortKey="amount" accessor={(r) => parseFloat(r.amount)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-left p-3 hidden md:table-cell font-medium text-gray-600">Payment</th>
                 <th className="text-right p-3 font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {expenses.map(e => (
+              {table.pageRows.map(e => (
                 <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="p-3 text-gray-600">{formatDate(e.date)}</td>
                   <td className="p-3">
@@ -140,7 +145,7 @@ export default function Expenses() {
                   </td>
                 </tr>
               ))}
-              {expenses.length === 0 && (
+              {table.pageRows.length === 0 && (
                 <tr><td colSpan={6} className="p-8 text-center text-gray-500">
                   <FiDollarSign className="mx-auto mb-2" size={32} />No expenses found
                 </td></tr>
@@ -148,6 +153,11 @@ export default function Expenses() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={table.page} totalPages={table.totalPages} total={table.total}
+          pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
+        />
+        </>
       )}
 
       <Modal isOpen={showForm} onClose={() => setShowForm(false)} title={editing ? 'Edit Expense' : 'Add Expense'} size="md">

@@ -5,6 +5,9 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ReceiptButton from '../components/ReceiptButton';
 import { PaymentBadge } from '../components/StatusBadge';
+import Pagination from '../components/Pagination';
+import SortableHeader from '../components/SortableHeader';
+import useTableControls from '../hooks/useTableControls';
 import toast from 'react-hot-toast';
 import { FiAlertTriangle, FiDollarSign, FiClock, FiUsers, FiMessageCircle, FiChevronDown, FiChevronUp } from 'react-icons/fi';
 
@@ -104,6 +107,8 @@ export default function CreditTracker() {
     if (filter === 'unpaid') return s.paymentStatus !== 'Paid';
     return true;
   });
+
+  const table = useTableControls(filteredSales, { pageSize: 25 });
 
   if (loading) return <LoadingSpinner />;
 
@@ -219,18 +224,18 @@ export default function CreditTracker() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left p-3 font-medium text-gray-600">Order</th>
-                <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">Customer</th>
-                <th className="text-right p-3 font-medium text-gray-600">Total</th>
-                <th className="text-right p-3 font-medium text-gray-600">Paid</th>
-                <th className="text-right p-3 font-medium text-gray-600">Balance</th>
-                <th className="text-center p-3 font-medium text-gray-600 hidden sm:table-cell">Due Date</th>
-                <th className="text-center p-3 font-medium text-gray-600">Status</th>
+                <th className="text-left p-3"><SortableHeader label="Order" sortKey="orderNumber" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-left p-3 hidden md:table-cell"><SortableHeader label="Customer" sortKey="customerName" sort={table.sort} onToggle={table.toggleSort} /></th>
+                <th className="text-right p-3"><SortableHeader label="Total" sortKey="totalPrice" accessor={(r) => parseFloat(r.totalPrice)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right p-3"><SortableHeader label="Paid" sortKey="amountPaid" accessor={(r) => parseFloat(r.amountPaid)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-right p-3"><SortableHeader label="Balance" sortKey="balance" accessor={(r) => parseFloat(r.totalPrice) - parseFloat(r.amountPaid)} sort={table.sort} onToggle={table.toggleSort} align="right" /></th>
+                <th className="text-center p-3 hidden sm:table-cell"><SortableHeader label="Due Date" sortKey="creditDueDate" accessor={(r) => r.creditDueDate ? new Date(r.creditDueDate).getTime() : null} sort={table.sort} onToggle={table.toggleSort} align="center" /></th>
+                <th className="text-center p-3"><SortableHeader label="Status" sortKey="paymentStatus" sort={table.sort} onToggle={table.toggleSort} align="center" /></th>
                 <th className="text-right p-3 font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredSales.map(s => {
+              {table.pageRows.map(s => {
                 const balance = parseFloat(s.totalPrice) - parseFloat(s.amountPaid);
                 const isOverdue = s.creditDueDate && new Date(s.creditDueDate) < new Date() && s.paymentStatus !== 'Paid';
                 return (
@@ -274,12 +279,16 @@ export default function CreditTracker() {
                   </tr>
                 );
               })}
-              {filteredSales.length === 0 && (
+              {table.pageRows.length === 0 && (
                 <tr><td colSpan={8} className="p-8 text-center text-gray-500">No credit sales found</td></tr>
               )}
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={table.page} totalPages={table.totalPages} total={table.total}
+          pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
+        />
       </div>
 
       {/* Recent Payments */}

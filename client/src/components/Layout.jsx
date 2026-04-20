@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import useDarkMode from '../hooks/useDarkMode';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon
 } from 'react-icons/fi';
 
 const adminNavItems = [
@@ -28,6 +29,7 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [dark, toggleDark] = useDarkMode();
   const navItems = user?.role === 'superadmin' ? superadminNavItems : adminNavItems;
 
   return (
@@ -95,7 +97,16 @@ export default function Layout() {
           <div className="text-lg font-semibold text-gray-800 hidden lg:block">
             {navItems.find(i => i.path === location.pathname || (i.path !== '/' && location.pathname.startsWith(i.path)))?.label || 'BizTrack'}
           </div>
-          <div className="text-sm text-gray-500">{user?.name}</div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleDark}
+              className="text-gray-500 hover:text-gray-700 p-1.5 rounded-lg hover:bg-gray-100"
+              title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {dark ? <FiSun size={18} /> : <FiMoon size={18} />}
+            </button>
+            <div className="text-sm text-gray-500">{user?.name}</div>
+          </div>
         </header>
 
         {/* Page content */}
