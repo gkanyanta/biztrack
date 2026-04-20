@@ -290,10 +290,15 @@ export default function Store() {
                 <div key={p.id} className={`bg-white rounded-2xl border overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group ${onSale ? 'border-rose-200 ring-1 ring-rose-100' : 'border-slate-100'}`}>
                   <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden relative">
                     {p.imageUrl ? (
-                      <img src={p.imageUrl} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                    ) : (
-                      <FiPackage className="text-slate-300" size={40} />
-                    )}
+                      <img
+                        src={p.imageUrl}
+                        alt={p.name}
+                        loading="lazy"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex'; }}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    ) : null}
+                    <div className={`absolute inset-0 items-center justify-center ${p.imageUrl ? 'hidden' : 'flex'}`}><FiPackage className="text-slate-300" size={40} /></div>
                     {onSale && (
                       <span className="absolute top-2 right-2 bg-rose-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-sm">-{discountPct}%</span>
                     )}

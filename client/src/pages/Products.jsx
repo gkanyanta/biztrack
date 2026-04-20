@@ -200,10 +200,14 @@ export default function Products() {
                   <td className="p-3">
                     <div className="flex items-center gap-2.5">
                       {p.imageUrl ? (
-                        <img src={p.imageUrl} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-200" />
-                      ) : (
-                        <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0"><FiPackage className="text-gray-300" size={20} /></div>
-                      )}
+                        <img
+                          src={p.imageUrl}
+                          alt=""
+                          onError={(e) => { const fallback = e.currentTarget.nextSibling; if (fallback) fallback.style.display = 'flex'; e.currentTarget.style.display = 'none'; }}
+                          className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-200"
+                        />
+                      ) : null}
+                      <div className={`w-12 h-12 rounded-lg bg-gray-100 items-center justify-center flex-shrink-0 ${p.imageUrl ? 'hidden' : 'flex'}`}><FiPackage className="text-gray-300" size={20} /></div>
                       <div>
                         <div className="font-medium text-gray-800">{p.name}</div>
                         <div className="text-xs text-gray-500 md:hidden">{p.sku}</div>

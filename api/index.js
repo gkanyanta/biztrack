@@ -254,6 +254,16 @@ app.get('/api/v1/products/meta/categories', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// Diagnostic: list products whose imageUrl is not a valid data URL (broken images)
+app.get('/api/v1/products/broken-images', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const products = await prisma.product.findMany({ where: { companyId, imageUrl: { not: null } }, select: { id: true, name: true, sku: true, imageUrl: true } });
+    const broken = products.filter(p => !/^data:image\//.test(p.imageUrl)).map(p => ({ id: p.id, name: p.name, sku: p.sku, preview: p.imageUrl?.slice(0, 60) }));
+    res.json({ count: broken.length, products: broken });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/products', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
@@ -312,6 +322,10 @@ app.put('/api/v1/products/:id', authenticate, validateProduct, async (req, res) 
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const data = { ...req.body };
     delete data.companyId;
+    // Protect imageUrl from accidental overwrite: only accept data: URLs or null/empty (clear)
+    if (data.imageUrl !== undefined && data.imageUrl !== null && data.imageUrl !== '' && !/^data:image\//.test(data.imageUrl)) {
+      delete data.imageUrl;
+    }
     const stockChange = data.stock !== undefined ? data.stock - existing.stock : 0;
     const product = await prisma.product.update({ where: { id: req.params.id }, data });
     if (stockChange !== 0 && req.body.stock !== undefined) {

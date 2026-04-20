@@ -223,9 +223,18 @@ export default function Sales() {
             {filteredProducts.map(p => (
               <button key={p.id} onClick={() => { addProduct(p); if (!showForm) { setForm(emptyForm); setEditing(null); setShowForm(true); } }}
                 className="bg-white rounded-xl border border-gray-200 text-left hover:border-blue-400 hover:shadow-md transition-all group overflow-hidden">
-                <div className="aspect-square bg-gray-100 flex items-center justify-center overflow-hidden">
+                <div className="aspect-square bg-gray-100 flex items-center justify-center overflow-hidden relative">
                   {p.imageUrl ? (
-                    <img src={p.imageUrl} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
+                    <>
+                      <img
+                        src={p.imageUrl}
+                        alt={p.name}
+                        loading="lazy"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                      />
+                      <div className="absolute inset-0 hidden items-center justify-center bg-gray-100"><FiPackage className="text-gray-300" size={32} /></div>
+                    </>
                   ) : (
                     <FiPackage className="text-gray-300" size={32} />
                   )}

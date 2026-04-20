@@ -76,6 +76,9 @@ router.put('/:id', validateProduct, async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Product not found' });
     const data = { ...req.body };
     delete data.companyId;
+    if (data.imageUrl !== undefined && data.imageUrl !== null && data.imageUrl !== '' && !/^data:image\//.test(data.imageUrl)) {
+      delete data.imageUrl;
+    }
     const stockChange = data.stock !== undefined ? data.stock - existing.stock : 0;
     const product = await prisma.product.update({ where: { id: req.params.id }, data });
     if (stockChange !== 0 && req.body.stock !== undefined) {
