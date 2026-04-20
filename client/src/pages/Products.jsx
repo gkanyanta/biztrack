@@ -25,7 +25,7 @@ export default function Products() {
 
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
-    costPrice: '', sellingPrice: '', stock: '0', reorderLevel: '5',
+    costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5',
     supplier: '', imageUrl: '', imageChanged: false
   });
   const imageInputRef = useRef(null);
@@ -68,7 +68,7 @@ export default function Products() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '', imageChanged: false });
+    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '', imageChanged: false });
     setShowForm(true);
   };
 
@@ -76,7 +76,7 @@ export default function Products() {
     setEditing(p);
     setForm({
       name: p.name, sku: p.sku, description: p.description || '', category: p.category || '',
-      costPrice: p.costPrice, sellingPrice: p.sellingPrice, stock: String(p.stock), reorderLevel: String(p.reorderLevel),
+      costPrice: p.costPrice, sellingPrice: p.sellingPrice, originalPrice: p.originalPrice || '', stock: String(p.stock), reorderLevel: String(p.reorderLevel),
       supplier: p.supplier || '', imageUrl: p.imageUrl || '', imageChanged: false
     });
     setShowForm(true);
@@ -89,6 +89,7 @@ export default function Products() {
         ...form,
         costPrice: parseFloat(form.costPrice),
         sellingPrice: parseFloat(form.sellingPrice),
+        originalPrice: form.originalPrice === '' ? null : parseFloat(form.originalPrice),
         stock: parseInt(form.stock),
         reorderLevel: parseInt(form.reorderLevel),
         sku: form.sku || undefined
@@ -212,7 +213,12 @@ export default function Products() {
                   <td className="p-3 text-gray-600 hidden md:table-cell">{p.sku}</td>
                   <td className="p-3 text-gray-600 hidden lg:table-cell">{p.category || '-'}</td>
                   <td className="p-3 text-right text-gray-600">{formatMoney(p.costPrice)}</td>
-                  <td className="p-3 text-right text-gray-800 font-medium">{formatMoney(p.sellingPrice)}</td>
+                  <td className="p-3 text-right">
+                    <div className="font-medium text-gray-800">{formatMoney(p.sellingPrice)}</div>
+                    {p.originalPrice && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice) && (
+                      <div className="text-xs text-gray-400 line-through">{formatMoney(p.originalPrice)}</div>
+                    )}
+                  </td>
                   <td className="p-3 text-right text-gray-600 hidden sm:table-cell">{calcMargin(p.costPrice, p.sellingPrice).toFixed(1)}%</td>
                   <td className="p-3 text-right">
                     <button onClick={() => viewStockLog(p)} className="hover:underline">
@@ -280,6 +286,17 @@ export default function Products() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Selling Price *</label>
               <input type="number" step="0.01" required value={form.sellingPrice} onChange={e => setForm({...form, sellingPrice: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Original Price <span className="text-gray-400 font-normal">(for sale badge)</span></label>
+              <input type="number" step="0.01" value={form.originalPrice} onChange={e => setForm({...form, originalPrice: e.target.value})}
+                placeholder="Leave blank if not on sale"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              {form.originalPrice && parseFloat(form.originalPrice) > parseFloat(form.sellingPrice || 0) && (
+                <p className="text-xs text-emerald-600 mt-1">
+                  {Math.round(((parseFloat(form.originalPrice) - parseFloat(form.sellingPrice)) / parseFloat(form.originalPrice)) * 100)}% OFF
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Stock</label>

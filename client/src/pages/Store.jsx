@@ -284,13 +284,18 @@ export default function Store() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {products.map(p => {
               const inCart = cart.find(c => c.productId === p.id);
+              const onSale = p.originalPrice && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice);
+              const discountPct = onSale ? Math.round(((parseFloat(p.originalPrice) - parseFloat(p.sellingPrice)) / parseFloat(p.originalPrice)) * 100) : 0;
               return (
-                <div key={p.id} className="bg-white rounded-2xl border border-slate-100 overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group">
+                <div key={p.id} className={`bg-white rounded-2xl border overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group ${onSale ? 'border-rose-200 ring-1 ring-rose-100' : 'border-slate-100'}`}>
                   <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden relative">
                     {p.imageUrl ? (
                       <img src={p.imageUrl} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                     ) : (
                       <FiPackage className="text-slate-300" size={40} />
+                    )}
+                    {onSale && (
+                      <span className="absolute top-2 right-2 bg-rose-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-sm">-{discountPct}%</span>
                     )}
                     {p.stock <= 3 && p.stock > 0 && (
                       <span className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Only {p.stock} left</span>
@@ -299,7 +304,12 @@ export default function Store() {
                   <div className="p-3 sm:p-4">
                     <h3 className="font-semibold text-slate-800 text-sm leading-snug mb-1 line-clamp-2">{p.name}</h3>
                     {p.description && <p className="text-xs text-slate-400 mb-3 line-clamp-1">{p.description}</p>}
-                    <p className="font-bold text-slate-900 text-lg mb-3">{formatMoney(p.sellingPrice, currency)}</p>
+                    <div className="mb-3 flex items-baseline gap-2 flex-wrap">
+                      <p className={`font-bold text-lg ${onSale ? 'text-rose-600' : 'text-slate-900'}`}>{formatMoney(p.sellingPrice, currency)}</p>
+                      {onSale && (
+                        <p className="text-sm text-slate-400 line-through">{formatMoney(p.originalPrice, currency)}</p>
+                      )}
+                    </div>
                     <div>
                       {inCart ? (
                         <div className="flex items-center justify-between bg-slate-100 rounded-xl p-1">

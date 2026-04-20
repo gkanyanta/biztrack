@@ -51,6 +51,9 @@ function validateProduct(req, res, next) {
   if (sellingPrice !== undefined && (isNaN(sellingPrice) || Number(sellingPrice) < 0)) {
     return res.status(400).json({ error: 'Selling price must be a non-negative number' });
   }
+  if (req.body.originalPrice !== undefined && req.body.originalPrice !== null && req.body.originalPrice !== '' && (isNaN(req.body.originalPrice) || Number(req.body.originalPrice) < 0)) {
+    return res.status(400).json({ error: 'Original price must be a non-negative number' });
+  }
   if (req.body.stock !== undefined && (isNaN(req.body.stock) || Number(req.body.stock) < 0)) {
     return res.status(400).json({ error: 'Stock must be a non-negative number' });
   }

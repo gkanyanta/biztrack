@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
     if (category) where.category = category;
     let products = await prisma.product.findMany({
       where,
-      select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
+      select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
       orderBy: { createdAt: 'desc' },
     });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });

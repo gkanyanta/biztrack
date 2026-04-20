@@ -133,6 +133,9 @@ function validateProduct(req, res, next) {
   if (sellingPrice !== undefined && (isNaN(sellingPrice) || Number(sellingPrice) < 0)) {
     return res.status(400).json({ error: 'Selling price must be a non-negative number' });
   }
+  if (req.body.originalPrice !== undefined && req.body.originalPrice !== null && req.body.originalPrice !== '' && (isNaN(req.body.originalPrice) || Number(req.body.originalPrice) < 0)) {
+    return res.status(400).json({ error: 'Original price must be a non-negative number' });
+  }
   req.body.name = sanitizeString(name, 200);
   if (req.body.description) req.body.description = sanitizeString(req.body.description, 1000);
   if (req.body.category) req.body.category = sanitizeString(req.body.category, 100);
@@ -260,7 +263,7 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
     if (category) where.category = category;
     let products = await prisma.product.findMany({
       where,
-      select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
+      select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
       orderBy: { createdAt: 'desc' },
     });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
@@ -1507,7 +1510,7 @@ app.get('/api/v1/store/:slug/products', async (req, res) => {
     const where = { companyId: company.id, isActive: true, stock: { gt: 0 } };
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
-    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, stock: true }, orderBy: { name: 'asc' } });
+    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true }, orderBy: { name: 'asc' } });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
     const imageIds = new Set(withImages.map(p => p.id));
     const productsWithUrls = products.map(p => ({

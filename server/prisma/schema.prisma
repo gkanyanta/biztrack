@@ -51,6 +51,7 @@ model Product {
   category     String?
   costPrice    Decimal    @db.Decimal(10, 2)
   sellingPrice Decimal    @db.Decimal(10, 2)
+  originalPrice Decimal?  @db.Decimal(10, 2)
   stock        Int        @default(0)
   reorderLevel Int        @default(5)
   supplier     String?
