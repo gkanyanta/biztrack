@@ -1,7 +1,8 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 
 router.use(authenticate);
+router.use(requireAdmin);
 
 router.get('/', async (req, res) => {
   try {

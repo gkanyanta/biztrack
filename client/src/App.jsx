@@ -17,6 +17,7 @@ import Inventory from './pages/Inventory';
 import Consultants from './pages/Consultants';
 import Store from './pages/Store';
 import SuperadminPanel from './pages/SuperadminPanel';
+import ConsultantDashboard from './pages/ConsultantDashboard';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -31,7 +32,14 @@ function PrivateRoute({ children }) {
 function DashboardRouter() {
   const { user } = useAuth();
   if (user?.role === 'superadmin') return <Navigate to="/superadmin" />;
+  if (user?.role === 'consultant') return <ConsultantDashboard />;
   return <Dashboard />;
+}
+
+function AdminOnly({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'consultant') return <Navigate to="/" />;
+  return children;
 }
 
 function AppRoutes() {
@@ -54,16 +62,16 @@ function AppRoutes() {
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
         <Route index element={<DashboardRouter />} />
         <Route path="superadmin" element={<SuperadminPanel />} />
-        <Route path="products" element={<Products />} />
+        <Route path="products" element={<AdminOnly><Products /></AdminOnly>} />
         <Route path="sales" element={<Sales />} />
-        <Route path="expenses" element={<Expenses />} />
-        <Route path="customers" element={<Customers />} />
-        <Route path="shipping" element={<Shipping />} />
+        <Route path="expenses" element={<AdminOnly><Expenses /></AdminOnly>} />
+        <Route path="customers" element={<AdminOnly><Customers /></AdminOnly>} />
+        <Route path="shipping" element={<AdminOnly><Shipping /></AdminOnly>} />
         <Route path="credit" element={<CreditTracker />} />
-        <Route path="inventory" element={<Inventory />} />
-        <Route path="consultants" element={<Consultants />} />
-        <Route path="reports" element={<Reports />} />
-        <Route path="settings" element={<Settings />} />
+        <Route path="inventory" element={<AdminOnly><Inventory /></AdminOnly>} />
+        <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
+        <Route path="reports" element={<AdminOnly><Reports /></AdminOnly>} />
+        <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
       </Route>
     </Routes>
   );

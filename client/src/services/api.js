@@ -74,6 +74,7 @@ export const deleteShippingRate = (id) => api.delete(`/shipping-rates/${id}`);
 
 // Dashboard & Reports
 export const getDashboard = (params) => api.get('/dashboard', { params });
+export const getConsultantDashboard = () => api.get('/dashboard/consultant');
 export const getGrowthReport = () => api.get('/reports/growth');
 export const getPnlReport = (params) => api.get('/reports/pnl', { params });
 export const getSalesReport = (params) => api.get('/reports/sales', { params });
@@ -100,6 +101,9 @@ export const getConsultantStock = (consultantId) => api.get(`/consultants/${cons
 export const transferStockToConsultant = (consultantId, data) => api.post(`/consultants/${consultantId}/stock/transfer`, data);
 export const returnStockFromConsultant = (consultantId, data) => api.post(`/consultants/${consultantId}/stock/return`, data);
 export const getStockTransfers = (consultantId) => api.get(`/consultants/${consultantId}/stock/transfers`);
+export const createConsultantLogin = (consultantId, data) => api.post(`/consultants/${consultantId}/login`, data);
+export const resetConsultantPassword = (consultantId, data) => api.post(`/consultants/${consultantId}/reset-password`, data);
+export const revokeConsultantLogin = (consultantId) => api.delete(`/consultants/${consultantId}/login`);
 
 // Store (public)
 export const getStoreInfo = (slug) => api.get(`/store/${slug}/info`);

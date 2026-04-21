@@ -13,8 +13,11 @@ import useTableControls from '../hooks/useTableControls';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera } from 'react-icons/fi';
 import BarcodeScanner from '../components/BarcodeScanner';
+import { useAuth } from '../hooks/useAuth';
 
 export default function Sales() {
+  const { user } = useAuth();
+  const isConsultant = user?.role === 'consultant';
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState([]);
   const [shippingRates, setShippingRates] = useState([]);
@@ -54,8 +57,8 @@ export default function Sales() {
   useEffect(() => {
     getProducts().then(res => setProducts(res.data.filter(p => p.isActive)));
     getShippingRates().then(res => setShippingRates(res.data));
-    getConsultants({ active: 'true' }).then(res => setConsultants(res.data)).catch(() => {});
-  }, []);
+    if (!isConsultant) getConsultants({ active: 'true' }).then(res => setConsultants(res.data)).catch(() => {});
+  }, [isConsultant]);
 
   const addProduct = (product) => {
     const existing = orderItems.find(i => i.productId === product.id);
@@ -284,7 +287,7 @@ export default function Sales() {
                   <th className="text-left p-3 hidden md:table-cell font-medium text-gray-600">Items</th>
                   <th className="text-left p-3 hidden lg:table-cell"><SortableHeader label="Customer" sortKey="customerName" sort={salesTable.sort} onToggle={salesTable.toggleSort} /></th>
                   <th className="text-right p-3"><SortableHeader label="Total" sortKey="totalPrice" accessor={(r) => parseFloat(r.totalPrice)} sort={salesTable.sort} onToggle={salesTable.toggleSort} align="right" /></th>
-                  <th className="text-right p-3 hidden sm:table-cell"><SortableHeader label="Profit" sortKey="profit" accessor={(r) => calcProfit(r)} sort={salesTable.sort} onToggle={salesTable.toggleSort} align="right" /></th>
+                  {!isConsultant && <th className="text-right p-3 hidden sm:table-cell"><SortableHeader label="Profit" sortKey="profit" accessor={(r) => calcProfit(r)} sort={salesTable.sort} onToggle={salesTable.toggleSort} align="right" /></th>}
                   <th className="text-center p-3"><SortableHeader label="Status" sortKey="status" sort={salesTable.sort} onToggle={salesTable.toggleSort} align="center" /></th>
                   <th className="text-center p-3 hidden sm:table-cell"><SortableHeader label="Payment" sortKey="paymentStatus" sort={salesTable.sort} onToggle={salesTable.toggleSort} align="center" /></th>
                   <th className="text-right p-3 font-medium text-gray-600">Actions</th>
@@ -305,9 +308,11 @@ export default function Sales() {
                       <div className="text-xs text-gray-500">{s.customerCity || ''}</div>
                     </td>
                     <td className="p-3 text-right font-medium text-gray-800">{formatMoney(s.totalPrice)}</td>
-                    <td className="p-3 text-right hidden sm:table-cell">
-                      <span className={calcProfit(s) >= 0 ? 'text-green-600' : 'text-red-600'}>{formatMoney(calcProfit(s))}</span>
-                    </td>
+                    {!isConsultant && (
+                      <td className="p-3 text-right hidden sm:table-cell">
+                        <span className={calcProfit(s) >= 0 ? 'text-green-600' : 'text-red-600'}>{formatMoney(calcProfit(s))}</span>
+                      </td>
+                    )}
                     <td className="p-3 text-center">
                       <select value={s.status} onChange={e => handleStatusChange(s, e.target.value)}
                         className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none">
@@ -326,7 +331,7 @@ export default function Sales() {
                   </tr>
                 ))}
                 {salesTable.pageRows.length === 0 && (
-                  <tr><td colSpan={8} className="p-8 text-center text-gray-500">
+                  <tr><td colSpan={isConsultant ? 7 : 8} className="p-8 text-center text-gray-500">
                     <FiShoppingCart className="mx-auto mb-2" size={32} />No sales found
                   </td></tr>
                 )}
@@ -493,7 +498,7 @@ export default function Sales() {
               <input type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            {consultants.length > 0 && (
+            {!isConsultant && consultants.length > 0 && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Sold By (Consultant)</label>
                 <select value={form.consultantId} onChange={e => setForm({...form, consultantId: e.target.value})}
@@ -576,8 +581,8 @@ export default function Sales() {
             <div className="flex justify-between items-start">
               <div className="grid grid-cols-2 gap-3 flex-1">
                 <div><span className="text-gray-500">Total:</span> <span className="font-medium">{formatMoney(showDetail.totalPrice)}</span></div>
-                <div><span className="text-gray-500">Profit:</span> <span className={`font-medium ${calcProfit(showDetail) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(calcProfit(showDetail))}</span></div>
-                <div><span className="text-gray-500">Shipping Cost:</span> {formatMoney(showDetail.shippingCost)}</div>
+                {!isConsultant && <div><span className="text-gray-500">Profit:</span> <span className={`font-medium ${calcProfit(showDetail) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(calcProfit(showDetail))}</span></div>}
+                {!isConsultant && <div><span className="text-gray-500">Shipping Cost:</span> {formatMoney(showDetail.shippingCost)}</div>}
                 <div><span className="text-gray-500">Shipping Charge:</span> {formatMoney(showDetail.shippingCharge)}</div>
                 <div><span className="text-gray-500">Customer:</span> {showDetail.customerName || '-'}</div>
                 <div><span className="text-gray-500">Phone:</span> {showDetail.customerPhone || '-'}</div>

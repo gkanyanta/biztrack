@@ -1,8 +1,9 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 const XLSX = require('xlsx');
 
 router.use(authenticate);
+router.use(requireAdmin);
 
 router.get('/pnl', async (req, res) => {
   try {

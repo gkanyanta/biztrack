@@ -228,6 +228,7 @@ model Consultant {
   monthlyAllowance Decimal            @db.Decimal(10, 2) @default(400)
   isActive         Boolean            @default(true)
   notes            String?
+  userId           String?            @unique
   companyId        String
   company          Company            @relation(fields: [companyId], references: [id])
   createdAt        DateTime           @default(now())

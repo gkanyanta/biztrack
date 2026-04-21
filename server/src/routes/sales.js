@@ -11,7 +11,9 @@ router.get('/credit/summary', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const creditSales = await prisma.sale.findMany({ where: { companyId, paymentType: 'Credit', paymentStatus: { not: 'Paid' } }, include: { customer: true } });
+    const saleWhere = { companyId, paymentType: 'Credit', paymentStatus: { not: 'Paid' } };
+    if (req.user.role === 'consultant') saleWhere.consultantId = req.user.consultantId;
+    const creditSales = await prisma.sale.findMany({ where: saleWhere, include: { customer: true } });
     const now = new Date();
     let totalOutstanding = 0, overdueCount = 0, overdueAmount = 0;
     const debtorMap = {};
@@ -27,7 +29,9 @@ router.get('/credit/summary', async (req, res) => {
       if (s.creditDueDate && (!debtorMap[key].oldestDueDate || new Date(s.creditDueDate) < new Date(debtorMap[key].oldestDueDate))) debtorMap[key].oldestDueDate = s.creditDueDate;
     });
     const topDebtors = Object.values(debtorMap).sort((a, b) => b.totalOwed - a.totalOwed);
-    const recentPayments = await prisma.creditPayment.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
+    const paymentWhere = { companyId };
+    if (req.user.role === 'consultant') paymentWhere.sale = { consultantId: req.user.consultantId };
+    const recentPayments = await prisma.creditPayment.findMany({ where: paymentWhere, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
     res.json({ totalOutstanding, overdueCount, overdueAmount, topDebtors, recentPayments });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -43,6 +47,8 @@ router.get('/', async (req, res) => {
     if (paymentType) where.paymentType = paymentType;
     if (customerId) where.customerId = customerId;
     if (consultantId) where.consultantId = consultantId;
+    // Consultants only see their own sales
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }, { customerPhone: { contains: search, mode: 'insensitive' } }]; }
@@ -55,8 +61,14 @@ router.get('/:id', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
+    // Strip cost-exposing fields for consultants
+    if (req.user.role === 'consultant') {
+      sale.items = (sale.items || []).map(({ costPrice, ...rest }) => rest);
+    }
     res.json(sale);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -66,6 +78,8 @@ router.post('/', validateSale, async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const data = req.body;
+    // Consultants can only create sales attributed to themselves
+    if (req.user.role === 'consultant') data.consultantId = req.user.consultantId;
     const items = data.items;
 
     // Validate products
@@ -154,8 +168,12 @@ router.put('/:id', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const raw = req.body;
-    const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const existing = await prisma.sale.findFirst({ where, include: { items: true } });
     if (!existing) return res.status(404).json({ error: 'Not found' });
+    // Consultants can't reassign a sale to another consultant
+    if (req.user.role === 'consultant') raw.consultantId = req.user.consultantId;
 
     const data = {
       ...(raw.shippingCost !== undefined && { shippingCost: parseFloat(raw.shippingCost) || 0 }),
@@ -230,7 +248,9 @@ router.put('/:id/status', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const { status } = req.body;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const oldStatus = sale.status;
     const stockDeductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
@@ -271,6 +291,8 @@ router.put('/:id/status', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
+    // Consultants cannot delete sales
+    if (req.user.role === 'consultant') return res.status(403).json({ error: 'Consultants cannot delete sales' });
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
@@ -297,7 +319,9 @@ router.post('/:id/payments', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const amount = parseFloat(req.body.amount);
     if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
@@ -316,6 +340,10 @@ router.get('/:id/payments', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
+    if (req.user.role === 'consultant') {
+      const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
+      if (!owned) return res.status(404).json({ error: 'Sale not found' });
+    }
     const payments = await prisma.creditPayment.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(payments);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -326,7 +354,9 @@ router.post('/:id/reminders', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const reminder = await prisma.debtReminder.create({ data: { saleId: sale.id, channel: req.body.channel, message: req.body.message || null, companyId } });
     res.status(201).json(reminder);
@@ -337,6 +367,10 @@ router.get('/:id/reminders', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
+    if (req.user.role === 'consultant') {
+      const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
+      if (!owned) return res.status(404).json({ error: 'Sale not found' });
+    }
     const reminders = await prisma.debtReminder.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { sentAt: 'desc' } });
     res.json(reminders);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -347,7 +381,9 @@ router.get('/:id/receipt', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { ...saleInclude, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const settingsMap = {};

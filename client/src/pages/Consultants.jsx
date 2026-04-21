@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts } from '../services/api';
+import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts, createConsultantLogin, resetConsultantPassword, revokeConsultantLogin } from '../services/api';
 import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -7,7 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import PayStatementPDF from '../components/PayStatementPDF';
 import { pdf } from '@react-pdf/renderer';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft, FiKey, FiUserCheck } from 'react-icons/fi';
 
 export default function Consultants() {
   const [consultants, setConsultants] = useState([]);
@@ -31,6 +31,9 @@ export default function Consultants() {
   const [transferForm, setTransferForm] = useState({ productId: '', qty: '', notes: '' });
   const [transferDirection, setTransferDirection] = useState('to_consultant');
   const [paymentForm, setPaymentForm] = useState(emptyPayment);
+  const [loginModal, setLoginModal] = useState(null); // consultant for login actions
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginCreatedFor, setLoginCreatedFor] = useState(null); // { username, password, name }
 
   const loadData = () => {
     setLoading(true);
@@ -92,6 +95,44 @@ export default function Consultants() {
     setShowDetail(c);
     setPaymentForm(emptyPayment);
     setShowPaymentForm(true);
+  };
+
+  const openLoginModal = (c) => {
+    setLoginModal(c);
+    setLoginForm({ username: '', password: '' });
+    setLoginCreatedFor(null);
+  };
+
+  const suggestUsername = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40);
+  const randomPassword = () => Math.random().toString(36).slice(2, 10) + Math.floor(Math.random() * 100);
+
+  const handleCreateLogin = async (e) => {
+    e.preventDefault();
+    try {
+      await createConsultantLogin(loginModal.id, loginForm);
+      toast.success('Login created');
+      setLoginCreatedFor({ username: loginForm.username, password: loginForm.password, name: loginModal.name });
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.error || 'Error creating login'); }
+  };
+
+  const handleResetPassword = async () => {
+    const newPass = randomPassword();
+    try {
+      await resetConsultantPassword(loginModal.id, { password: newPass });
+      toast.success('Password reset');
+      setLoginCreatedFor({ username: null, password: newPass, name: loginModal.name, reset: true });
+    } catch (err) { toast.error(err.response?.data?.error || 'Error resetting'); }
+  };
+
+  const handleRevokeLogin = async () => {
+    if (!window.confirm(`Revoke login for ${loginModal.name}? They will no longer be able to sign in.`)) return;
+    try {
+      await revokeConsultantLogin(loginModal.id);
+      toast.success('Login revoked');
+      setLoginModal(null);
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.error || 'Error revoking'); }
   };
 
   const generatePayStatement = async (consultant, payment, consultantDetail) => {
@@ -254,6 +295,9 @@ export default function Consultants() {
                         <button onClick={() => openDetail(s || { consultant: c })} className="p-1.5 text-gray-400 hover:text-blue-600" title="View details"><FiEye size={15} /></button>
                         <button onClick={() => openStockModal(c)} className="p-1.5 text-gray-400 hover:text-purple-600" title="Stock"><FiPackage size={15} /></button>
                         <button onClick={() => openPayment(c)} className="p-1.5 text-gray-400 hover:text-green-600" title="Record payment"><FiDollarSign size={15} /></button>
+                        <button onClick={() => openLoginModal(c)} className={`p-1.5 ${c.userId ? 'text-emerald-600 hover:text-emerald-700' : 'text-gray-400 hover:text-blue-600'}`} title={c.userId ? 'Manage login' : 'Create login'}>
+                          {c.userId ? <FiUserCheck size={15} /> : <FiKey size={15} />}
+                        </button>
                         <button onClick={() => openEdit(c)} className="p-1.5 text-gray-400 hover:text-blue-600" title="Edit"><FiEdit2 size={15} /></button>
                         <button onClick={() => setDeleteConfirm(c)} className="p-1.5 text-gray-400 hover:text-red-600" title="Delete"><FiTrash2 size={15} /></button>
                       </div>
@@ -499,6 +543,59 @@ export default function Consultants() {
             <button type="submit" className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Record Payment</button>
           </div>
         </form>
+      </Modal>
+
+      {/* Login Management Modal */}
+      <Modal isOpen={!!loginModal} onClose={() => { setLoginModal(null); setLoginCreatedFor(null); }} title={loginModal?.userId ? `Login — ${loginModal?.name}` : `Create Login — ${loginModal?.name}`} size="sm">
+        {loginModal && !loginCreatedFor && !loginModal.userId && (
+          <form onSubmit={handleCreateLogin} className="space-y-3">
+            <p className="text-sm text-gray-600">Generate sign-in credentials for this consultant. They'll only see their own dashboard and sales.</p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Username *</label>
+              <div className="flex gap-2">
+                <input type="text" required minLength={3} value={loginForm.username} onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
+                  placeholder="letters, numbers, underscore" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                <button type="button" onClick={() => setLoginForm({ ...loginForm, username: suggestUsername(loginModal.name) })} className="text-xs px-2 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">Suggest</button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+              <div className="flex gap-2">
+                <input type="text" required minLength={6} value={loginForm.password} onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+                  placeholder="min 6 characters" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                <button type="button" onClick={() => setLoginForm({ ...loginForm, password: randomPassword() })} className="text-xs px-2 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">Random</button>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end pt-2">
+              <button type="button" onClick={() => setLoginModal(null)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Create Login</button>
+            </div>
+          </form>
+        )}
+
+        {loginModal?.userId && !loginCreatedFor && (
+          <div className="space-y-3">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">
+              This consultant already has a login. They can sign in to see only their dashboard and sales.
+            </div>
+            <button onClick={handleResetPassword} className="w-full px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600">Reset Password (generate new)</button>
+            <button onClick={handleRevokeLogin} className="w-full px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700">Revoke Login</button>
+          </div>
+        )}
+
+        {loginCreatedFor && (
+          <div className="space-y-3">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+              <p className="text-sm font-semibold text-emerald-900 mb-2">{loginCreatedFor.reset ? 'Password reset — share with consultant' : 'Login created — share these credentials'}</p>
+              {loginCreatedFor.username && (
+                <div className="text-sm"><span className="text-gray-600">Username:</span> <span className="font-mono font-bold text-gray-900">{loginCreatedFor.username}</span></div>
+              )}
+              <div className="text-sm"><span className="text-gray-600">Password:</span> <span className="font-mono font-bold text-gray-900">{loginCreatedFor.password}</span></div>
+              <p className="text-xs text-gray-500 mt-2">Save this now — the password won't be shown again.</p>
+            </div>
+            <button onClick={() => { setLoginModal(null); setLoginCreatedFor(null); }} className="w-full px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Done</button>
+          </div>
+        )}
       </Modal>
 
       <ConfirmDialog isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete}

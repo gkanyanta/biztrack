@@ -1,5 +1,6 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const bcrypt = require('bcryptjs');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 
 // Tiered commission: first N products at base rate, rest at tier rate
 function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRate) {
@@ -12,8 +13,19 @@ function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRa
 
 router.use(authenticate);
 
-// ---- LIST CONSULTANTS ----
-router.get('/', async (req, res) => {
+// ---- CONSULTANT SELF (for logged-in consultant) ----
+router.get('/me', async (req, res) => {
+  try {
+    if (req.user.role !== 'consultant') return res.status(403).json({ error: 'Consultant access required' });
+    const prisma = req.app.locals.prisma;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.user.consultantId, companyId: req.user.companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    res.json(consultant);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- LIST CONSULTANTS (admin only) ----
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -26,8 +38,8 @@ router.get('/', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// ---- COMMISSION SUMMARY (before /:id) ----
-router.get('/commission-summary', async (req, res) => {
+// ---- COMMISSION SUMMARY (before /:id, admin only) ----
+router.get('/commission-summary', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -70,9 +82,10 @@ router.get('/commission-summary', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// ---- GET SINGLE CONSULTANT ----
+// ---- GET SINGLE CONSULTANT (admin, or consultant self) ----
 router.get('/:id', async (req, res) => {
   try {
+    if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -102,7 +115,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // ---- CREATE CONSULTANT ----
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -124,7 +137,7 @@ router.post('/', async (req, res) => {
 });
 
 // ---- UPDATE CONSULTANT ----
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -150,7 +163,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // ---- DELETE CONSULTANT ----
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -171,7 +184,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // ---- RECORD COMMISSION PAYMENT ----
-router.post('/:id/payments', async (req, res) => {
+router.post('/:id/payments', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -198,8 +211,9 @@ router.post('/:id/payments', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// ---- GET PAYMENT HISTORY ----
+// ---- GET PAYMENT HISTORY (admin, or consultant self) ----
 router.get('/:id/payments', async (req, res) => {
+  if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -211,9 +225,10 @@ router.get('/:id/payments', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// ---- CONSULTANT STOCK ----
+// ---- CONSULTANT STOCK (admin, or consultant self) ----
 router.get('/:id/stock', async (req, res) => {
   try {
+    if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const stock = await prisma.consultantStock.findMany({
@@ -224,8 +239,8 @@ router.get('/:id/stock', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// Transfer stock to consultant
-router.post('/:id/stock/transfer', async (req, res) => {
+// Transfer stock to consultant (admin only)
+router.post('/:id/stock/transfer', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -260,8 +275,8 @@ router.post('/:id/stock/transfer', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// Return stock from consultant
-router.post('/:id/stock/return', async (req, res) => {
+// Return stock from consultant (admin only)
+router.post('/:id/stock/return', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -293,9 +308,10 @@ router.post('/:id/stock/return', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// Transfer history
+// Transfer history (admin, or consultant self)
 router.get('/:id/stock/transfers', async (req, res) => {
   try {
+    if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const transfers = await prisma.stockTransfer.findMany({
@@ -304,6 +320,59 @@ router.get('/:id/stock/transfers', async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
     res.json(transfers);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- CREATE LOGIN FOR CONSULTANT (admin only) ----
+router.post('/:id/login', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    if (consultant.userId) return res.status(400).json({ error: 'Consultant already has a login' });
+
+    const { username, password } = req.body;
+    if (!username || typeof username !== 'string' || username.length < 3 || username.length > 50) return res.status(400).json({ error: 'Username must be 3-50 characters' });
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
+    if (!password || typeof password !== 'string' || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const existing = await prisma.user.findUnique({ where: { username } });
+    if (existing) return res.status(400).json({ error: 'Username already taken' });
+
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({ data: { username, password: hashed, name: consultant.name, role: 'consultant', companyId } });
+    await prisma.consultant.update({ where: { id: consultant.id }, data: { userId: user.id } });
+    res.status(201).json({ username, consultantId: consultant.id, userId: user.id });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Reset consultant password (admin only)
+router.post('/:id/reset-password', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant || !consultant.userId) return res.status(404).json({ error: 'Consultant login not found' });
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const hashed = await bcrypt.hash(password, 10);
+    await prisma.user.update({ where: { id: consultant.userId }, data: { password: hashed } });
+    res.json({ message: 'Password reset' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Revoke consultant login (admin only)
+router.delete('/:id/login', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant || !consultant.userId) return res.status(404).json({ error: 'No login to revoke' });
+    const userId = consultant.userId;
+    await prisma.consultant.update({ where: { id: consultant.id }, data: { userId: null } });
+    await prisma.user.delete({ where: { id: userId } });
+    res.json({ message: 'Login revoked' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

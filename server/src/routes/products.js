@@ -1,8 +1,12 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 const { validateProduct } = require('../middleware/validate');
 
 router.use(authenticate);
+
+function stripForConsultant(products) {
+  return products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
+}
 
 router.get('/meta/categories', async (req, res) => {
   try {
@@ -30,6 +34,7 @@ router.get('/', async (req, res) => {
     const imageIds = new Set(withImages.map(p => p.id));
     products = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
+    if (req.user.role === 'consultant') products = stripForConsultant(products);
     res.json(products);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -40,11 +45,15 @@ router.get('/:id', async (req, res) => {
     const companyId = req.user.companyId;
     const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 } } });
     if (!product) return res.status(404).json({ error: 'Product not found' });
+    if (req.user.role === 'consultant') {
+      const { costPrice, supplier, reorderLevel, stockLogs, ...rest } = product;
+      return res.json(rest);
+    }
     res.json(product);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.get('/:id/stock-log', async (req, res) => {
+router.get('/:id/stock-log', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -53,7 +62,7 @@ router.get('/:id/stock-log', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/', validateProduct, async (req, res) => {
+router.post('/', requireAdmin, validateProduct, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -68,7 +77,7 @@ router.post('/', validateProduct, async (req, res) => {
   }
 });
 
-router.put('/:id', validateProduct, async (req, res) => {
+router.put('/:id', requireAdmin, validateProduct, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -88,7 +97,7 @@ router.put('/:id', validateProduct, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -99,7 +108,7 @@ router.delete('/:id', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/restock', async (req, res) => {
+router.post('/restock', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;

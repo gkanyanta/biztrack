@@ -25,12 +25,18 @@ const superadminNavItems = [
   { path: '/superadmin', icon: FiShield, label: 'Admin Panel' },
 ];
 
+const consultantNavItems = [
+  { path: '/', icon: FiHome, label: 'Dashboard' },
+  { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
+  { path: '/credit', icon: FiCreditCard, label: 'Credit' },
+];
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dark, toggleDark] = useDarkMode();
-  const navItems = user?.role === 'superadmin' ? superadminNavItems : adminNavItems;
+  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : adminNavItems;
 
   return (
     <div className="flex h-screen bg-gray-50">

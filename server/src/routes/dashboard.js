@@ -1,9 +1,55 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 
 router.use(authenticate);
 
-router.get('/', async (req, res) => {
+// Consultant self-dashboard — their sales, commission earned, balance
+router.get('/consultant', async (req, res) => {
+  try {
+    if (req.user.role !== 'consultant') return res.status(403).json({ error: 'Consultant access required' });
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const consultantId = req.user.consultantId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: consultantId, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const allSales = await prisma.sale.findMany({ where: { consultantId, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
+    const monthSales = allSales.filter(s => new Date(s.date) >= monthStart);
+    const todaySales = allSales.filter(s => new Date(s.date) >= todayStart && new Date(s.date) <= todayEnd);
+
+    const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
+    const productsSoldInMonth = sum(monthSales, s => s.items.reduce((q, i) => q + i.qty, 0));
+
+    const base = parseFloat(consultant.commissionRate);
+    const tier = parseFloat(consultant.tierRate);
+    const threshold = parseInt(consultant.tierThreshold) || 50;
+    const calcComm = (n) => n <= threshold ? n * base : (threshold * base) + ((n - threshold) * tier);
+    const commissionEarnedMonth = calcComm(productsSoldInMonth);
+
+    const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
+    const totalProductsSoldAllTime = sum(allSales, s => s.items.reduce((q, i) => q + i.qty, 0));
+    const commissionEarnedAllTime = calcComm(totalProductsSoldAllTime);
+    const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
+    const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
+    const balance = commissionEarnedAllTime - commissionPaid;
+
+    res.json({
+      consultant: { id: consultant.id, name: consultant.name, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
+      today: { ordersCount: todaySales.length, productsSold: sum(todaySales, s => s.items.reduce((q, i) => q + i.qty, 0)), revenue: sum(todaySales, s => parseFloat(s.totalPrice)) },
+      thisMonth: { ordersCount: monthSales.length, productsSold: productsSoldInMonth, revenue: sum(monthSales, s => parseFloat(s.totalPrice)), commissionEarned: commissionEarnedMonth },
+      allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, balance },
+      recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
+      recentPayments: payments.slice(0, 10),
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;

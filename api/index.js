@@ -59,13 +59,19 @@ function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRa
 }
 
 // Auth middleware
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
     req.user = jwt.verify(header.split(' ')[1], JWT_SECRET);
+    if (req.user.role === 'consultant') {
+      const consultant = await prisma.consultant.findFirst({ where: { userId: req.user.id, companyId: req.user.companyId }, select: { id: true, isActive: true } });
+      if (!consultant) return res.status(403).json({ error: 'No consultant profile linked to this account' });
+      if (!consultant.isActive) return res.status(403).json({ error: 'Your consultant account is inactive' });
+      req.user.consultantId = consultant.id;
+    }
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
@@ -75,6 +81,13 @@ function authenticate(req, res, next) {
 function requireSuperadmin(req, res, next) {
   if (req.user.role !== 'superadmin') {
     return res.status(403).json({ error: 'Superadmin access required' });
+  }
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Admin access required' });
   }
   next();
 }
@@ -280,6 +293,7 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
     const imageIds = new Set(withImages.map(p => p.id));
     products = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
+    if (req.user.role === 'consultant') products = products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
     res.json(products);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -289,11 +303,15 @@ app.get('/api/v1/products/:id', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 } } });
     if (!product) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role === 'consultant') {
+      const { costPrice, supplier, reorderLevel, stockLogs, ...rest } = product;
+      return res.json(rest);
+    }
     res.json(product);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/products/:id/stock-log', authenticate, async (req, res) => {
+app.get('/api/v1/products/:id/stock-log', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const logs = await prisma.stockLog.findMany({ where: { productId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
@@ -301,7 +319,7 @@ app.get('/api/v1/products/:id/stock-log', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/products', authenticate, validateProduct, async (req, res) => {
+app.post('/api/v1/products', authenticate, requireAdmin, validateProduct, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
@@ -315,7 +333,7 @@ app.post('/api/v1/products', authenticate, validateProduct, async (req, res) => 
   }
 });
 
-app.put('/api/v1/products/:id', authenticate, validateProduct, async (req, res) => {
+app.put('/api/v1/products/:id', authenticate, requireAdmin, validateProduct, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.product.findFirst({ where: { id: req.params.id, companyId } });
@@ -335,7 +353,7 @@ app.put('/api/v1/products/:id', authenticate, validateProduct, async (req, res) 
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.delete('/api/v1/products/:id', authenticate, async (req, res) => {
+app.delete('/api/v1/products/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId } });
@@ -345,7 +363,7 @@ app.delete('/api/v1/products/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/products/restock', authenticate, async (req, res) => {
+app.post('/api/v1/products/restock', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { items } = req.body;
@@ -365,7 +383,9 @@ app.post('/api/v1/products/restock', authenticate, async (req, res) => {
 app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const creditSales = await prisma.sale.findMany({ where: { companyId, paymentType: 'Credit', paymentStatus: { not: 'Paid' } }, include: { customer: true } });
+    const saleWhere = { companyId, paymentType: 'Credit', paymentStatus: { not: 'Paid' } };
+    if (req.user.role === 'consultant') saleWhere.consultantId = req.user.consultantId;
+    const creditSales = await prisma.sale.findMany({ where: saleWhere, include: { customer: true } });
     const now = new Date();
     let totalOutstanding = 0, overdueCount = 0, overdueAmount = 0;
     const debtorMap = {};
@@ -381,7 +401,9 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
       if (s.creditDueDate && (!debtorMap[key].oldestDueDate || new Date(s.creditDueDate) < new Date(debtorMap[key].oldestDueDate))) debtorMap[key].oldestDueDate = s.creditDueDate;
     });
     const topDebtors = Object.values(debtorMap).sort((a, b) => b.totalOwed - a.totalOwed);
-    const recentPayments = await prisma.creditPayment.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
+    const paymentWhere = { companyId };
+    if (req.user.role === 'consultant') paymentWhere.sale = { consultantId: req.user.consultantId };
+    const recentPayments = await prisma.creditPayment.findMany({ where: paymentWhere, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
     res.json({ totalOutstanding, overdueCount, overdueAmount, topDebtors, recentPayments });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -399,6 +421,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
     if (consultantId) where.consultantId = consultantId;
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
     const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true, consultant: true }, orderBy: { createdAt: 'desc' } });
     res.json(sales);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -407,8 +430,13 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role === 'consultant') {
+      sale.items = (sale.items || []).map(({ costPrice, ...rest }) => rest);
+    }
     res.json(sale);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -417,6 +445,7 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = req.body;
+    if (req.user.role === 'consultant') data.consultantId = req.user.consultantId;
     const itemsInput = data.items || [];
     if (!itemsInput.length) return res.status(400).json({ error: 'At least one item is required' });
 
@@ -502,8 +531,11 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const raw = req.body;
-    const existing = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const existing = await prisma.sale.findFirst({ where, include: { items: true } });
     if (!existing) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role === 'consultant') raw.consultantId = req.user.consultantId;
 
     const data = {
       shippingCost: raw.shippingCost !== undefined ? parseFloat(raw.shippingCost) || 0 : undefined,
@@ -582,7 +614,9 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { status } = req.body;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     const oldStatus = sale.status;
     const stockDeductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
@@ -618,6 +652,7 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
 
 app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
+    if (req.user.role === 'consultant') return res.status(403).json({ error: 'Consultants cannot delete sales' });
     const companyId = req.user.companyId;
     const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
@@ -640,7 +675,9 @@ app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
 app.post('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const amount = parseFloat(req.body.amount);
     if (!amount || amount <= 0) return res.status(400).json({ error: 'Invalid amount' });
@@ -658,6 +695,10 @@ app.post('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
+    if (req.user.role === 'consultant') {
+      const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
+      if (!owned) return res.status(404).json({ error: 'Sale not found' });
+    }
     const payments = await prisma.creditPayment.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
     res.json(payments);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -667,7 +708,9 @@ app.get('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
 app.post('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const reminder = await prisma.debtReminder.create({ data: { saleId: sale.id, channel: req.body.channel, message: req.body.message || null, companyId } });
     res.status(201).json(reminder);
@@ -677,6 +720,10 @@ app.post('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
+    if (req.user.role === 'consultant') {
+      const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
+      if (!owned) return res.status(404).json({ error: 'Sale not found' });
+    }
     const reminders = await prisma.debtReminder.findMany({ where: { saleId: req.params.id, companyId }, orderBy: { sentAt: 'desc' } });
     res.json(reminders);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -686,7 +733,9 @@ app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const settingsMap = {};
@@ -696,7 +745,7 @@ app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
 });
 
 // ---- EXPENSES ----
-app.get('/api/v1/expenses', authenticate, async (req, res) => {
+app.get('/api/v1/expenses', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { category, from, to } = req.query;
@@ -708,7 +757,7 @@ app.get('/api/v1/expenses', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/expenses', authenticate, validateExpense, async (req, res) => {
+app.post('/api/v1/expenses', authenticate, requireAdmin, validateExpense, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
@@ -717,7 +766,7 @@ app.post('/api/v1/expenses', authenticate, validateExpense, async (req, res) => 
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/expenses/:id', authenticate, validateExpense, async (req, res) => {
+app.put('/api/v1/expenses/:id', authenticate, requireAdmin, validateExpense, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.expense.findFirst({ where: { id: req.params.id, companyId } });
@@ -729,7 +778,7 @@ app.put('/api/v1/expenses/:id', authenticate, validateExpense, async (req, res) 
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.delete('/api/v1/expenses/:id', authenticate, async (req, res) => {
+app.delete('/api/v1/expenses/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.expense.findFirst({ where: { id: req.params.id, companyId } });
@@ -740,7 +789,7 @@ app.delete('/api/v1/expenses/:id', authenticate, async (req, res) => {
 });
 
 // ---- CUSTOMERS ----
-app.get('/api/v1/customers', authenticate, async (req, res) => {
+app.get('/api/v1/customers', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { search } = req.query;
@@ -751,7 +800,7 @@ app.get('/api/v1/customers', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/customers/:id', authenticate, async (req, res) => {
+app.get('/api/v1/customers/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const customer = await prisma.customer.findFirst({ where: { id: req.params.id, companyId }, include: { sales: { include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } } } });
@@ -760,21 +809,21 @@ app.get('/api/v1/customers/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/customers/:id/orders', authenticate, async (req, res) => {
+app.get('/api/v1/customers/:id/orders', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     res.json(await prisma.sale.findMany({ where: { customerId: req.params.id, companyId }, include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } }));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/customers', authenticate, validateCustomer, async (req, res) => {
+app.post('/api/v1/customers', authenticate, requireAdmin, validateCustomer, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     res.status(201).json(await prisma.customer.create({ data: { ...req.body, companyId } }));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/customers/:id', authenticate, validateCustomer, async (req, res) => {
+app.put('/api/v1/customers/:id', authenticate, requireAdmin, validateCustomer, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.customer.findFirst({ where: { id: req.params.id, companyId } });
@@ -785,7 +834,7 @@ app.put('/api/v1/customers/:id', authenticate, validateCustomer, async (req, res
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.delete('/api/v1/customers/:id', authenticate, async (req, res) => {
+app.delete('/api/v1/customers/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.customer.findFirst({ where: { id: req.params.id, companyId } });
@@ -803,7 +852,7 @@ app.get('/api/v1/shipping-rates', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/shipping-rates', authenticate, async (req, res) => {
+app.post('/api/v1/shipping-rates', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     res.status(201).json(await prisma.shippingRate.create({ data: { ...req.body, companyId } }));
@@ -813,7 +862,7 @@ app.post('/api/v1/shipping-rates', authenticate, async (req, res) => {
   }
 });
 
-app.put('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
+app.put('/api/v1/shipping-rates/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.shippingRate.findFirst({ where: { id: req.params.id, companyId } });
@@ -824,7 +873,7 @@ app.put('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.delete('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
+app.delete('/api/v1/shipping-rates/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.shippingRate.findFirst({ where: { id: req.params.id, companyId } });
@@ -835,7 +884,7 @@ app.delete('/api/v1/shipping-rates/:id', authenticate, async (req, res) => {
 });
 
 // ---- DASHBOARD ----
-app.get('/api/v1/dashboard', authenticate, async (req, res) => {
+app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to } = req.query;
@@ -998,7 +1047,7 @@ app.get('/api/v1/dashboard', authenticate, async (req, res) => {
 });
 
 // ---- GROWTH PROJECTIONS REPORT ----
-app.get('/api/v1/reports/growth', authenticate, async (req, res) => {
+app.get('/api/v1/reports/growth', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const allSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' } }, orderBy: { date: 'asc' }, include: { items: true } });
@@ -1035,7 +1084,7 @@ app.get('/api/v1/reports/growth', authenticate, async (req, res) => {
 });
 
 // ---- REPORTS ----
-app.get('/api/v1/reports/pnl', authenticate, async (req, res) => {
+app.get('/api/v1/reports/pnl', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to } = req.query;
@@ -1056,7 +1105,7 @@ app.get('/api/v1/reports/pnl', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/sales', authenticate, async (req, res) => {
+app.get('/api/v1/reports/sales', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to, productId, customerId, status } = req.query;
@@ -1069,7 +1118,7 @@ app.get('/api/v1/reports/sales', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/expenses', authenticate, async (req, res) => {
+app.get('/api/v1/reports/expenses', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to, category } = req.query;
@@ -1083,7 +1132,7 @@ app.get('/api/v1/reports/expenses', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/products', authenticate, async (req, res) => {
+app.get('/api/v1/reports/products', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to } = req.query;
@@ -1096,7 +1145,7 @@ app.get('/api/v1/reports/products', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/customers', authenticate, async (req, res) => {
+app.get('/api/v1/reports/customers', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to } = req.query;
@@ -1109,7 +1158,7 @@ app.get('/api/v1/reports/customers', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/credit', authenticate, async (req, res) => {
+app.get('/api/v1/reports/credit', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const now = new Date();
@@ -1144,7 +1193,7 @@ app.get('/api/v1/reports/credit', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/inventory', authenticate, async (req, res) => {
+app.get('/api/v1/reports/inventory', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const now = new Date();
@@ -1181,7 +1230,7 @@ app.get('/api/v1/reports/inventory', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/reports/export/csv', authenticate, async (req, res) => {
+app.get('/api/v1/reports/export/csv', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { type, from, to } = req.query;
@@ -1258,7 +1307,7 @@ app.get('/api/v1/settings', authenticate, async (req, res) => {
 });
 
 // ---- INVENTORY ----
-app.get('/api/v1/inventory', authenticate, async (req, res) => {
+app.get('/api/v1/inventory', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { category, search } = req.query;
@@ -1307,7 +1356,7 @@ app.get('/api/v1/inventory', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/settings', authenticate, async (req, res) => {
+app.put('/api/v1/settings', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     for (const [key, value] of Object.entries(req.body)) {
@@ -1657,7 +1706,16 @@ app.get('/api/v1/store/:slug/payment-status/:saleId', async (req, res) => {
 });
 
 // ---- CONSULTANTS ----
-app.get('/api/v1/consultants/commission-summary', authenticate, async (req, res) => {
+app.get('/api/v1/consultants/me', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'consultant') return res.status(403).json({ error: 'Consultant access required' });
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.user.consultantId, companyId: req.user.companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Not found' });
+    res.json(consultant);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { from, to, consultantId } = req.query;
@@ -1684,7 +1742,7 @@ app.get('/api/v1/consultants/commission-summary', authenticate, async (req, res)
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/consultants', authenticate, async (req, res) => {
+app.get('/api/v1/consultants', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { active } = req.query;
@@ -1697,6 +1755,7 @@ app.get('/api/v1/consultants', authenticate, async (req, res) => {
 });
 
 app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
+  if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -1714,7 +1773,7 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/consultants', authenticate, async (req, res) => {
+app.post('/api/v1/consultants', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { name, phone, whatsapp, commissionRate, tierThreshold, tierRate, monthlyAllowance, notes } = req.body;
@@ -1724,7 +1783,7 @@ app.post('/api/v1/consultants', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/consultants/:id', authenticate, async (req, res) => {
+app.put('/api/v1/consultants/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -1746,7 +1805,7 @@ app.put('/api/v1/consultants/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.delete('/api/v1/consultants/:id', authenticate, async (req, res) => {
+app.delete('/api/v1/consultants/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -1762,7 +1821,7 @@ app.delete('/api/v1/consultants/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
+app.post('/api/v1/consultants/:id/payments', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -1775,6 +1834,7 @@ app.post('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
 });
 
 app.get('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
+  if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const companyId = req.user.companyId;
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
@@ -1784,6 +1844,7 @@ app.get('/api/v1/consultants/:id/payments', authenticate, async (req, res) => {
 
 // ---- CONSULTANT STOCK ----
 app.get('/api/v1/consultants/:id/stock', authenticate, async (req, res) => {
+  if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const companyId = req.user.companyId;
     const stock = await prisma.consultantStock.findMany({ where: { consultantId: req.params.id, companyId, qty: { gt: 0 } }, include: { product: { select: { id: true, name: true, sku: true, sellingPrice: true } } } });
@@ -1791,7 +1852,7 @@ app.get('/api/v1/consultants/:id/stock', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/consultants/:id/stock/transfer', authenticate, async (req, res) => {
+app.post('/api/v1/consultants/:id/stock/transfer', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -1810,7 +1871,7 @@ app.post('/api/v1/consultants/:id/stock/transfer', authenticate, async (req, res
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/consultants/:id/stock/return', authenticate, async (req, res) => {
+app.post('/api/v1/consultants/:id/stock/return', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
@@ -1829,10 +1890,104 @@ app.post('/api/v1/consultants/:id/stock/return', authenticate, async (req, res) 
 });
 
 app.get('/api/v1/consultants/:id/stock/transfers', authenticate, async (req, res) => {
+  if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const companyId = req.user.companyId;
     const transfers = await prisma.stockTransfer.findMany({ where: { consultantId: req.params.id, companyId }, include: { product: { select: { name: true, sku: true } } }, orderBy: { createdAt: 'desc' } });
     res.json(transfers);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- CONSULTANT DASHBOARD (self) ----
+app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'consultant') return res.status(403).json({ error: 'Consultant access required' });
+    const companyId = req.user.companyId;
+    const consultantId = req.user.consultantId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: consultantId, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const allSales = await prisma.sale.findMany({ where: { consultantId, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
+    const monthSales = allSales.filter(s => new Date(s.date) >= monthStart);
+    const todaySales = allSales.filter(s => new Date(s.date) >= todayStart && new Date(s.date) <= todayEnd);
+
+    const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
+    const productsSoldInMonth = sum(monthSales, s => s.items.reduce((q, i) => q + i.qty, 0));
+
+    const base = parseFloat(consultant.commissionRate);
+    const tier = parseFloat(consultant.tierRate);
+    const threshold = parseInt(consultant.tierThreshold) || 50;
+    const calcComm = (n) => n <= threshold ? n * base : (threshold * base) + ((n - threshold) * tier);
+    const commissionEarnedMonth = calcComm(productsSoldInMonth);
+
+    const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
+    const totalProductsSoldAllTime = sum(allSales, s => s.items.reduce((q, i) => q + i.qty, 0));
+    const commissionEarnedAllTime = calcComm(totalProductsSoldAllTime);
+    const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
+    const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
+    const balance = commissionEarnedAllTime - commissionPaid;
+
+    res.json({
+      consultant: { id: consultant.id, name: consultant.name, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
+      today: { ordersCount: todaySales.length, productsSold: sum(todaySales, s => s.items.reduce((q, i) => q + i.qty, 0)), revenue: sum(todaySales, s => parseFloat(s.totalPrice)) },
+      thisMonth: { ordersCount: monthSales.length, productsSold: productsSoldInMonth, revenue: sum(monthSales, s => parseFloat(s.totalPrice)), commissionEarned: commissionEarnedMonth },
+      allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, balance },
+      recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
+      recentPayments: payments.slice(0, 10),
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- PROVISION CONSULTANT LOGIN (admin only) ----
+app.post('/api/v1/consultants/:id/login', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    if (consultant.userId) return res.status(400).json({ error: 'Consultant already has a login' });
+
+    const { username, password } = req.body;
+    if (!username || typeof username !== 'string' || username.length < 3 || username.length > 50) return res.status(400).json({ error: 'Username must be 3-50 characters' });
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
+    if (!password || typeof password !== 'string' || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const existing = await prisma.user.findUnique({ where: { username } });
+    if (existing) return res.status(400).json({ error: 'Username already taken' });
+
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({ data: { username, password: hashed, name: consultant.name, role: 'consultant', companyId } });
+    await prisma.consultant.update({ where: { id: consultant.id }, data: { userId: user.id } });
+    res.status(201).json({ username, consultantId: consultant.id, userId: user.id });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/consultants/:id/reset-password', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant || !consultant.userId) return res.status(404).json({ error: 'Consultant login not found' });
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const hashed = await bcrypt.hash(password, 10);
+    await prisma.user.update({ where: { id: consultant.userId }, data: { password: hashed } });
+    res.json({ message: 'Password reset' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.delete('/api/v1/consultants/:id/login', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
+    if (!consultant || !consultant.userId) return res.status(404).json({ error: 'No login to revoke' });
+    const userId = consultant.userId;
+    await prisma.consultant.update({ where: { id: consultant.id }, data: { userId: null } });
+    await prisma.user.delete({ where: { id: userId } });
+    res.json({ message: 'Login revoked' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
