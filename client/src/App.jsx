@@ -18,6 +18,7 @@ import Consultants from './pages/Consultants';
 import Store from './pages/Store';
 import SuperadminPanel from './pages/SuperadminPanel';
 import ConsultantDashboard from './pages/ConsultantDashboard';
+import ConsultantStock from './pages/ConsultantStock';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -70,6 +71,7 @@ function AppRoutes() {
         <Route path="credit" element={<CreditTracker />} />
         <Route path="inventory" element={<AdminOnly><Inventory /></AdminOnly>} />
         <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
+        <Route path="my-stock" element={<ConsultantStock />} />
         <Route path="reports" element={<AdminOnly><Reports /></AdminOnly>} />
         <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
       </Route>

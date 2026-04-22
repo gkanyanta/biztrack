@@ -28,6 +28,7 @@ const superadminNavItems = [
 const consultantNavItems = [
   { path: '/', icon: FiHome, label: 'Dashboard' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
+  { path: '/my-stock', icon: FiPackage, label: 'My Stock' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
 ];
 

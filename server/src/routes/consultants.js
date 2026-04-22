@@ -24,6 +24,32 @@ router.get('/me', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+router.get('/me/stock', async (req, res) => {
+  try {
+    if (req.user.role !== 'consultant') return res.status(403).json({ error: 'Consultant access required' });
+    const prisma = req.app.locals.prisma;
+    const stock = await prisma.consultantStock.findMany({
+      where: { consultantId: req.user.consultantId, companyId: req.user.companyId, qty: { gt: 0 } },
+      include: { product: { select: { id: true, name: true, sku: true, sellingPrice: true, imageUrl: true } } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    res.json(stock);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.get('/me/transfers', async (req, res) => {
+  try {
+    if (req.user.role !== 'consultant') return res.status(403).json({ error: 'Consultant access required' });
+    const prisma = req.app.locals.prisma;
+    const transfers = await prisma.stockTransfer.findMany({
+      where: { consultantId: req.user.consultantId, companyId: req.user.companyId },
+      include: { product: { select: { name: true, sku: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(transfers);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 // ---- LIST CONSULTANTS (admin only) ----
 router.get('/', requireAdmin, async (req, res) => {
   try {

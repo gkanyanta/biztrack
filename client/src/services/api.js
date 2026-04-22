@@ -101,6 +101,8 @@ export const getConsultantStock = (consultantId) => api.get(`/consultants/${cons
 export const transferStockToConsultant = (consultantId, data) => api.post(`/consultants/${consultantId}/stock/transfer`, data);
 export const returnStockFromConsultant = (consultantId, data) => api.post(`/consultants/${consultantId}/stock/return`, data);
 export const getStockTransfers = (consultantId) => api.get(`/consultants/${consultantId}/stock/transfers`);
+export const getMyConsultantStock = () => api.get('/consultants/me/stock');
+export const getMyConsultantTransfers = () => api.get('/consultants/me/transfers');
 export const createConsultantLogin = (consultantId, data) => api.post(`/consultants/${consultantId}/login`, data);
 export const resetConsultantPassword = (consultantId, data) => api.post(`/consultants/${consultantId}/reset-password`, data);
 export const revokeConsultantLogin = (consultantId) => api.delete(`/consultants/${consultantId}/login`);
