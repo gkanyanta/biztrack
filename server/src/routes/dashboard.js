@@ -107,21 +107,36 @@ router.get('/', requireAdmin, async (req, res) => {
     const lastMonthRevenue = lastMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const lastMonthOrders = lastMonthSales.length;
 
+    // Active user-defined target: shortest period containing today
+    const activeTargets = await prisma.salesTarget.findMany({ where: { companyId, periodStart: { lte: now }, periodEnd: { gte: now } } });
+    activeTargets.sort((a, b) => (a.periodEnd - a.periodStart) - (b.periodEnd - b.periodStart));
+    const activeTarget = activeTargets[0] || null;
+
+    // Period window: user-defined target's period if set, otherwise current month
+    const periodStart = activeTarget ? new Date(activeTarget.periodStart) : thisMonthStart2;
+    const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const periodSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: periodStart, lte: periodEnd } }, include: { items: true } });
+    const periodRevenue = periodSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const periodOrders = periodSales.length;
+    const periodCOGS = periodSales.reduce((s, r) => s + saleCOGS(r), 0);
+
+    // Legacy "this month" still used by reinvestment math below
     const currentMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart2);
     const thisMonthRevenue2 = currentMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const thisMonthOrders = currentMonthSales.length;
     const thisMonthCOGS2 = currentMonthSales.reduce((s, r) => s + saleCOGS(r), 0);
 
-    const growthTarget = lastMonthRevenue * 3;
-    const growthProgress = growthTarget > 0 ? (thisMonthRevenue2 / growthTarget) * 100 : 0;
-    const remainingToTarget = Math.max(0, growthTarget - thisMonthRevenue2);
-    const dayOfMonth2 = now.getDate();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const daysLeft = daysInMonth - dayOfMonth2;
-    const dailyRevenueRate = dayOfMonth2 > 0 ? thisMonthRevenue2 / dayOfMonth2 : 0;
+    const growthTarget = activeTarget ? parseFloat(activeTarget.revenueTarget) : lastMonthRevenue * 3;
+    const growthProgress = growthTarget > 0 ? (periodRevenue / growthTarget) * 100 : 0;
+    const remainingToTarget = Math.max(0, growthTarget - periodRevenue);
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const periodTotalDays = Math.max(1, Math.ceil((periodEnd - periodStart) / MS_PER_DAY));
+    const periodDayIdx = Math.min(periodTotalDays, Math.max(1, Math.ceil((now - periodStart) / MS_PER_DAY)));
+    const daysLeft = Math.max(0, periodTotalDays - periodDayIdx);
+    const dailyRevenueRate = periodDayIdx > 0 ? periodRevenue / periodDayIdx : 0;
     const dailyTargetNeeded = daysLeft > 0 ? remainingToTarget / daysLeft : remainingToTarget;
-    const projectedMonthRevenue = dailyRevenueRate * daysInMonth;
-    const projectedMonthOrders = dayOfMonth2 > 0 ? Math.round((thisMonthOrders / dayOfMonth2) * daysInMonth) : 0;
+    const projectedMonthRevenue = dailyRevenueRate * periodTotalDays;
+    const projectedMonthOrders = periodDayIdx > 0 ? Math.round((periodOrders / periodDayIdx) * periodTotalDays) : 0;
 
     const avgProfitPerSale = thisMonthOrders > 0 ? (thisMonthRevenue2 - thisMonthCOGS2) / thisMonthOrders : 0;
     const currentRoas = adSpend > 0 ? totalRevenue / adSpend : 2;
@@ -134,6 +149,8 @@ router.get('/', requireAdmin, async (req, res) => {
 
     const growth = {
       thisMonthRevenue: thisMonthRevenue2, thisMonthOrders, lastMonthRevenue, lastMonthOrders,
+      periodRevenue, periodOrders, periodStart, periodEnd, periodTotalDays, periodDayIdx,
+      activeTarget: activeTarget ? { id: activeTarget.id, label: activeTarget.label, periodStart: activeTarget.periodStart, periodEnd: activeTarget.periodEnd, revenueTarget: activeTarget.revenueTarget, savingsRate: activeTarget.savingsRate } : null,
       growthTarget, growthProgress: Math.min(growthProgress, 100), remainingToTarget, dailyTargetNeeded, daysLeft,
       dailyRevenueRate, projectedMonthRevenue, projectedMonthOrders,
       reinvestment: {
@@ -142,8 +159,8 @@ router.get('/', requireAdmin, async (req, res) => {
       },
     };
 
-    // ---- DAILY SAVINGS (25% of daily gross profit) ----
-    const SAVINGS_RATE = 0.25;
+    // ---- DAILY SAVINGS (rate from active target, fallback 25% of daily gross profit) ----
+    const SAVINGS_RATE = activeTarget ? parseFloat(activeTarget.savingsRate) : 0.25;
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     const todaySales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: todayStart, lte: todayEnd } }, include: { items: true } });

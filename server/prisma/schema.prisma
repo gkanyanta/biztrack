@@ -30,6 +30,7 @@ model Company {
   commissionPayments CommissionPayment[]
   consultantStock    ConsultantStock[]
   stockTransfers     StockTransfer[]
+  salesTargets       SalesTarget[]
 }
 
 model User {
@@ -281,4 +282,19 @@ model StockTransfer {
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id])
   createdAt     DateTime   @default(now())
+}
+
+model SalesTarget {
+  id            String   @id @default(cuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id])
+  label         String?
+  periodStart   DateTime
+  periodEnd     DateTime
+  revenueTarget Decimal  @db.Decimal(12, 2)
+  savingsRate   Decimal  @default(0.25) @db.Decimal(5, 4)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([companyId, periodStart, periodEnd])
 }

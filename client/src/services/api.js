@@ -88,6 +88,13 @@ export const exportCSV = (type, params) => api.get('/reports/export/csv', {
   responseType: type === 'pnl' ? 'blob' : 'text'
 });
 
+// Sales Targets
+export const getTargets = () => api.get('/targets');
+export const getActiveTarget = () => api.get('/targets/active');
+export const createTarget = (data) => api.post('/targets', data);
+export const updateTarget = (id, data) => api.put(`/targets/${id}`, data);
+export const deleteTarget = (id) => api.delete(`/targets/${id}`);
+
 // Consultants
 export const getConsultants = (params) => api.get('/consultants', { params });
 export const getConsultant = (id) => api.get(`/consultants/${id}`);

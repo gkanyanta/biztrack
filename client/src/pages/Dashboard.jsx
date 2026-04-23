@@ -55,26 +55,32 @@ export default function Dashboard() {
       </div>
 
       {/* Growth Tracker - Top Priority */}
-      {g && (
+      {g && (() => {
+        const at = g.activeTarget;
+        const periodLabel = at ? (at.label || `${new Date(at.periodStart).toLocaleDateString()} – ${new Date(at.periodEnd).toLocaleDateString()}`) : 'This Month';
+        const revenue = at ? g.periodRevenue : g.thisMonthRevenue;
+        const orders = at ? g.periodOrders : g.thisMonthOrders;
+        return (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-5 text-white shadow-lg">
           <div className="flex items-center gap-2 mb-4">
             <FiTarget size={20} />
-            <h3 className="font-bold text-lg">200% Growth Tracker</h3>
+            <h3 className="font-bold text-lg">{at ? 'Target Tracker' : '200% Growth Tracker'}</h3>
+            <span className="ml-auto text-blue-100 text-xs font-medium bg-white/15 px-2 py-1 rounded-full">{periodLabel}</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div className="bg-white/15 rounded-lg p-3">
-              <p className="text-blue-100 text-xs">This Month Revenue</p>
-              <p className="text-xl font-bold">{formatMoney(g.thisMonthRevenue)}</p>
-              <p className="text-blue-200 text-xs">{g.thisMonthOrders} orders</p>
+              <p className="text-blue-100 text-xs">Revenue So Far</p>
+              <p className="text-xl font-bold">{formatMoney(revenue)}</p>
+              <p className="text-blue-200 text-xs">{orders} orders</p>
             </div>
             <div className="bg-white/15 rounded-lg p-3">
-              <p className="text-blue-100 text-xs">Target (3x Last Month)</p>
+              <p className="text-blue-100 text-xs">{at ? 'Target' : 'Target (3x Last Month)'}</p>
               <p className="text-xl font-bold">{formatMoney(g.growthTarget)}</p>
-              <p className="text-blue-200 text-xs">Last month: {formatMoney(g.lastMonthRevenue)}</p>
+              <p className="text-blue-200 text-xs">{at ? `${(parseFloat(at.savingsRate) * 100).toFixed(1)}% savings rate` : `Last month: ${formatMoney(g.lastMonthRevenue)}`}</p>
             </div>
             <div className="bg-white/15 rounded-lg p-3">
-              <p className="text-blue-100 text-xs">Projected This Month</p>
+              <p className="text-blue-100 text-xs">Projected (end of period)</p>
               <p className="text-xl font-bold">{formatMoney(g.projectedMonthRevenue)}</p>
               <p className="text-blue-200 text-xs">~{g.projectedMonthOrders} orders at current pace</p>
             </div>
@@ -83,7 +89,7 @@ export default function Dashboard() {
           {/* Progress bar */}
           <div className="mb-3">
             <div className="flex justify-between text-xs text-blue-100 mb-1">
-              <span>Progress to 200% growth target</span>
+              <span>Progress to target</span>
               <span>{g.growthProgress.toFixed(1)}%</span>
             </div>
             <div className="w-full bg-white/20 rounded-full h-3">
@@ -113,7 +119,8 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Daily Savings Guide */}
       {data.savings && (
