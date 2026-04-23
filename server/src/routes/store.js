@@ -69,10 +69,32 @@ router.get('/:slug/products', async (req, res) => {
     const where = { companyId: company.id, isActive: true, stock: { gt: 0 } };
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
-    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true }, orderBy: { name: 'asc' } });
+    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true } });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
     const imageIds = new Set(withImages.map(p => p.id));
-    const productsWithUrls = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
+
+    // Sales velocity over the last 90 days, aggregated per product
+    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const velocityRows = products.length
+      ? await prisma.saleItem.groupBy({
+          by: ['productId'],
+          where: { productId: { in: products.map(p => p.id) }, sale: { companyId: company.id, date: { gte: since } } },
+          _sum: { qty: true },
+        })
+      : [];
+    const velocityMap = new Map(velocityRows.map(v => [v.productId, v._sum.qty || 0]));
+
+    const productsWithUrls = products
+      .map(p => {
+        const onSale = p.originalPrice != null && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice);
+        return { ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null, _onSale: onSale, _velocity: velocityMap.get(p.id) || 0 };
+      })
+      .sort((a, b) => {
+        if (a._onSale !== b._onSale) return a._onSale ? -1 : 1;
+        if (a._velocity !== b._velocity) return b._velocity - a._velocity;
+        return a.name.localeCompare(b.name);
+      })
+      .map(({ _onSale, _velocity, ...rest }) => rest);
     const allProducts = await prisma.product.findMany({ where: { companyId: company.id, isActive: true, stock: { gt: 0 } }, select: { category: true }, distinct: ['category'] });
     const categories = allProducts.map(p => p.category).filter(Boolean).sort();
     res.json({ products: productsWithUrls, categories });

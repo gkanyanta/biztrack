@@ -28,11 +28,32 @@ router.get('/', async (req, res) => {
     let products = await prisma.product.findMany({
       where,
       select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
-      orderBy: { createdAt: 'desc' },
     });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
     const imageIds = new Set(withImages.map(p => p.id));
-    products = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
+
+    // Sales velocity over the last 90 days, aggregated per product
+    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const velocityRows = products.length
+      ? await prisma.saleItem.groupBy({
+          by: ['productId'],
+          where: { productId: { in: products.map(p => p.id) }, sale: { companyId, date: { gte: since } } },
+          _sum: { qty: true },
+        })
+      : [];
+    const velocityMap = new Map(velocityRows.map(v => [v.productId, v._sum.qty || 0]));
+
+    products = products
+      .map(p => {
+        const onSale = p.originalPrice != null && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice);
+        return { ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null, _onSale: onSale, _velocity: velocityMap.get(p.id) || 0 };
+      })
+      .sort((a, b) => {
+        if (a._onSale !== b._onSale) return a._onSale ? -1 : 1;
+        if (a._velocity !== b._velocity) return b._velocity - a._velocity;
+        return a.name.localeCompare(b.name);
+      })
+      .map(({ _onSale, _velocity, ...rest }) => rest);
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     if (req.user.role === 'consultant') products = stripForConsultant(products);
     res.json(products);
