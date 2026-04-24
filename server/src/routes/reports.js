@@ -5,6 +5,92 @@ const XLSX = require('xlsx');
 router.use(authenticate);
 router.use(requireAdmin);
 
+// Category → bucket mapping (mirrors client's format.js BUCKET_CATEGORIES)
+const BUCKETS = {
+  stock: ['Stock Purchase', 'Supplier Payments', 'Packaging'],
+  ads: ['Facebook Ads', 'WhatsApp Business'],
+  otherOps: ['Shipping', 'Data/Internet', 'Transport', 'Storage', 'Other'],
+  ownerDraw: ['Owner Draw'],
+  taxReserve: ['Tax Reserve'],
+};
+const CATEGORY_TO_BUCKET = {};
+for (const [bucket, cats] of Object.entries(BUCKETS)) {
+  for (const c of cats) CATEGORY_TO_BUCKET[c] = bucket;
+}
+const DEFAULT_TARGETS = { stock: 47, ads: 12, otherOps: 3, ownerDraw: 12, taxReserve: 5, profit: 21 };
+
+// Money splits for a given month: how revenue was allocated vs targets
+router.get('/money-splits', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const { month } = req.query; // YYYY-MM, defaults to current month
+    const now = new Date();
+    const [y, m] = (month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`).split('-').map(Number);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 1));
+
+    const [sales, expenses, settings] = await Promise.all([
+      prisma.sale.findMany({
+        where: { companyId, status: { in: ['Confirmed', 'Shipped', 'Delivered'] }, date: { gte: start, lt: end } },
+        include: { items: true },
+      }),
+      prisma.expense.findMany({ where: { companyId, date: { gte: start, lt: end } } }),
+      prisma.setting.findMany({ where: { companyId, key: { startsWith: 'alloc_' } } }),
+    ]);
+
+    const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + parseFloat(i.costPrice) * i.qty, 0), 0);
+
+    const actual = { stock: 0, ads: 0, otherOps: 0, ownerDraw: 0, taxReserve: 0, uncategorized: 0 };
+    const byCategory = {};
+    for (const e of expenses) {
+      const amt = parseFloat(e.amount);
+      byCategory[e.category] = (byCategory[e.category] || 0) + amt;
+      const bucket = CATEGORY_TO_BUCKET[e.category];
+      if (bucket) actual[bucket] += amt;
+      else actual.uncategorized += amt;
+    }
+
+    const targets = { ...DEFAULT_TARGETS };
+    for (const s of settings) {
+      const key = s.key.replace(/^alloc_/, '');
+      const val = parseFloat(s.value);
+      if (!isNaN(val) && targets[key] !== undefined) targets[key] = val;
+    }
+
+    const targetAmounts = {
+      stock: revenue * targets.stock / 100,
+      ads: revenue * targets.ads / 100,
+      otherOps: revenue * targets.otherOps / 100,
+      ownerDraw: revenue * targets.ownerDraw / 100,
+      taxReserve: revenue * targets.taxReserve / 100,
+      profit: revenue * targets.profit / 100,
+    };
+
+    // Profit actual (left over after everything else accounted for)
+    const spentTotal = actual.stock + actual.ads + actual.otherOps + actual.ownerDraw + actual.taxReserve + actual.uncategorized;
+    // Use COGS as stock "consumed" proxy (what was actually sold out of stock) for a more accurate profit view
+    const profitActual = revenue - cogs - actual.ads - actual.otherOps - actual.ownerDraw - actual.taxReserve - actual.uncategorized;
+
+    // Owner owed-back: if draws exceed target, the excess is treated as a loan from the business
+    const ownerOwedBack = Math.max(0, actual.ownerDraw - targetAmounts.ownerDraw);
+
+    res.json({
+      month: `${y}-${String(m).padStart(2, '0')}`,
+      revenue,
+      cogs,
+      targets,
+      targetAmounts,
+      actual,
+      byCategory,
+      profitActual,
+      ownerOwedBack,
+      spentTotal,
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 router.get('/pnl', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;

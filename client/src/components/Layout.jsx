@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import useDarkMode from '../hooks/useDarkMode';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart
 } from 'react-icons/fi';
 
 const adminNavItems = [
@@ -19,6 +19,7 @@ const adminNavItems = [
   { path: '/shipping', icon: FiTruck, label: 'Shipping' },
   { path: '/reports', icon: FiBarChart2, label: 'Reports' },
   { path: '/targets', icon: FiTarget, label: 'Targets' },
+  { path: '/money-splits', icon: FiPieChart, label: 'Money Splits' },
   { path: '/settings', icon: FiSettings, label: 'Settings' },
 ];
 

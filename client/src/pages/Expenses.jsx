@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getExpenses, createExpense, updateExpense, deleteExpense } from '../services/api';
+import { getExpenses, createExpense, updateExpense, deleteExpense, getMoneySplits } from '../services/api';
 import { formatMoney, formatDate, EXPENSE_CATEGORIES, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -49,6 +49,7 @@ export default function Expenses() {
     try {
       const data = { ...form, amount: parseFloat(form.amount) };
       data.date = data.date ? new Date(data.date).toISOString() : new Date().toISOString();
+      const isOwnerDraw = data.category === 'Owner Draw';
       if (editing) {
         await updateExpense(editing.id, data);
         toast.success('Expense updated');
@@ -58,6 +59,20 @@ export default function Expenses() {
       }
       setShowForm(false);
       loadExpenses();
+      // Owner-draw cap alert: warn if cumulative month draws exceed target
+      if (isOwnerDraw) {
+        try {
+          const d = new Date(data.date);
+          const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const { data: splits } = await getMoneySplits({ month: ym });
+          if (splits.ownerOwedBack > 0) {
+            toast(
+              `⚠ Owner draws this month (${splits.actual.ownerDraw.toFixed(0)}) are ${splits.ownerOwedBack.toFixed(0)} over target (${splits.targetAmounts.ownerDraw.toFixed(0)}). This is now a loan from the business.`,
+              { duration: 6000, icon: '⚠️' }
+            );
+          }
+        } catch { /* ignore — alert is best-effort */ }
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error saving expense');
     }

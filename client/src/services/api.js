@@ -79,6 +79,7 @@ export const getGrowthReport = () => api.get('/reports/growth');
 export const getPnlReport = (params) => api.get('/reports/pnl', { params });
 export const getSalesReport = (params) => api.get('/reports/sales', { params });
 export const getExpenseReport = (params) => api.get('/reports/expenses', { params });
+export const getMoneySplits = (params) => api.get('/reports/money-splits', { params });
 export const getProductReport = (params) => api.get('/reports/products', { params });
 export const getCustomerReport = (params) => api.get('/reports/customers', { params });
 export const getCreditReport = () => api.get('/reports/credit');

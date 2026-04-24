@@ -59,8 +59,30 @@ export const EXPENSE_CATEGORIES = [
   'Transport',
   'Storage',
   'Supplier Payments',
+  'Stock Purchase',
+  'Owner Draw',
+  'Tax Reserve',
   'Other'
 ];
+
+// Default monthly allocation targets (% of revenue). Editable per company via Settings.
+export const DEFAULT_ALLOCATION_TARGETS = {
+  stock: 47,
+  ads: 12,
+  otherOps: 3,
+  ownerDraw: 12,
+  taxReserve: 5,
+  profit: 21,
+};
+
+// Categories that roll up into each money-split bucket
+export const BUCKET_CATEGORIES = {
+  stock: ['Stock Purchase', 'Supplier Payments', 'Packaging'],
+  ads: ['Facebook Ads', 'WhatsApp Business'],
+  otherOps: ['Shipping', 'Data/Internet', 'Transport', 'Storage', 'Other'],
+  ownerDraw: ['Owner Draw'],
+  taxReserve: ['Tax Reserve'],
+};
 
 export const ORDER_STATUSES = ['Pending', 'Confirmed', 'Shipped', 'Delivered', 'Cancelled'];
 export const PAYMENT_STATUSES = ['Unpaid', 'Partial', 'Paid'];
