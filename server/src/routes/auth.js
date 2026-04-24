@@ -53,6 +53,12 @@ router.post('/login', validateLogin, async (req, res) => {
       return res.status(403).json({ error: 'Your company account has been suspended. Contact the system administrator.' });
     }
 
+    let consultantId = null;
+    if (user.role === 'consultant') {
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      consultantId = c?.id || null;
+    }
+
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, companyId: user.companyId },
       process.env.JWT_SECRET,
@@ -61,7 +67,7 @@ router.post('/login', validateLogin, async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null }
+      user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId }
     });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Something went wrong' });
@@ -76,7 +82,12 @@ router.get('/me', require('../middleware/auth').authenticate, async (req, res) =
       include: { company: true }
     });
     if (!user) return res.status(401).json({ error: 'User not found' });
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null });
+    let consultantId = null;
+    if (user.role === 'consultant') {
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      consultantId = c?.id || null;
+    }
+    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }

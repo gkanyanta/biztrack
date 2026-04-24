@@ -38,7 +38,7 @@ router.get('/', async (req, res) => {
       p.stockLogs.forEach(log => {
         if (log.change > 0) {
           totalStocked += log.change;
-        } else if (log.reason === 'Sale' || log.reason === 'sale') {
+        } else if (/^sale\b/i.test(log.reason || '')) {
           totalSold += Math.abs(log.change);
         }
       });

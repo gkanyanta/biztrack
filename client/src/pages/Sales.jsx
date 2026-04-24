@@ -60,12 +60,17 @@ export default function Sales() {
     if (!isConsultant) getConsultants({ active: 'true' }).then(res => setConsultants(res.data)).catch(() => {});
   }, [isConsultant]);
 
+  const defaultStockSource = () => {
+    if (isConsultant) return user?.consultantId || '';
+    return form.consultantId || '';
+  };
+
   const addProduct = (product) => {
     const existing = orderItems.find(i => i.productId === product.id);
     if (existing) {
       setOrderItems(orderItems.map(i => i.productId === product.id ? { ...i, qty: i.qty + 1 } : i));
     } else {
-      setOrderItems([...orderItems, { productId: product.id, name: product.name, sku: product.sku, qty: 1, unitPrice: parseFloat(product.sellingPrice), stock: product.stock, serialNumber: '' }]);
+      setOrderItems([...orderItems, { productId: product.id, name: product.name, sku: product.sku, qty: 1, unitPrice: parseFloat(product.sellingPrice), stock: product.stock, serialNumber: '', stockSourceConsultantId: defaultStockSource() }]);
     }
     setShowProductPicker(false);
     setProductSearch('');
@@ -76,6 +81,7 @@ export default function Sales() {
       if (i !== idx) return item;
       if (field === 'qty') return { ...item, qty: parseInt(value) || 1 };
       if (field === 'serialNumber') return { ...item, serialNumber: value };
+      if (field === 'stockSourceConsultantId') return { ...item, stockSourceConsultantId: value };
       return { ...item, [field]: parseFloat(value) || 0 };
     }));
   };
@@ -94,7 +100,7 @@ export default function Sales() {
   const openEdit = (sale) => {
     setEditing(sale);
     setOrderItems((sale.items || []).map(i => ({
-      productId: i.productId, name: i.product?.name || 'Product', sku: i.product?.sku || '', qty: i.qty, unitPrice: parseFloat(i.unitPrice), stock: i.product?.stock || 0, serialNumber: i.serialNumber || ''
+      productId: i.productId, name: i.product?.name || 'Product', sku: i.product?.sku || '', qty: i.qty, unitPrice: parseFloat(i.unitPrice), stock: i.product?.stock || 0, serialNumber: i.serialNumber || '', stockSourceConsultantId: i.stockSourceConsultantId || ''
     })));
     setForm({
       customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
@@ -123,7 +129,7 @@ export default function Sales() {
     try {
       const data = {
         ...form,
-        items: orderItems.map(i => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice, serialNumber: i.serialNumber || null })),
+        items: orderItems.map(i => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice, serialNumber: i.serialNumber || null, stockSourceConsultantId: i.stockSourceConsultantId || null })),
         shippingCost: parseFloat(form.shippingCost) || 0,
         shippingCharge: parseFloat(form.shippingCharge) || 0,
         discount: parseFloat(form.discount) || 0,
@@ -353,6 +359,11 @@ export default function Sales() {
       {/* Record/Edit Sale Modal */}
       <Modal isOpen={showForm} onClose={() => { setShowForm(false); setOrderItems([]); }} title={editing ? 'Edit Sale' : 'New Order'} size="lg">
         <form onSubmit={handleSubmit} className="space-y-4">
+          {editing && ['Confirmed', 'Shipped', 'Delivered'].includes(editing.status) && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2">
+              This sale is already {editing.status.toLowerCase()} — stock will be reconciled on save. Items will be refunded to their original source and re-deducted from the selected source.
+            </div>
+          )}
           {/* Line Items */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -391,6 +402,21 @@ export default function Sales() {
                         className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded">
                         <FiCamera size={14} />
                       </button>
+                    </div>
+                    <div className="flex items-center gap-1 pl-1">
+                      <span className="text-xs text-gray-400">Stock from:</span>
+                      <select
+                        value={item.stockSourceConsultantId || ''}
+                        onChange={e => updateItem(idx, 'stockSourceConsultantId', e.target.value)}
+                        className="flex-1 border border-gray-200 rounded px-2 py-0.5 text-xs outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                        title="Which stock to deduct this item from"
+                      >
+                        <option value="">Main stock</option>
+                        {isConsultant
+                          ? (user?.consultantId ? <option value={user.consultantId}>My stock</option> : null)
+                          : consultants.map(c => <option key={c.id} value={c.id}>{c.name}</option>)
+                        }
+                      </select>
                     </div>
                   </div>
                 ))}
@@ -571,6 +597,7 @@ export default function Sales() {
                       <span className="font-medium text-gray-800">{item.product?.name || 'Product'}</span>
                       <span className="text-gray-400 ml-2">x{item.qty} @ {formatMoney(item.unitPrice)}</span>
                       {item.serialNumber && <div className="text-xs text-gray-500">S/N: {item.serialNumber}</div>}
+                      <div className="text-xs text-gray-500">Stock: {item.stockSourceConsultant?.name || 'Main'}</div>
                     </div>
                     <span className="font-medium">{formatMoney(item.totalPrice)}</span>
                   </div>

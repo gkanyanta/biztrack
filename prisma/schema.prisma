@@ -130,6 +130,8 @@ model SaleItem {
   costPrice    Decimal @db.Decimal(10, 2)
   totalPrice   Decimal @db.Decimal(10, 2)
   serialNumber String?
+  stockSourceConsultantId String?
+  stockSourceConsultant   Consultant? @relation("StockSource", fields: [stockSourceConsultantId], references: [id])
 }
 
 model OrderStatusLog {
@@ -238,6 +240,7 @@ model Consultant {
   commissionPayments CommissionPayment[]
   stock              ConsultantStock[]
   stockTransfers     StockTransfer[]
+  saleItemSources    SaleItem[]          @relation("StockSource")
 }
 
 model CommissionPayment {
