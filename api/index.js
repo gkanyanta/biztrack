@@ -245,8 +245,13 @@ app.post('/api/v1/auth/login', authLimiter, validateLogin, async (req, res) => {
     if (user.company && !user.company.isActive) {
       return res.status(403).json({ error: 'Your company account has been suspended. Contact the system administrator.' });
     }
+    let consultantId = null;
+    if (user.role === 'consultant') {
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      consultantId = c?.id || null;
+    }
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, companyId: user.companyId }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null } });
+    res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId } });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -254,7 +259,12 @@ app.get('/api/v1/auth/me', authenticate, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user.id }, include: { company: true } });
     if (!user) return res.status(401).json({ error: 'User not found' });
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null });
+    let consultantId = null;
+    if (user.role === 'consultant') {
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      consultantId = c?.id || null;
+    }
+    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -379,6 +389,60 @@ app.post('/api/v1/products/restock', authenticate, requireAdmin, async (req, res
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- Stock source helpers (mirror server/src/routes/sales.js) ----
+async function deductStockForItem(db, item, sale, companyId) {
+  const sourceId = item.stockSourceConsultantId;
+  if (sourceId) {
+    const cStock = await db.consultantStock.findUnique({ where: { consultantId_productId: { consultantId: sourceId, productId: item.productId } } });
+    if (!cStock || cStock.qty < item.qty) {
+      const consultant = await db.consultant.findUnique({ where: { id: sourceId }, select: { name: true } });
+      const err = new Error(`${consultant?.name || 'Consultant'} has ${cStock?.qty || 0} units; ${item.qty} needed`);
+      err.status = 400;
+      throw err;
+    }
+    await db.consultantStock.update({ where: { consultantId_productId: { consultantId: sourceId, productId: item.productId } }, data: { qty: { decrement: item.qty } } });
+    const consultant = await db.consultant.findUnique({ where: { id: sourceId }, select: { name: true } });
+    await db.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: `Sale (from ${consultant?.name || 'consultant'})`, saleId: sale.id, companyId } });
+    return;
+  }
+  if (sale.consultantId) {
+    const cStock = await db.consultantStock.findUnique({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } } });
+    if (cStock && cStock.qty >= item.qty) {
+      await db.consultantStock.update({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } }, data: { qty: { decrement: item.qty } } });
+      await db.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale (consultant stock)', saleId: sale.id, companyId } });
+      return;
+    }
+  }
+  await db.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
+  await db.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale (from Main)', saleId: sale.id, companyId } });
+}
+
+async function refundStockForItem(db, item, sale, companyId, reason) {
+  const sourceId = item.stockSourceConsultantId || sale.consultantId || null;
+  if (sourceId) {
+    await db.consultantStock.upsert({
+      where: { consultantId_productId: { consultantId: sourceId, productId: item.productId } },
+      update: { qty: { increment: item.qty } },
+      create: { consultantId: sourceId, productId: item.productId, qty: item.qty, companyId }
+    });
+    const consultant = await db.consultant.findUnique({ where: { id: sourceId }, select: { name: true } });
+    await db.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: `${reason} (to ${consultant?.name || 'consultant'})`, saleId: sale.id, companyId } });
+    return;
+  }
+  await db.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
+  await db.stockLog.create({ data: { productId: item.productId, change: item.qty, reason, saleId: sale.id, companyId } });
+}
+
+function normalizeItemStockSource(item, user) {
+  const src = item.stockSourceConsultantId || null;
+  if (user.role === 'consultant' && src && src !== user.consultantId) {
+    const err = new Error('Consultants can only sell from their own stock or request Main fulfillment');
+    err.status = 403;
+    throw err;
+  }
+  return src;
+}
+
 // ---- SALES ----
 app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   try {
@@ -422,7 +486,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
     if (consultantId) where.consultantId = consultantId;
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true, consultant: true }, orderBy: { createdAt: 'desc' } });
+    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true }, orderBy: { createdAt: 'desc' } });
     res.json(sales);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -432,7 +496,7 @@ app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     if (req.user.role === 'consultant') {
       sale.items = (sale.items || []).map(({ costPrice, ...rest }) => rest);
@@ -458,14 +522,20 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
     }
 
     // Build sale items
-    const saleItems = itemsInput.map(item => {
-      const product = productMap[item.productId];
-      const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
-      const costPrice = parseFloat(product.costPrice);
-      const qty = parseInt(item.qty);
-      const totalPrice = qty * unitPrice;
-      return { productId: item.productId, qty, unitPrice, costPrice, totalPrice, serialNumber: item.serialNumber || null };
-    });
+    let saleItems;
+    try {
+      saleItems = itemsInput.map(item => {
+        const product = productMap[item.productId];
+        const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
+        const costPrice = parseFloat(product.costPrice);
+        const qty = parseInt(item.qty);
+        const totalPrice = qty * unitPrice;
+        const stockSourceConsultantId = normalizeItemStockSource(item, req.user);
+        return { productId: item.productId, qty, unitPrice, costPrice, totalPrice, serialNumber: item.serialNumber || null, stockSourceConsultantId };
+      });
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message });
+    }
 
     const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
     const shippingCharge = parseFloat(data.shippingCharge) || 0;
@@ -501,29 +571,34 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
       else paymentStatus = 'Unpaid';
     }
 
-    const sale = await prisma.sale.create({
-      data: {
-        orderNumber, date: data.date ? new Date(data.date) : new Date(), totalPrice,
-        shippingCost, shippingCharge, discount,
-        status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
-        paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
-        consultantId: data.consultantId || null,
-        customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
-        companyId,
-        items: { create: saleItems }
-      },
-      include: { items: { include: { product: true } }, customer: true, consultant: true }
-    });
-
-    if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
-      for (const item of sale.items) {
-        await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
-        await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
-      }
+    try {
+      const sale = await prisma.$transaction(async (tx) => {
+        const created = await tx.sale.create({
+          data: {
+            orderNumber, date: data.date ? new Date(data.date) : new Date(), totalPrice,
+            shippingCost, shippingCharge, discount,
+            status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
+            paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
+            consultantId: data.consultantId || null,
+            customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
+            companyId,
+            items: { create: saleItems }
+          },
+          include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true }
+        });
+        if (['Confirmed', 'Shipped', 'Delivered'].includes(created.status)) {
+          for (const item of created.items) {
+            await deductStockForItem(tx, item, created, companyId);
+          }
+        }
+        await tx.orderStatusLog.create({ data: { saleId: created.id, fromStatus: 'New', toStatus: created.status, companyId } });
+        return created;
+      }, { timeout: 20000 });
+      res.status(201).json(sale);
+    } catch (e) {
+      console.error(e);
+      return res.status(e.status || 500).json({ error: e.message || 'Something went wrong' });
     }
-
-    await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: 'New', toStatus: sale.status, companyId } });
-    res.status(201).json(sale);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -557,25 +632,27 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
     };
     Object.keys(data).forEach(k => data[k] === undefined && delete data[k]);
 
-    // If items provided, delete old and create new
+    // Build new items (no DB writes yet — validate before touching anything)
+    let newSaleItems = null;
     if (raw.items && raw.items.length > 0) {
       const productIds = raw.items.map(i => i.productId);
       const products = await prisma.product.findMany({ where: { id: { in: productIds }, companyId } });
       const productMap = {}; products.forEach(p => { productMap[p.id] = p; });
-      for (const item of raw.items) {
-        if (!productMap[item.productId]) return res.status(400).json({ error: `Product ${item.productId} not found` });
+      try {
+        newSaleItems = raw.items.map(item => {
+          const product = productMap[item.productId];
+          if (!product) { const err = new Error(`Product not found: ${item.productId}`); err.status = 400; throw err; }
+          const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
+          const costPrice = parseFloat(product.costPrice);
+          const qty = parseInt(item.qty);
+          const totalPrice = qty * unitPrice;
+          const stockSourceConsultantId = normalizeItemStockSource(item, req.user);
+          return { saleId: req.params.id, productId: item.productId, qty, unitPrice, costPrice, totalPrice, serialNumber: item.serialNumber || null, stockSourceConsultantId };
+        });
+      } catch (e) {
+        return res.status(e.status || 400).json({ error: e.message });
       }
-      const saleItems = raw.items.map(item => {
-        const product = productMap[item.productId];
-        const unitPrice = parseFloat(item.unitPrice) || parseFloat(product.sellingPrice);
-        const costPrice = parseFloat(product.costPrice);
-        const qty = parseInt(item.qty);
-        const totalPrice = qty * unitPrice;
-        return { productId: item.productId, qty, unitPrice, costPrice, totalPrice, serialNumber: item.serialNumber || null };
-      });
-      await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
-      await prisma.saleItem.createMany({ data: saleItems.map(i => ({ ...i, saleId: req.params.id })) });
-      const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
+      const itemsTotal = newSaleItems.reduce((sum, i) => sum + i.totalPrice, 0);
       const shippingCharge = data.shippingCharge !== undefined ? data.shippingCharge : parseFloat(existing.shippingCharge);
       const discount = data.discount !== undefined ? data.discount : parseFloat(existing.discount);
       data.totalPrice = itemsTotal + shippingCharge - discount;
@@ -605,8 +682,33 @@ app.put('/api/v1/sales/:id', authenticate, async (req, res) => {
       }
     }
 
-    const sale = await prisma.sale.update({ where: { id: req.params.id }, data, include: { items: { include: { product: true } }, customer: true, consultant: true } });
-    res.json(sale);
+    const deductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
+    const wasDeducted = deductStatuses.includes(existing.status);
+
+    try {
+      const sale = await prisma.$transaction(async (tx) => {
+        if (newSaleItems) {
+          if (wasDeducted) {
+            for (const oldItem of existing.items) {
+              await refundStockForItem(tx, oldItem, existing, companyId, 'Edit Revert');
+            }
+          }
+          await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
+          await tx.saleItem.createMany({ data: newSaleItems });
+          if (wasDeducted) {
+            const saleCtx = { id: req.params.id, consultantId: data.consultantId !== undefined ? data.consultantId : existing.consultantId };
+            for (const newItem of newSaleItems) {
+              await deductStockForItem(tx, newItem, saleCtx, companyId);
+            }
+          }
+        }
+        return tx.sale.update({ where: { id: req.params.id }, data, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true } });
+      }, { timeout: 20000 });
+      res.json(sale);
+    } catch (e) {
+      console.error(e);
+      return res.status(e.status || 500).json({ error: e.message || 'Something went wrong' });
+    }
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -622,31 +724,27 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
     const stockDeductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
     const wasDeducted = stockDeductStatuses.includes(oldStatus);
     const shouldDeduct = stockDeductStatuses.includes(status);
-    if (!wasDeducted && shouldDeduct) {
-      for (const item of sale.items) {
-        let deductedFromConsultant = false;
-        if (sale.consultantId) {
-          const cStock = await prisma.consultantStock.findUnique({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } } });
-          if (cStock && cStock.qty >= item.qty) {
-            await prisma.consultantStock.update({ where: { consultantId_productId: { consultantId: sale.consultantId, productId: item.productId } }, data: { qty: { decrement: item.qty } } });
-            await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale (consultant stock)', saleId: sale.id, companyId } });
-            deductedFromConsultant = true;
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        if (!wasDeducted && shouldDeduct) {
+          for (const item of sale.items) {
+            await deductStockForItem(tx, item, sale, companyId);
+          }
+        } else if (wasDeducted && !shouldDeduct) {
+          const reason = status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert';
+          for (const item of sale.items) {
+            await refundStockForItem(tx, item, sale, companyId, reason);
           }
         }
-        if (!deductedFromConsultant) {
-          await prisma.product.update({ where: { id: item.productId }, data: { stock: { decrement: item.qty } } });
-          await prisma.stockLog.create({ data: { productId: item.productId, change: -item.qty, reason: 'Sale', saleId: sale.id, companyId } });
-        }
-      }
-    } else if (wasDeducted && !shouldDeduct) {
-      for (const item of sale.items) {
-        await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
-        await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: status === 'Cancelled' ? 'Cancelled Order' : 'Status Revert', saleId: sale.id, companyId } });
-      }
+        const result = await tx.sale.update({ where: { id: req.params.id }, data: { status }, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } } } });
+        await tx.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
+        return result;
+      }, { timeout: 20000 });
+      res.json(updated);
+    } catch (e) {
+      console.error(e);
+      return res.status(e.status || 500).json({ error: e.message || 'Something went wrong' });
     }
-    const updated = await prisma.sale.update({ where: { id: req.params.id }, data: { status }, include: { items: { include: { product: true } }, customer: true, statusHistory: { orderBy: { createdAt: 'desc' } } } });
-    await prisma.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
-    res.json(updated);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -656,18 +754,24 @@ app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
-    if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
-      for (const item of sale.items) {
-        await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.qty } } });
-        await prisma.stockLog.create({ data: { productId: item.productId, change: item.qty, reason: 'Order Deleted', saleId: sale.id, companyId } });
-      }
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {
+          for (const item of sale.items) {
+            await refundStockForItem(tx, item, sale, companyId, 'Order Deleted');
+          }
+        }
+        await tx.creditPayment.deleteMany({ where: { saleId: req.params.id } });
+        await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
+        await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+        await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
+        await tx.sale.delete({ where: { id: req.params.id } });
+      }, { timeout: 20000 });
+      return res.json({ message: 'Sale deleted' });
+    } catch (e) {
+      console.error(e);
+      return res.status(e.status || 500).json({ error: e.message || 'Something went wrong' });
     }
-    await prisma.creditPayment.deleteMany({ where: { saleId: req.params.id } });
-    await prisma.debtReminder.deleteMany({ where: { saleId: req.params.id } });
-    await prisma.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
-    await prisma.saleItem.deleteMany({ where: { saleId: req.params.id } });
-    await prisma.sale.delete({ where: { id: req.params.id } });
-    res.json({ message: 'Deleted' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -687,7 +791,7 @@ app.post('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
     const newAmountPaid = parseFloat(sale.amountPaid) + amount;
     const totalPrice = parseFloat(sale.totalPrice);
     const paymentStatus = newAmountPaid >= totalPrice ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
-    const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const updated = await prisma.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus }, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     res.json(updated);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -735,7 +839,7 @@ app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const settingsMap = {};
@@ -803,7 +907,7 @@ app.get('/api/v1/customers', authenticate, requireAdmin, async (req, res) => {
 app.get('/api/v1/customers/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const customer = await prisma.customer.findFirst({ where: { id: req.params.id, companyId }, include: { sales: { include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } } } });
+    const customer = await prisma.customer.findFirst({ where: { id: req.params.id, companyId }, include: { sales: { include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } } }, orderBy: { date: 'desc' } } } });
     if (!customer) return res.status(404).json({ error: 'Not found' });
     res.json(customer);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -812,7 +916,7 @@ app.get('/api/v1/customers/:id', authenticate, requireAdmin, async (req, res) =>
 app.get('/api/v1/customers/:id/orders', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    res.json(await prisma.sale.findMany({ where: { customerId: req.params.id, companyId }, include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } }));
+    res.json(await prisma.sale.findMany({ where: { customerId: req.params.id, companyId }, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } } }, orderBy: { date: 'desc' } }));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -1112,7 +1216,7 @@ app.get('/api/v1/reports/sales', authenticate, requireAdmin, async (req, res) =>
     const where = { companyId };
     if (status) where.status = status; if (productId) where.items = { some: { productId } }; if (customerId) where.customerId = customerId;
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true } }, customer: true }, orderBy: { date: 'desc' } });
+    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true }, orderBy: { date: 'desc' } });
     const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0) };
     res.json({ sales, summary });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -1138,7 +1242,7 @@ app.get('/api/v1/reports/products', authenticate, requireAdmin, async (req, res)
     const { from, to } = req.query;
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: { include: { product: true } } } });
+    const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } } } });
     const productMap = {};
     sales.forEach(s => { s.items.forEach(item => { const pid = item.productId; if (!productMap[pid]) productMap[pid] = { id: pid, name: item.product.name, sku: item.product.sku, revenue: 0, qtySold: 0, profit: 0, orders: 0 }; productMap[pid].revenue += parseFloat(item.totalPrice); productMap[pid].qtySold += item.qty; productMap[pid].profit += parseFloat(item.totalPrice) - (parseFloat(item.costPrice) * item.qty); productMap[pid].orders += 1; }); });
     res.json(Object.values(productMap).sort((a, b) => b.revenue - a.revenue));
@@ -1238,7 +1342,7 @@ app.get('/api/v1/reports/export/csv', authenticate, requireAdmin, async (req, re
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
     let data = []; let filename = 'export.csv';
     if (type === 'sales') {
-      const sales = await prisma.sale.findMany({ where: dateFilter, include: { items: { include: { product: true } } }, orderBy: { date: 'desc' } });
+      const sales = await prisma.sale.findMany({ where: dateFilter, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } } }, orderBy: { date: 'desc' } });
       sales.forEach(s => { s.items.forEach(item => { data.push({ 'Order #': s.orderNumber, Date: s.date.toISOString().slice(0, 10), Product: item.product.name, Qty: item.qty, 'Unit Price': parseFloat(item.unitPrice), 'Item Total': parseFloat(item.totalPrice), 'Sale Total': parseFloat(s.totalPrice), Status: s.status, Customer: s.customerName || '' }); }); });
       filename = 'sales-report.csv';
     } else if (type === 'expenses') {
@@ -1328,7 +1432,7 @@ app.get('/api/v1/inventory', authenticate, requireAdmin, async (req, res) => {
       let totalStocked = 0, totalSold = 0;
       p.stockLogs.forEach(log => {
         if (log.change > 0) totalStocked += log.change;
-        else if (log.reason === 'Sale' || log.reason === 'sale') totalSold += Math.abs(log.change);
+        else if (/^sale\b/i.test(log.reason || '')) totalSold += Math.abs(log.change);
       });
       const costPrice = parseFloat(p.costPrice) || 0;
       const sellingPrice = parseFloat(p.sellingPrice) || 0;
@@ -2012,6 +2116,156 @@ app.delete('/api/v1/consultants/:id/login', authenticate, requireAdmin, async (r
     await prisma.consultant.update({ where: { id: consultant.id }, data: { userId: null } });
     await prisma.user.delete({ where: { id: userId } });
     res.json({ message: 'Login revoked' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- TARGETS ----
+function parseTargetBody(body) {
+  const data = {};
+  if (body.label !== undefined) data.label = body.label || null;
+  if (body.periodStart !== undefined) data.periodStart = new Date(body.periodStart);
+  if (body.periodEnd !== undefined) data.periodEnd = new Date(body.periodEnd + (body.periodEnd.length === 10 ? 'T23:59:59.999Z' : ''));
+  if (body.revenueTarget !== undefined) data.revenueTarget = body.revenueTarget;
+  if (body.savingsRate !== undefined) data.savingsRate = body.savingsRate;
+  return data;
+}
+function validateTarget(data, { partial } = { partial: false }) {
+  if (!partial || data.periodStart !== undefined || data.periodEnd !== undefined) {
+    if (!data.periodStart || !data.periodEnd || isNaN(data.periodStart) || isNaN(data.periodEnd)) return 'Valid periodStart and periodEnd are required';
+    if (data.periodStart >= data.periodEnd) return 'periodStart must be before periodEnd';
+  }
+  if (!partial || data.revenueTarget !== undefined) {
+    const n = parseFloat(data.revenueTarget);
+    if (isNaN(n) || n < 0) return 'revenueTarget must be a non-negative number';
+  }
+  if (data.savingsRate !== undefined) {
+    const r = parseFloat(data.savingsRate);
+    if (isNaN(r) || r < 0 || r > 1) return 'savingsRate must be between 0 and 1';
+  }
+  return null;
+}
+
+app.get('/api/v1/targets', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const targets = await prisma.salesTarget.findMany({ where: { companyId }, orderBy: { periodStart: 'desc' } });
+    res.json(targets);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/targets/active', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const now = new Date();
+    const matches = await prisma.salesTarget.findMany({ where: { companyId, periodStart: { lte: now }, periodEnd: { gte: now } } });
+    if (!matches.length) return res.json(null);
+    matches.sort((a, b) => (a.periodEnd - a.periodStart) - (b.periodEnd - b.periodStart));
+    res.json(matches[0]);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/targets', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const data = parseTargetBody(req.body);
+    const err = validateTarget(data);
+    if (err) return res.status(400).json({ error: err });
+    const target = await prisma.salesTarget.create({ data: { ...data, companyId } });
+    res.status(201).json(target);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.put('/api/v1/targets/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const existing = await prisma.salesTarget.findFirst({ where: { id: req.params.id, companyId } });
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const data = parseTargetBody(req.body);
+    const err = validateTarget({ ...existing, ...data }, { partial: true });
+    if (err) return res.status(400).json({ error: err });
+    const target = await prisma.salesTarget.update({ where: { id: req.params.id }, data });
+    res.json(target);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.delete('/api/v1/targets/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const existing = await prisma.salesTarget.findFirst({ where: { id: req.params.id, companyId } });
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    await prisma.salesTarget.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Target deleted' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- MONEY SPLITS (monthly revenue allocation report) ----
+const MONEY_BUCKETS = {
+  stock: ['Stock Purchase', 'Supplier Payments', 'Packaging'],
+  ads: ['Facebook Ads', 'WhatsApp Business'],
+  otherOps: ['Shipping', 'Data/Internet', 'Transport', 'Storage', 'Other'],
+  ownerDraw: ['Owner Draw'],
+  taxReserve: ['Tax Reserve'],
+};
+const CATEGORY_TO_BUCKET = {};
+for (const [bucket, cats] of Object.entries(MONEY_BUCKETS)) {
+  for (const c of cats) CATEGORY_TO_BUCKET[c] = bucket;
+}
+const DEFAULT_MONEY_TARGETS = { stock: 47, ads: 12, otherOps: 3, ownerDraw: 12, taxReserve: 5, profit: 21 };
+
+app.get('/api/v1/reports/money-splits', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { month } = req.query;
+    const now = new Date();
+    const [y, m] = (month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`).split('-').map(Number);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = new Date(Date.UTC(y, m, 1));
+
+    const [sales, expenses, settings] = await Promise.all([
+      prisma.sale.findMany({
+        where: { companyId, status: { in: ['Confirmed', 'Shipped', 'Delivered'] }, date: { gte: start, lt: end } },
+        include: { items: true },
+      }),
+      prisma.expense.findMany({ where: { companyId, date: { gte: start, lt: end } } }),
+      prisma.setting.findMany({ where: { companyId, key: { startsWith: 'alloc_' } } }),
+    ]);
+
+    const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
+    const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + parseFloat(i.costPrice) * i.qty, 0), 0);
+
+    const actual = { stock: 0, ads: 0, otherOps: 0, ownerDraw: 0, taxReserve: 0, uncategorized: 0 };
+    const byCategory = {};
+    for (const e of expenses) {
+      const amt = parseFloat(e.amount);
+      byCategory[e.category] = (byCategory[e.category] || 0) + amt;
+      const bucket = CATEGORY_TO_BUCKET[e.category];
+      if (bucket) actual[bucket] += amt;
+      else actual.uncategorized += amt;
+    }
+
+    const targets = { ...DEFAULT_MONEY_TARGETS };
+    for (const s of settings) {
+      const key = s.key.replace(/^alloc_/, '');
+      const val = parseFloat(s.value);
+      if (!isNaN(val) && targets[key] !== undefined) targets[key] = val;
+    }
+    const targetAmounts = {
+      stock: revenue * targets.stock / 100,
+      ads: revenue * targets.ads / 100,
+      otherOps: revenue * targets.otherOps / 100,
+      ownerDraw: revenue * targets.ownerDraw / 100,
+      taxReserve: revenue * targets.taxReserve / 100,
+      profit: revenue * targets.profit / 100,
+    };
+    const spentTotal = actual.stock + actual.ads + actual.otherOps + actual.ownerDraw + actual.taxReserve + actual.uncategorized;
+    const profitActual = revenue - cogs - actual.ads - actual.otherOps - actual.ownerDraw - actual.taxReserve - actual.uncategorized;
+    const ownerOwedBack = Math.max(0, actual.ownerDraw - targetAmounts.ownerDraw);
+
+    res.json({
+      month: `${y}-${String(m).padStart(2, '0')}`,
+      revenue, cogs, targets, targetAmounts, actual, byCategory,
+      profitActual, ownerOwedBack, spentTotal,
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
