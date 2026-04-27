@@ -31,14 +31,29 @@ export default function Store() {
   const [submitting, setSubmitting] = useState(false);
   const [payOnline, setPayOnline] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({ customerName: '', customerPhone: '', customerCity: '', deliveryAddress: '', notes: '' });
+  // 'idle' | 'loading' | 'ready' | 'error'
+  const [lencoSdkState, setLencoSdkState] = useState('idle');
 
-  // Load Lenco SDK
+  // Load Lenco SDK with explicit ready/error tracking
   useEffect(() => {
-    if (document.getElementById('lenco-sdk')) return;
+    if (typeof window.LencoPay !== 'undefined') { setLencoSdkState('ready'); return; }
+    const existing = document.getElementById('lenco-sdk');
+    if (existing) {
+      // Another instance already injected the tag — wait for it
+      setLencoSdkState('loading');
+      const check = setInterval(() => {
+        if (typeof window.LencoPay !== 'undefined') { setLencoSdkState('ready'); clearInterval(check); }
+      }, 200);
+      const fail = setTimeout(() => { clearInterval(check); if (typeof window.LencoPay === 'undefined') setLencoSdkState('error'); }, 15000);
+      return () => { clearInterval(check); clearTimeout(fail); };
+    }
+    setLencoSdkState('loading');
     const script = document.createElement('script');
     script.id = 'lenco-sdk';
     script.src = 'https://pay.lenco.co/js/v1/inline.js';
     script.async = true;
+    script.onload = () => setLencoSdkState(typeof window.LencoPay !== 'undefined' ? 'ready' : 'error');
+    script.onerror = () => setLencoSdkState('error');
     document.head.appendChild(script);
   }, []);
 
@@ -91,42 +106,87 @@ export default function Store() {
     setShowCheckout(true);
   };
 
+  // Wait for the Lenco SDK to finish loading. Resolves true if ready, false on timeout/error.
+  const waitForLencoSdk = (timeoutMs = 8000) => new Promise(resolve => {
+    if (typeof window.LencoPay !== 'undefined') return resolve(true);
+    if (lencoSdkState === 'error') return resolve(false);
+    const start = Date.now();
+    const check = setInterval(() => {
+      if (typeof window.LencoPay !== 'undefined') { clearInterval(check); resolve(true); }
+      else if (Date.now() - start > timeoutMs) { clearInterval(check); resolve(false); }
+    }, 100);
+  });
+
   const handleCheckout = async (e) => {
     e.preventDefault();
     setSubmitting(true);
+
+    // Guard: if user picked Pay Online, don't even create the order until the SDK is loadable.
+    // Avoids the "I clicked Pay and got Order Placed but no popup" mystery.
+    if (payOnline && store?.lencoPublicKey) {
+      if (lencoSdkState === 'error') {
+        setSubmitting(false);
+        alert('Online payment is unavailable right now. Please choose Pay on Delivery or try again shortly.');
+        return;
+      }
+      const ready = await waitForLencoSdk();
+      if (!ready) {
+        setSubmitting(false);
+        alert('Payment provider is taking too long to load. Please check your connection or choose Pay on Delivery.');
+        return;
+      }
+    }
+
     try {
       const { data } = await placeStoreOrder(slug, {
         ...checkoutForm,
         items: cart.map(c => ({ productId: c.productId, qty: c.qty })),
       });
 
-      if (payOnline && store?.lencoPublicKey && typeof window.LencoPay !== 'undefined') {
+      if (payOnline && store?.lencoPublicKey) {
         const nameParts = checkoutForm.customerName.trim().split(/\s+/);
+        // saleId is fresh per Place-Order click, so it's unique per attempt and
+        // matches what the webhook looks up.
+        const paymentRef = data.saleId;
         setShowCheckout(false);
-        window.LencoPay.getPaid({
-          key: store.lencoPublicKey,
-          reference: data.saleId,
-          email: checkoutForm.customerEmail || `${checkoutForm.customerPhone}@store.local`,
-          amount: data.total,
-          currency: 'ZMW',
-          channels: ['card', 'mobile-money'],
-          label: `Order ${data.orderNumber}`,
-          customer: { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') || nameParts[0] || '', phone: checkoutForm.customerPhone },
-          billing: { city: checkoutForm.customerCity || '', country: 'ZM' },
-          onSuccess: async (response) => {
-            try { await verifyStorePayment(slug, { reference: response.reference, saleId: data.saleId }); } catch {}
-            setOrderResult({ ...data, paid: true, message: 'Payment successful! Your order is confirmed.' });
-            setCart([]); setShowCart(false);
-          },
-          onClose: () => {
-            setOrderResult({ ...data, paid: false, message: 'Order placed. Payment was not completed -- we will contact you to arrange payment.' });
-            setCart([]); setShowCart(false);
-          },
-          onConfirmationPending: () => {
-            setOrderResult({ ...data, paid: false, message: 'Payment is being confirmed. We will update you once confirmed.' });
-            setCart([]); setShowCart(false);
-          },
-        });
+        try {
+          window.LencoPay.getPaid({
+            key: store.lencoPublicKey,
+            reference: paymentRef,
+            email: `${(checkoutForm.customerPhone || 'guest').replace(/\D/g, '')}@store.local`,
+            amount: data.total,
+            currency: 'ZMW',
+            channels: ['card', 'mobile-money'],
+            label: `Order ${data.orderNumber}`,
+            customer: { firstName: nameParts[0] || '', lastName: nameParts.slice(1).join(' ') || nameParts[0] || '', phone: checkoutForm.customerPhone },
+            billing: { city: checkoutForm.customerCity || '', country: 'ZM' },
+            onSuccess: async (response) => {
+              try {
+                const { data: verify } = await verifyStorePayment(slug, { reference: response.reference || paymentRef, saleId: data.saleId });
+                if (verify?.paymentStatus === 'Paid') {
+                  setOrderResult({ ...data, paid: true, message: 'Payment successful! Your order is confirmed.' });
+                } else {
+                  setOrderResult({ ...data, paid: false, message: 'Payment received and is being verified. We will confirm shortly.' });
+                }
+              } catch {
+                setOrderResult({ ...data, paid: false, message: 'Payment received but server verification failed. We will reconcile and contact you.' });
+              }
+              setCart([]); setShowCart(false);
+            },
+            onClose: () => {
+              setOrderResult({ ...data, paid: false, message: 'Order placed. Payment was not completed -- we will contact you to arrange payment.' });
+              setCart([]); setShowCart(false);
+            },
+            onConfirmationPending: () => {
+              setOrderResult({ ...data, paid: false, message: 'Payment is being confirmed. We will update you once confirmed.' });
+              setCart([]); setShowCart(false);
+            },
+          });
+        } catch (sdkErr) {
+          console.error('Lenco SDK error:', sdkErr);
+          setOrderResult({ ...data, paid: false, message: 'Order placed but the payment popup failed to open. We will contact you to arrange payment.' });
+          setCart([]); setShowCart(false);
+        }
         setSubmitting(false);
         return;
       }
@@ -484,12 +544,14 @@ export default function Store() {
                       className={`py-3 text-sm rounded-xl border-2 flex items-center justify-center gap-2 font-medium transition-all ${!payOnline ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
                       <FiPhone size={15} /> Pay on Delivery
                     </button>
-                    <button type="button" onClick={() => setPayOnline(true)}
-                      className={`py-3 text-sm rounded-xl border-2 flex items-center justify-center gap-2 font-medium transition-all ${payOnline ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                    <button type="button" onClick={() => setPayOnline(true)} disabled={lencoSdkState === 'error'}
+                      className={`py-3 text-sm rounded-xl border-2 flex items-center justify-center gap-2 font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${payOnline ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
                       <FiCreditCard size={15} /> Pay Online
                     </button>
                   </div>
-                  {payOnline && <p className="text-[11px] text-slate-400 mt-2 text-center">Visa, Mastercard, MTN MoMo, Airtel Money</p>}
+                  {payOnline && lencoSdkState === 'ready' && <p className="text-[11px] text-slate-400 mt-2 text-center">Visa, Mastercard, MTN MoMo, Airtel Money</p>}
+                  {payOnline && lencoSdkState === 'loading' && <p className="text-[11px] text-amber-500 mt-2 text-center">Loading payment provider...</p>}
+                  {lencoSdkState === 'error' && <p className="text-[11px] text-red-500 mt-2 text-center">Online payment unavailable. Please choose Pay on Delivery.</p>}
                 </div>
               )}
 

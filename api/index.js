@@ -1745,7 +1745,10 @@ app.post('/api/v1/store/:slug/order', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// Verify Lenco payment and update sale
+// Verify Lenco payment and update sale.
+// Only marks Paid when Lenco's API confirms `status === 'successful'`.
+// On any other outcome (no secret key, network error, non-success status), returns
+// verified:false with paymentStatus:'Pending' — webhook will reconcile later.
 app.post('/api/v1/store/:slug/verify-payment', async (req, res) => {
   try {
     const company = await prisma.company.findUnique({ where: { slug: req.params.slug } });
@@ -1756,28 +1759,33 @@ app.post('/api/v1/store/:slug/verify-payment', async (req, res) => {
     const sale = await prisma.sale.findFirst({ where: { id: saleId, companyId: company.id } });
     if (!sale) return res.status(404).json({ error: 'Order not found' });
 
-    // Get secret key to verify with Lenco
     const settings = await prisma.setting.findMany({ where: { companyId: company.id } });
     const settingsMap = {}; settings.forEach(s => { settingsMap[s.key] = s.value; });
     const secretKey = settingsMap.lencoSecretKey;
 
-    if (secretKey) {
-      try {
-        const verifyRes = await fetch(`https://api.lenco.co/access/v2/collections/status/${reference}`, {
-          headers: { 'Authorization': `Bearer ${secretKey}`, 'Content-Type': 'application/json' }
-        });
-        const verifyData = await verifyRes.json();
-        console.log('Lenco verify response:', JSON.stringify(verifyData));
-        if (verifyData.status === true && verifyData.data?.status === 'successful') {
-          await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Lenco Online', amountPaid: parseFloat(sale.totalPrice) } });
-          return res.json({ verified: true, paymentStatus: 'Paid' });
-        }
-      } catch (verifyErr) { console.error('Lenco verify error:', verifyErr.message); }
+    if (!secretKey) {
+      // No secret key configured — can't trust the unverified frontend callback. Webhook (if set up) will reconcile.
+      console.warn('verify-payment: lencoSecretKey not configured; leaving sale as Pending');
+      return res.json({ verified: false, paymentStatus: sale.paymentStatus, reason: 'no-secret-key' });
     }
 
-    // If we can't verify with API, trust the frontend callback (payment widget already confirmed)
-    await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Lenco Online', amountPaid: parseFloat(sale.totalPrice) } });
-    res.json({ verified: true, paymentStatus: 'Paid' });
+    try {
+      const verifyRes = await fetch(`https://api.lenco.co/access/v2/collections/status/${reference}`, {
+        headers: { 'Authorization': `Bearer ${secretKey}`, 'Content-Type': 'application/json' }
+      });
+      const verifyData = await verifyRes.json();
+      console.log('Lenco verify response:', JSON.stringify(verifyData));
+      if (verifyData.status === true && verifyData.data?.status === 'successful') {
+        await prisma.sale.update({ where: { id: sale.id }, data: { paymentStatus: 'Paid', paymentMethod: 'Lenco Online', amountPaid: parseFloat(sale.totalPrice) } });
+        return res.json({ verified: true, paymentStatus: 'Paid' });
+      }
+      // Lenco reachable but didn't confirm success — could be pending, failed, or unknown reference
+      return res.json({ verified: false, paymentStatus: sale.paymentStatus, lencoStatus: verifyData.data?.status || 'unknown' });
+    } catch (verifyErr) {
+      console.error('Lenco verify error:', verifyErr.message);
+      // Network/API error — leave sale as Pending; webhook will reconcile if it fires
+      return res.json({ verified: false, paymentStatus: sale.paymentStatus, reason: 'verify-error' });
+    }
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
