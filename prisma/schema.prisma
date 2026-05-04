@@ -8,12 +8,13 @@ datasource db {
 }
 
 model Company {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  isActive           Boolean  @default(true)
+  consultantPayDay   Int      @default(11)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   users              User[]
   products           Product[]
@@ -230,6 +231,7 @@ model Consultant {
   tierRate         Decimal            @db.Decimal(10, 2) @default(30)
   monthlyAllowance Decimal            @db.Decimal(10, 2) @default(400)
   isActive         Boolean            @default(true)
+  startDate        DateTime?
   notes            String?
   userId           String?            @unique
   companyId        String

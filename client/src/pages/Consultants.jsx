@@ -7,7 +7,27 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import PayStatementPDF from '../components/PayStatementPDF';
 import { pdf } from '@react-pdf/renderer';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft, FiKey, FiUserCheck } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft, FiKey, FiUserCheck, FiChevronLeft, FiChevronRight, FiCalendar } from 'react-icons/fi';
+
+// Pay-cycle helpers (mirror server/src/utils/payPeriod.js).
+// Cycle label = YYYY-MM of the month the cycle closes & is paid (e.g. May 11 cycle = "2026-05").
+function getCurrentPayCycleLabel(refDate = new Date(), payDay = 11) {
+  const d = new Date(refDate);
+  const startsThisMonth = d.getDate() >= payDay;
+  const closing = new Date(d.getFullYear(), startsThisMonth ? d.getMonth() + 1 : d.getMonth(), 1);
+  return `${closing.getFullYear()}-${String(closing.getMonth() + 1).padStart(2, '0')}`;
+}
+function shiftCycleLabel(label, deltaMonths) {
+  const [y, m] = label.split('-').map(Number);
+  const dt = new Date(y, m - 1 + deltaMonths, 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+function payPeriodFromLabel(label, payDay = 11) {
+  const [y, m] = label.split('-').map(Number);
+  const periodTo = new Date(y, m - 1, payDay);
+  const periodFrom = new Date(y, m - 2, payDay);
+  return { periodFrom, periodTo, payDate: periodTo };
+}
 
 export default function Consultants() {
   const [consultants, setConsultants] = useState([]);
@@ -18,10 +38,9 @@ export default function Consultants() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [showDetail, setShowDetail] = useState(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [periodLabel, setPeriodLabel] = useState(() => getCurrentPayCycleLabel());
 
-  const emptyForm = { name: '', phone: '', whatsapp: '', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', notes: '' };
+  const emptyForm = { name: '', phone: '', whatsapp: '', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', startDate: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
   const emptyPayment = { amount: '', type: 'commission', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
   const [showStockModal, setShowStockModal] = useState(null);
@@ -39,14 +58,14 @@ export default function Consultants() {
     setLoading(true);
     Promise.all([
       getConsultants(),
-      getCommissionSummary({ from: fromDate || undefined, to: toDate || undefined })
+      getCommissionSummary({ period: periodLabel })
     ]).then(([cRes, sRes]) => {
       setConsultants(cRes.data);
       setSummary(sRes.data);
     }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadData(); }, [fromDate, toDate]);
+  useEffect(() => { loadData(); }, [periodLabel]);
 
   const openCreate = () => { setEditing(null); setForm(emptyForm); setShowForm(true); };
 
@@ -55,7 +74,9 @@ export default function Consultants() {
     setForm({
       name: c.name, phone: c.phone || '', whatsapp: c.whatsapp || '',
       commissionRate: c.commissionRate, tierThreshold: c.tierThreshold || '50', tierRate: c.tierRate || '30',
-      monthlyAllowance: c.monthlyAllowance, notes: c.notes || ''
+      monthlyAllowance: c.monthlyAllowance,
+      startDate: c.startDate ? new Date(c.startDate).toISOString().slice(0, 10) : '',
+      notes: c.notes || ''
     });
     setShowForm(true);
   };
@@ -86,15 +107,24 @@ export default function Consultants() {
 
   const openDetail = async (consultantSummary) => {
     try {
-      const { data } = await getConsultant(consultantSummary.consultant.id);
+      const { data } = await getConsultant(consultantSummary.consultant.id, { period: periodLabel });
       setShowDetail(data);
     } catch { toast.error('Error loading details'); }
   };
 
-  const openPayment = (c) => {
-    setShowDetail(c);
-    setPaymentForm(emptyPayment);
-    setShowPaymentForm(true);
+  const openPayment = async (c) => {
+    try {
+      const { data } = await getConsultant(c.id, { period: periodLabel });
+      setShowDetail(data);
+      // Pre-fill cycle bounds (server will also auto-fill if blank)
+      const cycle = payPeriodFromLabel(periodLabel, summary?.period?.payDay || 11);
+      setPaymentForm({
+        ...emptyPayment,
+        periodFrom: cycle.periodFrom.toISOString().slice(0, 10),
+        periodTo: cycle.periodTo.toISOString().slice(0, 10),
+      });
+      setShowPaymentForm(true);
+    } catch { toast.error('Error loading consultant'); }
   };
 
   const openLoginModal = (c) => {
@@ -175,8 +205,8 @@ export default function Consultants() {
       const { data: payment } = await recordCommissionPayment(showDetail.id, paymentForm);
       toast.success('Payment recorded');
       setShowPaymentForm(false);
-      // Refresh detail
-      const { data } = await getConsultant(showDetail.id);
+      // Refresh detail (scoped to current period)
+      const { data } = await getConsultant(showDetail.id, { period: periodLabel });
       setShowDetail(data);
       loadData();
       // Auto-generate pay statement PDF
@@ -221,10 +251,25 @@ export default function Consultants() {
     <div className="space-y-4 pb-20 lg:pb-0">
       <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
         <div className="flex gap-2 items-center flex-wrap">
-          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-            className="border border-gray-300 rounded-lg px-2 py-2 text-sm outline-none" />
-          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-            className="border border-gray-300 rounded-lg px-2 py-2 text-sm outline-none" />
+          <button onClick={() => setPeriodLabel(shiftCycleLabel(periodLabel, -1))}
+            className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50" title="Previous cycle"><FiChevronLeft size={14} /></button>
+          <div className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white min-w-[220px]">
+            <div className="flex items-center gap-1.5 text-gray-700 font-medium">
+              <FiCalendar size={13} className="text-gray-400" />
+              {summary?.period ? (
+                <>Cycle: {new Date(summary.period.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(new Date(summary.period.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+              ) : (
+                <>Pay cycle: {periodLabel}</>
+              )}
+            </div>
+            {summary?.period && (
+              <div className="text-[11px] text-gray-500 mt-0.5">Pay date: {new Date(summary.period.payDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
+            )}
+          </div>
+          <button onClick={() => setPeriodLabel(shiftCycleLabel(periodLabel, 1))}
+            className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50" title="Next cycle"><FiChevronRight size={14} /></button>
+          <button onClick={() => setPeriodLabel(getCurrentPayCycleLabel())}
+            className="px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Current</button>
         </div>
         <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
           <FiPlus size={16} /> Add Consultant
@@ -354,6 +399,12 @@ export default function Consultants() {
               <input type="number" step="0.01" value={form.monthlyAllowance} onChange={e => setForm({...form, monthlyAllowance: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+              <input type="date" value={form.startDate} onChange={e => setForm({...form, startDate: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              <p className="text-[11px] text-gray-500 mt-1">Used to prorate the first pay cycle if mid-cycle</p>
+            </div>
             <div className="sm:col-span-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
               First {form.tierThreshold || 50} products: {formatMoney(form.commissionRate || 50)}/product, then {formatMoney(form.tierRate || 30)}/product after that
             </div>
@@ -395,14 +446,34 @@ export default function Consultants() {
               </div>
             </div>
 
+            {showDetail.period && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 flex flex-wrap gap-x-4 gap-y-1 items-center">
+                <span><span className="text-gray-500">Cycle:</span> <strong>{new Date(showDetail.period.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(new Date(showDetail.period.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
+                <span><span className="text-gray-500">Pay date:</span> <strong>{new Date(showDetail.period.payDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</strong></span>
+                {showDetail.period.prorated && (
+                  <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Prorated — joined {new Date(showDetail.period.effectiveFrom).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+                )}
+                {!showDetail.period.activeInPeriod && (
+                  <span className="text-red-700 bg-red-50 px-1.5 py-0.5 rounded">Not active in this cycle</span>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-blue-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500">Commission Paid</div>
+                <div className="text-xs text-gray-500">Commission Paid {showDetail.period ? '(this cycle)' : ''}</div>
                 <div className="text-lg font-bold text-blue-600">{formatMoney(showDetail.commissionPaid || 0)}</div>
               </div>
               <div className="bg-green-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500">Allowance Paid</div>
-                <div className="text-lg font-bold text-green-600">{formatMoney(showDetail.allowancePaid || 0)}</div>
+                <div className="text-xs text-gray-500">Allowance {showDetail.period ? '(this cycle)' : ''}</div>
+                <div className="text-lg font-bold text-green-600">
+                  {formatMoney(showDetail.allowancePaid || 0)}
+                  {showDetail.allowanceCap !== null && showDetail.allowanceCap !== undefined && (
+                    <span className="text-xs font-normal text-gray-500"> / {formatMoney(showDetail.allowanceCap)}</span>
+                  )}
+                </div>
+                {showDetail.allowanceRemaining !== null && showDetail.allowanceRemaining !== undefined && (
+                  <div className="text-[11px] text-gray-500 mt-0.5">K{showDetail.allowanceRemaining.toFixed(2)} remaining</div>
+                )}
               </div>
             </div>
 

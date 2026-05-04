@@ -98,7 +98,7 @@ export const deleteTarget = (id) => api.delete(`/targets/${id}`);
 
 // Consultants
 export const getConsultants = (params) => api.get('/consultants', { params });
-export const getConsultant = (id) => api.get(`/consultants/${id}`);
+export const getConsultant = (id, params) => api.get(`/consultants/${id}`, { params });
 export const createConsultant = (data) => api.post('/consultants', data);
 export const updateConsultant = (id, data) => api.put(`/consultants/${id}`, data);
 export const deleteConsultant = (id) => api.delete(`/consultants/${id}`);

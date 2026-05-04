@@ -49,13 +49,44 @@ app.use(express.json({ limit: '2mb' }));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'biztrack-default-secret';
 
-// Tiered commission: first N products at base rate, rest at tier rate
+// Tiered commission: first N products at base rate, rest at tier rate.
+// Tier threshold is FLAT — does not prorate on partial cycles.
 function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRate) {
   const base = parseFloat(commissionRate);
   const tier = parseFloat(tierRate);
   const threshold = parseInt(tierThreshold) || 50;
   if (totalProductsSold <= threshold) return totalProductsSold * base;
   return (threshold * base) + ((totalProductsSold - threshold) * tier);
+}
+
+// Consultant pay period: [payDay current/prev month, payDay next/this month) — half-open.
+function getConsultantPayPeriod(refDate, payDay = 11) {
+  const d = new Date(refDate);
+  const y = d.getFullYear(); const m = d.getMonth(); const day = d.getDate();
+  const startsThisMonth = day >= payDay;
+  const periodFrom = new Date(y, startsThisMonth ? m : m - 1, payDay, 0, 0, 0, 0);
+  const periodTo   = new Date(y, startsThisMonth ? m + 1 : m, payDay, 0, 0, 0, 0);
+  const payDate = periodTo;
+  const label = `${payDate.getFullYear()}-${String(payDate.getMonth() + 1).padStart(2, '0')}`;
+  return { periodFrom, periodTo, payDate, label };
+}
+function payPeriodFromLabel(label, payDay = 11) {
+  const [y, m] = label.split('-').map(Number);
+  const periodTo   = new Date(y, m - 1, payDay, 0, 0, 0, 0);
+  const periodFrom = new Date(y, m - 2, payDay, 0, 0, 0, 0);
+  return { periodFrom, periodTo, payDate: periodTo, label };
+}
+function getEffectivePeriod(periodFrom, periodTo, startDate) {
+  const cycleMs = periodTo - periodFrom;
+  if (!startDate) return { effectiveFrom: periodFrom, effectiveTo: periodTo, factor: 1, prorated: false };
+  const start = new Date(startDate);
+  if (start <= periodFrom) return { effectiveFrom: periodFrom, effectiveTo: periodTo, factor: 1, prorated: false };
+  if (start >= periodTo) return null;
+  return { effectiveFrom: start, effectiveTo: periodTo, factor: (periodTo - start) / cycleMs, prorated: true };
+}
+async function getCompanyPayDay(companyId) {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } });
+  return company?.consultantPayDay || 11;
 }
 
 // Auth middleware
@@ -1854,15 +1885,36 @@ app.get('/api/v1/consultants/me/transfers', authenticate, async (req, res) => {
 app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { from, to, consultantId } = req.query;
+    const { from, to, consultantId, period } = req.query;
+    const payDay = await getCompanyPayDay(companyId);
+
+    let periodFrom = null, periodTo = null, periodLabel = null, payDate = null, isCycle = false;
+    if (period) { ({ periodFrom, periodTo, label: periodLabel, payDate } = payPeriodFromLabel(period, payDay)); isCycle = true; }
+    else if (!from && !to) { ({ periodFrom, periodTo, label: periodLabel, payDate } = getConsultantPayPeriod(new Date(), payDay)); isCycle = true; }
+
     const saleWhere = { companyId, status: { not: 'Cancelled' }, consultantId: { not: null } };
     if (consultantId) saleWhere.consultantId = consultantId;
-    if (from || to) { saleWhere.date = {}; if (from) saleWhere.date.gte = new Date(from); if (to) saleWhere.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const sales = await prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } });
-    const consultants = await prisma.consultant.findMany({ where: { companyId } });
-    const payments = await prisma.commissionPayment.findMany({ where: { companyId } });
+    if (isCycle) saleWhere.date = { gte: periodFrom, lt: periodTo };
+    else if (from || to) { saleWhere.date = {}; if (from) saleWhere.date.gte = new Date(from); if (to) saleWhere.date.lte = new Date(to + 'T23:59:59.999Z'); }
+
+    const paymentWhere = { companyId };
+    if (isCycle) paymentWhere.createdAt = { gte: periodFrom, lt: periodTo };
+
+    const [sales, consultants, payments] = await Promise.all([
+      prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } }),
+      prisma.consultant.findMany({ where: { companyId } }),
+      prisma.commissionPayment.findMany({ where: paymentWhere }),
+    ]);
+
     const summary = consultants.map(c => {
-      const cSales = sales.filter(s => s.consultantId === c.id);
+      let eff = { factor: 1, prorated: false, effectiveFrom: periodFrom, effectiveTo: periodTo };
+      let activeInPeriod = true;
+      if (isCycle) { const sliced = getEffectivePeriod(periodFrom, periodTo, c.startDate); if (!sliced) activeInPeriod = false; else eff = sliced; }
+      const cSales = sales.filter(s => {
+        if (s.consultantId !== c.id) return false;
+        if (eff.prorated) return new Date(s.date) >= eff.effectiveFrom;
+        return true;
+      });
       const totalSales = cSales.length;
       const totalProductsSold = cSales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
@@ -1871,10 +1923,18 @@ app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, as
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const balance = commissionEarned - commissionPaid;
-      return { consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive }, totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance };
+      const baseAllowance = parseFloat(c.monthlyAllowance) || 0;
+      const allowanceCap = isCycle ? Math.round(baseAllowance * eff.factor * 100) / 100 : null;
+      const allowanceRemaining = allowanceCap !== null ? Math.max(0, allowanceCap - allowancePaid) : null;
+      return {
+        consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive, startDate: c.startDate },
+        activeInPeriod, prorated: eff.prorated, effectiveFrom: eff.effectiveFrom, effectiveTo: eff.effectiveTo,
+        totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, balance,
+        allowancePaid, allowanceCap, allowanceRemaining,
+      };
     });
     const totals = { totalSales: summary.reduce((s, c) => s + c.totalSales, 0), totalRevenue: summary.reduce((s, c) => s + c.totalRevenue, 0), totalCommissionEarned: summary.reduce((s, c) => s + c.commissionEarned, 0), totalCommissionPaid: summary.reduce((s, c) => s + c.commissionPaid, 0), totalAllowancePaid: summary.reduce((s, c) => s + c.allowancePaid, 0), totalBalance: summary.reduce((s, c) => s + c.balance, 0) };
-    res.json({ summary, totals });
+    res.json({ summary, totals, period: isCycle ? { from: periodFrom, to: periodTo, label: periodLabel, payDate, payDay } : null });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -1894,10 +1954,33 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
   if (req.user.role === 'consultant' && req.params.id !== req.user.consultantId) return res.status(403).json({ error: 'Forbidden' });
   try {
     const companyId = req.user.companyId;
+    const { period } = req.query;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
-    const sales = await prisma.sale.findMany({ where: { consultantId: consultant.id, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
-    const payments = await prisma.commissionPayment.findMany({ where: { consultantId: consultant.id, companyId }, orderBy: { createdAt: 'desc' } });
+
+    const payDay = await getCompanyPayDay(companyId);
+    let periodInfo = null;
+    let salesWhere = { consultantId: consultant.id, companyId, status: { not: 'Cancelled' } };
+    let paymentsWhere = { consultantId: consultant.id, companyId };
+
+    if (period) {
+      const cycle = payPeriodFromLabel(period, payDay);
+      const eff = getEffectivePeriod(cycle.periodFrom, cycle.periodTo, consultant.startDate);
+      periodInfo = {
+        from: cycle.periodFrom, to: cycle.periodTo, label: cycle.label, payDate: cycle.payDate, payDay,
+        prorated: eff?.prorated || false, effectiveFrom: eff?.effectiveFrom || null, effectiveTo: eff?.effectiveTo || null,
+        factor: eff?.factor ?? 0, activeInPeriod: !!eff,
+      };
+      const fromDate = eff?.effectiveFrom || cycle.periodFrom;
+      salesWhere.date = { gte: fromDate, lt: cycle.periodTo };
+      paymentsWhere.createdAt = { gte: cycle.periodFrom, lt: cycle.periodTo };
+    }
+
+    const [sales, payments] = await Promise.all([
+      prisma.sale.findMany({ where: salesWhere, include: { items: true }, orderBy: { date: 'desc' } }),
+      prisma.commissionPayment.findMany({ where: paymentsWhere, orderBy: { createdAt: 'desc' } }),
+    ]);
+
     const totalSales = sales.length;
     const totalProductsSold = sales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
@@ -1905,16 +1988,26 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
-    res.json({ ...consultant, totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, allowancePaid, balance, sales, payments });
+    const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
+    const allowanceCap = periodInfo ? Math.round(baseAllowance * (periodInfo.factor || 0) * 100) / 100 : null;
+    const allowanceRemaining = allowanceCap !== null ? Math.max(0, allowanceCap - allowancePaid) : null;
+
+    res.json({
+      ...consultant,
+      totalSales, totalProductsSold, totalRevenue,
+      commissionEarned, commissionPaid, balance,
+      allowancePaid, allowanceCap, allowanceRemaining,
+      period: periodInfo, sales, payments,
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 app.post('/api/v1/consultants', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { name, phone, whatsapp, commissionRate, tierThreshold, tierRate, monthlyAllowance, notes } = req.body;
+    const { name, phone, whatsapp, commissionRate, tierThreshold, tierRate, monthlyAllowance, startDate, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
-    const consultant = await prisma.consultant.create({ data: { name, phone: phone || null, whatsapp: whatsapp || null, commissionRate: parseFloat(commissionRate) || 50, tierThreshold: parseInt(tierThreshold) || 50, tierRate: parseFloat(tierRate) || 30, monthlyAllowance: parseFloat(monthlyAllowance) || 400, notes: notes || null, companyId } });
+    const consultant = await prisma.consultant.create({ data: { name, phone: phone || null, whatsapp: whatsapp || null, commissionRate: parseFloat(commissionRate) || 50, tierThreshold: parseInt(tierThreshold) || 50, tierRate: parseFloat(tierRate) || 30, monthlyAllowance: parseFloat(monthlyAllowance) || 400, startDate: startDate ? new Date(startDate) : null, notes: notes || null, companyId } });
     res.status(201).json(consultant);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -1934,6 +2027,7 @@ app.put('/api/v1/consultants/:id', authenticate, requireAdmin, async (req, res) 
       ...(raw.tierRate !== undefined && { tierRate: parseFloat(raw.tierRate) }),
       ...(raw.monthlyAllowance !== undefined && { monthlyAllowance: parseFloat(raw.monthlyAllowance) }),
       ...(raw.isActive !== undefined && { isActive: raw.isActive }),
+      ...(raw.startDate !== undefined && { startDate: raw.startDate ? new Date(raw.startDate) : null }),
       ...(raw.notes !== undefined && { notes: raw.notes || null }),
     };
     const consultant = await prisma.consultant.update({ where: { id: req.params.id }, data });
@@ -1962,9 +2056,34 @@ app.post('/api/v1/consultants/:id/payments', authenticate, requireAdmin, async (
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
-    const { amount, type, periodFrom, periodTo, paymentMethod, reference, notes } = req.body;
+    const payDay = await getCompanyPayDay(companyId);
+    let { amount, type, periodFrom, periodTo, paymentMethod, reference, notes } = req.body;
     if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: 'Invalid amount' });
-    const payment = await prisma.commissionPayment.create({ data: { consultantId: consultant.id, amount: parseFloat(amount), type: type || 'commission', periodFrom: periodFrom ? new Date(periodFrom) : null, periodTo: periodTo ? new Date(periodTo) : null, paymentMethod: paymentMethod || null, reference: reference || null, notes: notes || null, companyId } });
+
+    if (!periodFrom && !periodTo) {
+      const cycle = getConsultantPayPeriod(new Date(), payDay);
+      periodFrom = cycle.periodFrom; periodTo = cycle.periodTo;
+    } else {
+      periodFrom = periodFrom ? new Date(periodFrom) : null;
+      periodTo = periodTo ? new Date(periodTo) : null;
+    }
+
+    if ((type || 'commission') === 'allowance' && periodFrom && periodTo) {
+      const eff = getEffectivePeriod(periodFrom, periodTo, consultant.startDate);
+      if (!eff) return res.status(400).json({ error: 'Consultant was not active during this pay cycle' });
+      const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
+      const cap = Math.round(baseAllowance * eff.factor * 100) / 100;
+      const existing = await prisma.commissionPayment.aggregate({
+        where: { consultantId: consultant.id, companyId, type: 'allowance', createdAt: { gte: periodFrom, lt: periodTo } },
+        _sum: { amount: true },
+      });
+      const paidSoFar = parseFloat(existing._sum.amount || 0);
+      if (paidSoFar + parseFloat(amount) > cap + 0.01) {
+        return res.status(400).json({ error: `Allowance cap reached. Cap: K${cap.toFixed(2)}${eff.prorated ? ' (prorated)' : ''}. Already paid: K${paidSoFar.toFixed(2)}. Remaining: K${Math.max(0, cap - paidSoFar).toFixed(2)}.` });
+      }
+    }
+
+    const payment = await prisma.commissionPayment.create({ data: { consultantId: consultant.id, amount: parseFloat(amount), type: type || 'commission', periodFrom, periodTo, paymentMethod: paymentMethod || null, reference: reference || null, notes: notes || null, companyId } });
     res.status(201).json(payment);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
