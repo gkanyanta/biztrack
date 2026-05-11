@@ -102,7 +102,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
     }
 
     const paymentWhere = { companyId };
-    if (isCycle) paymentWhere.createdAt = { gte: periodFrom, lt: periodTo };
+    if (isCycle) { paymentWhere.periodFrom = { gte: periodFrom }; paymentWhere.periodTo = { lte: periodTo }; }
 
     const [sales, consultants, payments] = await Promise.all([
       prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } }),
@@ -198,7 +198,7 @@ router.get('/:id', async (req, res) => {
       };
       const fromDate = eff?.effectiveFrom || cycle.periodFrom;
       salesWhere.date = { gte: fromDate, lt: cycle.periodTo };
-      paymentsWhere.createdAt = { gte: cycle.periodFrom, lt: cycle.periodTo };
+      paymentsWhere.periodFrom = { gte: cycle.periodFrom }; paymentsWhere.periodTo = { lte: cycle.periodTo };
     }
 
     const [sales, payments] = await Promise.all([
@@ -333,7 +333,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
       const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
       const cap = Math.round(baseAllowance * eff.factor * 100) / 100;
       const existing = await prisma.commissionPayment.aggregate({
-        where: { consultantId: consultant.id, companyId, type: 'allowance', createdAt: { gte: periodFrom, lt: periodTo } },
+        where: { consultantId: consultant.id, companyId, type: 'allowance', periodFrom: { gte: periodFrom }, periodTo: { lte: periodTo } },
         _sum: { amount: true },
       });
       const paidSoFar = parseFloat(existing._sum.amount || 0);

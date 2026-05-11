@@ -21,7 +21,10 @@ export default function ConsultantDashboard() {
   if (loading) return <LoadingSpinner />;
   if (!data) return <p className="text-red-500">Failed to load{error ? `: ${error}` : ''}</p>;
 
-  const { consultant, today, thisMonth, allTime, recentSales, recentPayments } = data;
+  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments } = data;
+  const cycleFrom = cycle ? new Date(cycle.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+  const cycleTo = cycle ? new Date(new Date(cycle.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  const cyclePayDate = cycle ? new Date(cycle.payDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
@@ -30,8 +33,13 @@ export default function ConsultantDashboard() {
           <div>
             <h2 className="text-xl font-bold">Welcome, {consultant.name}</h2>
             <p className="text-blue-100 text-sm">
-              Commission: {formatMoney(consultant.commissionRate)}/item (first {consultant.tierThreshold}) then {formatMoney(consultant.tierRate)}/item
+              {consultant.payType === 'revenue_pct'
+                ? `Commission: ${parseFloat(consultant.commissionRate)}% of sales revenue`
+                : `Commission: ${formatMoney(consultant.commissionRate)}/item (first ${consultant.tierThreshold}) then ${formatMoney(consultant.tierRate)}/item`}
             </p>
+            {cycle && (
+              <p className="text-blue-200 text-xs mt-1">Current cycle: {cycleFrom} – {cycleTo} · Pay date: {cyclePayDate}</p>
+            )}
           </div>
           <Link to="/sales" className="flex items-center gap-1.5 px-4 py-2 bg-white text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50">
             <FiPlus size={16} /> Record Sale
@@ -49,14 +57,15 @@ export default function ConsultantDashboard() {
         </div>
       </div>
 
-      {/* This month */}
+      {/* This cycle */}
       <div>
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">This Month</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">This Pay Cycle</h3>
+        {cycle && <p className="text-xs text-gray-400 mb-3">{cycleFrom} – {cycleTo}</p>}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard icon={FiShoppingCart} label="Orders" value={thisMonth.ordersCount} color="bg-blue-500" />
-          <StatCard icon={FiTrendingUp} label="Products Sold" value={thisMonth.productsSold} color="bg-purple-500" />
-          <StatCard icon={FiDollarSign} label="Revenue" value={formatMoney(thisMonth.revenue)} color="bg-indigo-500" />
-          <StatCard icon={FiCreditCard} label="Commission Earned" value={formatMoney(thisMonth.commissionEarned)} color="bg-emerald-600" accent />
+          <StatCard icon={FiShoppingCart} label="Orders" value={thisCycle.ordersCount} color="bg-blue-500" />
+          <StatCard icon={FiTrendingUp} label="Products Sold" value={thisCycle.productsSold} color="bg-purple-500" />
+          <StatCard icon={FiDollarSign} label="Revenue" value={formatMoney(thisCycle.revenue)} color="bg-indigo-500" />
+          <StatCard icon={FiCreditCard} label="Commission Earned" value={formatMoney(thisCycle.commissionEarned)} color="bg-emerald-600" accent />
         </div>
       </div>
 

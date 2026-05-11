@@ -508,39 +508,84 @@ export default function Consultants() {
               </button>
             </div>
 
-            {/* Recent Sales */}
-            {showDetail.sales?.length > 0 && (
-              <div>
-                <h3 className="font-medium text-gray-800 mb-2">Recent Sales</h3>
-                <div className="max-h-48 overflow-auto border border-gray-200 rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 border-b">
-                        <th className="text-left p-2 font-medium text-gray-600">Order</th>
-                        <th className="text-left p-2 font-medium text-gray-600">Date</th>
-                        <th className="text-left p-2 font-medium text-gray-600">Customer</th>
-                        <th className="text-right p-2 font-medium text-gray-600">Products</th>
-                        <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {showDetail.sales.slice(0, 20).map(s => {
-                        const qty = (s.items || []).reduce((sum, i) => sum + i.qty, 0);
-                        return (
-                        <tr key={s.id} className="border-b border-gray-50">
-                          <td className="p-2 text-gray-800">{s.orderNumber}</td>
-                          <td className="p-2 text-gray-600">{formatDate(s.date)}</td>
-                          <td className="p-2 text-gray-600">{s.customerName || '-'}</td>
-                          <td className="p-2 text-right font-medium">{qty}</td>
-                          <td className="p-2 text-right">{formatMoney(s.totalPrice)}</td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+            {/* Sales Reconciliation */}
+            {(() => {
+              const allSales = showDetail.sales || [];
+              const seen = new Map();
+              const dupIds = new Set();
+              for (const s of allSales) {
+                const key = `${(s.customerName || '').trim().toLowerCase()}|${s.date?.slice(0, 10)}|${parseFloat(s.totalPrice).toFixed(2)}`;
+                if (seen.has(key)) { dupIds.add(s.id); dupIds.add(seen.get(key)); }
+                else seen.set(key, s.id);
+              }
+              const hasDuplicates = dupIds.size > 0;
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-medium text-gray-800">
+                      Sales {showDetail.period ? 'this cycle' : ''}
+                      <span className="ml-2 text-xs font-normal text-gray-400">{allSales.length} orders</span>
+                    </h3>
+                    {hasDuplicates && (
+                      <span className="text-xs bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-medium">⚠ {dupIds.size} possible duplicates</span>
+                    )}
+                  </div>
+                  {hasDuplicates && (
+                    <div className="mb-2 flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-xs text-amber-800">
+                      <span className="shrink-0 mt-0.5">⚠</span>
+                      <span>Rows highlighted below share the same customer, date, and amount — verify these are not duplicate entries before reconciling.</span>
+                    </div>
+                  )}
+                  {allSales.length === 0 ? (
+                    <p className="text-sm text-gray-400 bg-gray-50 rounded-lg p-4 text-center">No sales in this period</p>
+                  ) : (
+                    <div className="max-h-56 overflow-auto border border-gray-200 rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-gray-50 z-10">
+                          <tr className="border-b border-gray-200">
+                            <th className="text-left p-2 font-medium text-gray-600">Order #</th>
+                            <th className="text-left p-2 font-medium text-gray-600">Date</th>
+                            <th className="text-left p-2 font-medium text-gray-600">Customer</th>
+                            <th className="text-right p-2 font-medium text-gray-600">Qty</th>
+                            <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+                            <th className="text-left p-2 font-medium text-gray-600">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allSales.map(s => {
+                            const qty = (s.items || []).reduce((sum, i) => sum + i.qty, 0);
+                            const isDup = dupIds.has(s.id);
+                            return (
+                              <tr key={s.id} className={`border-b border-gray-50 ${isDup ? 'bg-amber-50' : 'hover:bg-gray-50'}`}>
+                                <td className="p-2 font-mono text-xs text-gray-700">
+                                  {s.orderNumber}
+                                  {isDup && <span className="ml-1 text-amber-600 font-sans" title="Possible duplicate">⚠</span>}
+                                </td>
+                                <td className="p-2 text-gray-600 whitespace-nowrap">{formatDate(s.date)}</td>
+                                <td className="p-2 text-gray-800">{s.customerName || <span className="text-gray-400 italic">Walk-in</span>}</td>
+                                <td className="p-2 text-right font-medium">{qty}</td>
+                                <td className="p-2 text-right font-medium">{formatMoney(s.totalPrice)}</td>
+                                <td className="p-2">
+                                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${s.paymentStatus === 'Paid' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{s.paymentStatus}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="sticky bottom-0 bg-gray-50 border-t border-gray-200">
+                          <tr>
+                            <td colSpan={3} className="p-2 text-xs font-semibold text-gray-600">Total</td>
+                            <td className="p-2 text-right text-xs font-semibold">{allSales.reduce((s, x) => s + (x.items || []).reduce((q, i) => q + i.qty, 0), 0)}</td>
+                            <td className="p-2 text-right text-xs font-semibold">{formatMoney(allSales.reduce((s, x) => s + parseFloat(x.totalPrice), 0))}</td>
+                            <td />
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Payment History */}
             {showDetail.payments?.length > 0 && (

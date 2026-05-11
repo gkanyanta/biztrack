@@ -1900,7 +1900,7 @@ app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, as
     else if (from || to) { saleWhere.date = {}; if (from) saleWhere.date.gte = new Date(from); if (to) saleWhere.date.lte = new Date(to + 'T23:59:59.999Z'); }
 
     const paymentWhere = { companyId };
-    if (isCycle) paymentWhere.createdAt = { gte: periodFrom, lt: periodTo };
+    if (isCycle) { paymentWhere.periodFrom = { gte: periodFrom }; paymentWhere.periodTo = { lte: periodTo }; }
 
     const [sales, consultants, payments] = await Promise.all([
       prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } }),
@@ -1975,7 +1975,7 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
       };
       const fromDate = eff?.effectiveFrom || cycle.periodFrom;
       salesWhere.date = { gte: fromDate, lt: cycle.periodTo };
-      paymentsWhere.createdAt = { gte: cycle.periodFrom, lt: cycle.periodTo };
+      paymentsWhere.periodFrom = { gte: cycle.periodFrom }; paymentsWhere.periodTo = { lte: cycle.periodTo };
     }
 
     const [sales, payments] = await Promise.all([
@@ -2077,7 +2077,7 @@ app.post('/api/v1/consultants/:id/payments', authenticate, requireAdmin, async (
       const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
       const cap = Math.round(baseAllowance * eff.factor * 100) / 100;
       const existing = await prisma.commissionPayment.aggregate({
-        where: { consultantId: consultant.id, companyId, type: 'allowance', createdAt: { gte: periodFrom, lt: periodTo } },
+        where: { consultantId: consultant.id, companyId, type: 'allowance', periodFrom: { gte: periodFrom }, periodTo: { lte: periodTo } },
         _sum: { amount: true },
       });
       const paidSoFar = parseFloat(existing._sum.amount || 0);
@@ -2166,19 +2166,19 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
 
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const payDay = await getCompanyPayDay(companyId);
+    const currentCycle = getConsultantPayPeriod(now, payDay);
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     const allSales = await prisma.sale.findMany({ where: { consultantId, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
-    const monthSales = allSales.filter(s => new Date(s.date) >= monthStart);
+    const cycleSales = allSales.filter(s => { const d = new Date(s.date); return d >= currentCycle.periodFrom && d < currentCycle.periodTo; });
     const todaySales = allSales.filter(s => new Date(s.date) >= todayStart && new Date(s.date) <= todayEnd);
 
     const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
-    const productsSoldInMonth = sum(monthSales, s => s.items.reduce((q, i) => q + i.qty, 0));
-
-    const revenueInMonth = sum(monthSales, s => parseFloat(s.totalPrice));
-    const commissionEarnedMonth = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, productsSoldInMonth, revenueInMonth);
+    const productsSoldInCycle = sum(cycleSales, s => s.items.reduce((q, i) => q + i.qty, 0));
+    const revenueInCycle = sum(cycleSales, s => parseFloat(s.totalPrice));
+    const commissionEarnedCycle = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, productsSoldInCycle, revenueInCycle);
 
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
     const totalProductsSoldAllTime = sum(allSales, s => s.items.reduce((q, i) => q + i.qty, 0));
@@ -2190,8 +2190,9 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, payType: consultant.payType, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
+      cycle: { from: currentCycle.periodFrom, to: currentCycle.periodTo, payDate: currentCycle.payDate, label: currentCycle.label },
       today: { ordersCount: todaySales.length, productsSold: sum(todaySales, s => s.items.reduce((q, i) => q + i.qty, 0)), revenue: sum(todaySales, s => parseFloat(s.totalPrice)) },
-      thisMonth: { ordersCount: monthSales.length, productsSold: productsSoldInMonth, revenue: sum(monthSales, s => parseFloat(s.totalPrice)), commissionEarned: commissionEarnedMonth },
+      thisCycle: { ordersCount: cycleSales.length, productsSold: productsSoldInCycle, revenue: revenueInCycle, commissionEarned: commissionEarnedCycle },
       allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
