@@ -3,9 +3,11 @@ const bcrypt = require('bcryptjs');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { getConsultantPayPeriod, payPeriodFromLabel, getEffectivePeriod } = require('../utils/payPeriod');
 
-// Tiered commission: first N products at base rate, rest at tier rate.
-// Tier threshold is FLAT — does not prorate on partial cycles.
-function calcCommission(totalProductsSold, commissionRate, tierThreshold, tierRate) {
+function calcCommission(payType, commissionRate, tierThreshold, tierRate, totalProductsSold, totalRevenue) {
+  if (payType === 'revenue_pct') {
+    return Math.round((totalRevenue * parseFloat(commissionRate) / 100) * 100) / 100;
+  }
+  // per_unit: tiered — first N products at base rate, rest at tier rate.
   const base = parseFloat(commissionRate);
   const tier = parseFloat(tierRate);
   const threshold = parseInt(tierThreshold) || 50;
@@ -128,7 +130,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       const totalSales = cSales.length;
       const totalProductsSold = cSales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-      const commissionEarned = calcCommission(totalProductsSold, c.commissionRate, c.tierThreshold, c.tierRate);
+      const commissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, totalProductsSold, totalRevenue);
 
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
@@ -140,7 +142,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       const allowanceRemaining = allowanceCap !== null ? Math.max(0, allowanceCap - allowancePaid) : null;
 
       return {
-        consultant: { id: c.id, name: c.name, phone: c.phone, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive, startDate: c.startDate },
+        consultant: { id: c.id, name: c.name, phone: c.phone, payType: c.payType, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive, startDate: c.startDate },
         activeInPeriod,
         prorated: eff.prorated,
         effectiveFrom: eff.effectiveFrom,
@@ -207,7 +209,7 @@ router.get('/:id', async (req, res) => {
     const totalSales = sales.length;
     const totalProductsSold = sales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const commissionEarned = calcCommission(totalProductsSold, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate);
+    const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
@@ -232,12 +234,13 @@ router.post('/', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { name, phone, whatsapp, commissionRate, tierThreshold, tierRate, monthlyAllowance, startDate, notes } = req.body;
+    const { name, phone, whatsapp, payType, commissionRate, tierThreshold, tierRate, monthlyAllowance, startDate, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
 
     const consultant = await prisma.consultant.create({
       data: {
         name, phone: phone || null, whatsapp: whatsapp || null,
+        payType: payType || 'per_unit',
         commissionRate: parseFloat(commissionRate) || 50,
         tierThreshold: parseInt(tierThreshold) || 50,
         tierRate: parseFloat(tierRate) || 30,
@@ -263,6 +266,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       ...(raw.name !== undefined && { name: raw.name }),
       ...(raw.phone !== undefined && { phone: raw.phone || null }),
       ...(raw.whatsapp !== undefined && { whatsapp: raw.whatsapp || null }),
+      ...(raw.payType !== undefined && { payType: raw.payType }),
       ...(raw.commissionRate !== undefined && { commissionRate: parseFloat(raw.commissionRate) }),
       ...(raw.tierThreshold !== undefined && { tierThreshold: parseInt(raw.tierThreshold) }),
       ...(raw.tierRate !== undefined && { tierRate: parseFloat(raw.tierRate) }),

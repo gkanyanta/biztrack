@@ -40,7 +40,7 @@ export default function Consultants() {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [periodLabel, setPeriodLabel] = useState(() => getCurrentPayCycleLabel());
 
-  const emptyForm = { name: '', phone: '', whatsapp: '', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', startDate: '', notes: '' };
+  const emptyForm = { name: '', phone: '', whatsapp: '', payType: 'per_unit', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', startDate: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
   const emptyPayment = { amount: '', type: 'commission', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
   const [showStockModal, setShowStockModal] = useState(null);
@@ -73,6 +73,7 @@ export default function Consultants() {
     setEditing(c);
     setForm({
       name: c.name, phone: c.phone || '', whatsapp: c.whatsapp || '',
+      payType: c.payType || 'per_unit',
       commissionRate: c.commissionRate, tierThreshold: c.tierThreshold || '50', tierRate: c.tierRate || '30',
       monthlyAllowance: c.monthlyAllowance,
       startDate: c.startDate ? new Date(c.startDate).toISOString().slice(0, 10) : '',
@@ -324,8 +325,11 @@ export default function Consultants() {
                     </td>
                     <td className="p-3 text-gray-600 hidden sm:table-cell">{c.phone || '-'}</td>
                     <td className="p-3 text-right text-gray-800">
-                      <span>{formatMoney(c.commissionRate)}</span>
-                      <span className="text-xs text-gray-400">/{formatMoney(c.tierRate || 30)}</span>
+                      {c.payType === 'revenue_pct' ? (
+                        <span className="text-purple-700 font-medium">{parseFloat(c.commissionRate)}% of revenue</span>
+                      ) : (
+                        <><span>{formatMoney(c.commissionRate)}</span><span className="text-xs text-gray-400">/{formatMoney(c.tierRate || 30)}</span></>
+                      )}
                     </td>
                     <td className="p-3 text-right font-medium text-gray-800">{s?.totalProductsSold || 0}</td>
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionEarned || 0)}</td>
@@ -379,21 +383,39 @@ export default function Consultants() {
               <input type="text" value={form.whatsapp} onChange={e => setForm({...form, whatsapp: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Base Rate per Sale (ZMW)</label>
-              <input type="number" step="0.01" value={form.commissionRate} onChange={e => setForm({...form, commissionRate: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pay Type</label>
+              <select value={form.payType} onChange={e => setForm({...form, payType: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="per_unit">Per Unit (fixed amount per product sold)</option>
+                <option value="revenue_pct">Revenue % (percentage of total sales)</option>
+              </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tier After (products/month)</label>
-              <input type="number" value={form.tierThreshold} onChange={e => setForm({...form, tierThreshold: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Rate After Tier (ZMW)</label>
-              <input type="number" step="0.01" value={form.tierRate} onChange={e => setForm({...form, tierRate: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
+            {form.payType === 'revenue_pct' ? (
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Commission Rate (%)</label>
+                <input type="number" step="0.01" min="0" max="100" value={form.commissionRate} onChange={e => setForm({...form, commissionRate: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Base Rate per Product (ZMW)</label>
+                  <input type="number" step="0.01" value={form.commissionRate} onChange={e => setForm({...form, commissionRate: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tier After (products/month)</label>
+                  <input type="number" value={form.tierThreshold} onChange={e => setForm({...form, tierThreshold: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Rate After Tier (ZMW)</label>
+                  <input type="number" step="0.01" value={form.tierRate} onChange={e => setForm({...form, tierRate: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Allowance (ZMW)</label>
               <input type="number" step="0.01" value={form.monthlyAllowance} onChange={e => setForm({...form, monthlyAllowance: e.target.value})}
@@ -406,7 +428,9 @@ export default function Consultants() {
               <p className="text-[11px] text-gray-500 mt-1">Used to prorate the first pay cycle if mid-cycle</p>
             </div>
             <div className="sm:col-span-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
-              First {form.tierThreshold || 50} products: {formatMoney(form.commissionRate || 50)}/product, then {formatMoney(form.tierRate || 30)}/product after that
+              {form.payType === 'revenue_pct'
+                ? `Earns ${form.commissionRate || 0}% of total sales revenue each cycle`
+                : `First ${form.tierThreshold || 50} products: ${formatMoney(form.commissionRate || 50)}/product, then ${formatMoney(form.tierRate || 30)}/product after that`}
             </div>
           </div>
           <div>
@@ -564,56 +588,130 @@ export default function Consultants() {
       </Modal>
 
       {/* Record Payment Modal */}
-      <Modal isOpen={showPaymentForm} onClose={() => setShowPaymentForm(false)} title={`Pay ${showDetail?.name || 'Consultant'}`} size="md">
-        <form onSubmit={handlePayment} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (ZMW) *</label>
-              <input type="number" step="0.01" required value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+      <Modal isOpen={showPaymentForm} onClose={() => setShowPaymentForm(false)} title={`Pay ${showDetail?.name || 'Consultant'}`} size="xl">
+        {showPaymentForm && showDetail && (() => {
+          const cycleSales = (showDetail.sales || []);
+          // Flag potential duplicates: same customer + same day + same total
+          const seen = new Map();
+          const dupIds = new Set();
+          for (const s of cycleSales) {
+            const key = `${(s.customerName || '').trim().toLowerCase()}|${s.date?.slice(0, 10)}|${parseFloat(s.totalPrice).toFixed(2)}`;
+            if (seen.has(key)) { dupIds.add(s.id); dupIds.add(seen.get(key)); }
+            else seen.set(key, s.id);
+          }
+          const hasDuplicates = dupIds.size > 0;
+          return (
+            <div className="space-y-4">
+              {/* Sales review */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-gray-700">
+                    Sales this cycle
+                    <span className="ml-2 text-gray-400 font-normal">({cycleSales.length} orders · {cycleSales.reduce((s, x) => s + x.items.reduce((q, i) => q + i.qty, 0), 0)} products · {formatMoney(cycleSales.reduce((s, x) => s + parseFloat(x.totalPrice), 0))})</span>
+                  </h3>
+                </div>
+                {hasDuplicates && (
+                  <div className="mb-2 flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-sm text-amber-800">
+                    <span className="mt-0.5 shrink-0">⚠</span>
+                    <span><strong>Possible duplicate sales detected</strong> — rows highlighted below share the same customer, date, and amount. Verify before paying.</span>
+                  </div>
+                )}
+                {cycleSales.length === 0 ? (
+                  <p className="text-sm text-gray-400 bg-gray-50 rounded-lg p-4 text-center">No sales recorded for this cycle</p>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="max-h-56 overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-gray-50 z-10">
+                          <tr className="border-b border-gray-200">
+                            <th className="text-left p-2 font-medium text-gray-600">Order #</th>
+                            <th className="text-left p-2 font-medium text-gray-600">Date</th>
+                            <th className="text-left p-2 font-medium text-gray-600">Customer</th>
+                            <th className="text-right p-2 font-medium text-gray-600">Qty</th>
+                            <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+                            <th className="text-left p-2 font-medium text-gray-600">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {cycleSales.map(s => {
+                            const qty = (s.items || []).reduce((sum, i) => sum + i.qty, 0);
+                            const isDup = dupIds.has(s.id);
+                            return (
+                              <tr key={s.id} className={`border-b border-gray-50 ${isDup ? 'bg-amber-50' : 'hover:bg-gray-50'}`}>
+                                <td className="p-2 font-mono text-xs text-gray-700">
+                                  {s.orderNumber}
+                                  {isDup && <span className="ml-1 text-amber-600 font-sans" title="Possible duplicate">⚠</span>}
+                                </td>
+                                <td className="p-2 text-gray-600 whitespace-nowrap">{formatDate(s.date)}</td>
+                                <td className="p-2 text-gray-800">{s.customerName || <span className="text-gray-400 italic">Walk-in</span>}</td>
+                                <td className="p-2 text-right font-medium">{qty}</td>
+                                <td className="p-2 text-right font-medium">{formatMoney(s.totalPrice)}</td>
+                                <td className="p-2">
+                                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${s.paymentStatus === 'Paid' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{s.paymentStatus}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <hr className="border-gray-200" />
+              {/* Payment form */}
+              <form onSubmit={handlePayment} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount (ZMW) *</label>
+                    <input type="number" step="0.01" required value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <select value={paymentForm.type} onChange={e => setPaymentForm({...paymentForm, type: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="commission">Commission</option>
+                      <option value="allowance">Communication Allowance</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                    <select value={paymentForm.paymentMethod} onChange={e => setPaymentForm({...paymentForm, paymentMethod: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="">Select</option>
+                      {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+                    <input type="text" value={paymentForm.reference} onChange={e => setPaymentForm({...paymentForm, reference: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Period From</label>
+                    <input type="date" value={paymentForm.periodFrom} onChange={e => setPaymentForm({...paymentForm, periodFrom: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Period To</label>
+                    <input type="date" value={paymentForm.periodTo} onChange={e => setPaymentForm({...paymentForm, periodTo: e.target.value})}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                  <textarea value={paymentForm.notes} onChange={e => setPaymentForm({...paymentForm, notes: e.target.value})} rows={2}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div className="flex gap-3 justify-end pt-2">
+                  <button type="button" onClick={() => setShowPaymentForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                  <button type="submit" className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Record Payment</button>
+                </div>
+              </form>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-              <select value={paymentForm.type} onChange={e => setPaymentForm({...paymentForm, type: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="commission">Commission</option>
-                <option value="allowance">Communication Allowance</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-              <select value={paymentForm.paymentMethod} onChange={e => setPaymentForm({...paymentForm, paymentMethod: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Select</option>
-                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
-              <input type="text" value={paymentForm.reference} onChange={e => setPaymentForm({...paymentForm, reference: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Period From</label>
-              <input type="date" value={paymentForm.periodFrom} onChange={e => setPaymentForm({...paymentForm, periodFrom: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Period To</label>
-              <input type="date" value={paymentForm.periodTo} onChange={e => setPaymentForm({...paymentForm, periodTo: e.target.value})}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-            <textarea value={paymentForm.notes} onChange={e => setPaymentForm({...paymentForm, notes: e.target.value})} rows={2}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
-          <div className="flex gap-3 justify-end pt-2">
-            <button type="button" onClick={() => setShowPaymentForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Record Payment</button>
-          </div>
-        </form>
+          );
+        })()}
       </Modal>
 
       {/* Login Management Modal */}
