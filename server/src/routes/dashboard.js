@@ -25,15 +25,31 @@ router.get('/consultant', async (req, res) => {
     const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
     const productsSoldInMonth = sum(monthSales, s => s.items.reduce((q, i) => q + i.qty, 0));
 
-    const base = parseFloat(consultant.commissionRate);
-    const tier = parseFloat(consultant.tierRate);
-    const threshold = parseInt(consultant.tierThreshold) || 50;
-    const calcComm = (n) => n <= threshold ? n * base : (threshold * base) + ((n - threshold) * tier);
-    const commissionEarnedMonth = calcComm(productsSoldInMonth);
+    const calcComm = (sales) => {
+      if (consultant.payType === 'revenue_pct') {
+        const rate = parseFloat(consultant.commissionRate);
+        const tierRate = parseFloat(consultant.tierRate);
+        const threshold = parseFloat(consultant.tierThreshold) || 0;
+        let comm = 0;
+        for (const s of sales) {
+          for (const item of s.items) {
+            const r = (threshold > 0 && tierRate > 0 && parseFloat(item.unitPrice) > threshold) ? tierRate : rate;
+            comm += parseFloat(item.totalPrice) * r / 100;
+          }
+        }
+        return Math.round(comm * 100) / 100;
+      }
+      const base = parseFloat(consultant.commissionRate);
+      const tier = parseFloat(consultant.tierRate);
+      const th = parseInt(consultant.tierThreshold) || 50;
+      const n = sales.reduce((s, r) => s + r.items.reduce((q, i) => q + i.qty, 0), 0);
+      return n <= th ? n * base : (th * base) + ((n - th) * tier);
+    };
+    const commissionEarnedMonth = calcComm(monthSales);
 
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
     const totalProductsSoldAllTime = sum(allSales, s => s.items.reduce((q, i) => q + i.qty, 0));
-    const commissionEarnedAllTime = calcComm(totalProductsSoldAllTime);
+    const commissionEarnedAllTime = calcComm(allSales);
     const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
     const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
     const balance = commissionEarnedAllTime - commissionPaid;
@@ -188,7 +204,24 @@ router.get('/', requireAdmin, async (req, res) => {
     };
 
     // ---- CONSULTANT IMPACT ----
-    const calcComm = (total, rate, threshold, tierRate) => { const b = parseFloat(rate); const t = parseFloat(tierRate); const th = parseInt(threshold) || 50; if (total <= th) return total * b; return (th * b) + ((total - th) * t); };
+    const calcComm = (c, cSales) => {
+      if (c.payType === 'revenue_pct') {
+        const rate = parseFloat(c.commissionRate);
+        const tierRate = parseFloat(c.tierRate);
+        const threshold = parseFloat(c.tierThreshold) || 0;
+        let comm = 0;
+        for (const s of cSales) {
+          for (const item of s.items) {
+            const r = (threshold > 0 && tierRate > 0 && parseFloat(item.unitPrice) > threshold) ? tierRate : rate;
+            comm += parseFloat(item.totalPrice) * r / 100;
+          }
+        }
+        return Math.round(comm * 100) / 100;
+      }
+      const b = parseFloat(c.commissionRate); const t = parseFloat(c.tierRate); const th = parseInt(c.tierThreshold) || 50;
+      const n = cSales.reduce((s, r) => s + r.items.reduce((q, i) => q + i.qty, 0), 0);
+      return n <= th ? n * b : (th * b) + ((n - th) * t);
+    };
     const consultants2 = await prisma.consultant.findMany({ where: { companyId } });
     let consultantImpact = null;
     if (consultants2.length > 0) {
@@ -206,7 +239,7 @@ router.get('/', requireAdmin, async (req, res) => {
         const cRev = cSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
         const cCOGS = cSales.reduce((s, r) => s + saleCOGS(r), 0);
         const cGP = cRev - cCOGS;
-        const cComm = calcComm(cProdSold, c.commissionRate, c.tierThreshold, c.tierRate);
+        const cComm = calcComm(c, cSales);
         const cPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cAllPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
         return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotal, productsSold: cProdSold, revenue: cRev, grossProfit: cGP, commissionEarned: cComm, commissionPaid: cPaid, allowancePaid: cAllPaid, netProfit: cGP - cComm, avgOrderValue: cTotal > 0 ? cRev / cTotal : 0, balance: cComm - cPaid };

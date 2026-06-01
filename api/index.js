@@ -49,8 +49,18 @@ app.use(express.json({ limit: '2mb' }));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'biztrack-default-secret';
 
-function calcCommission(payType, commissionRate, tierThreshold, tierRate, totalProductsSold, totalRevenue) {
+function calcCommission(payType, commissionRate, tierThreshold, tierRate, totalProductsSold, totalRevenue, items = null) {
   if (payType === 'revenue_pct') {
+    // Price-tiered: items with unitPrice > tierThreshold earn tierRate%, rest earn commissionRate%
+    if (items && items.length > 0 && tierThreshold && parseFloat(tierRate) > 0) {
+      let comm = 0;
+      for (const item of items) {
+        const unitPrice = parseFloat(item.unitPrice);
+        const rate = unitPrice > parseFloat(tierThreshold) ? parseFloat(tierRate) : parseFloat(commissionRate);
+        comm += parseFloat(item.totalPrice) * rate / 100;
+      }
+      return Math.round(comm * 100) / 100;
+    }
     return Math.round((totalRevenue * parseFloat(commissionRate) / 100) * 100) / 100;
   }
   // per_unit: tiered — first N products at base rate, rest at tier rate.
@@ -1152,7 +1162,8 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
         const cRevenue = cSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
         const cCOGS = cSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
         const cGrossProfit = cRevenue - cCOGS;
-        const cCommissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, cProductsSold, cRevenue);
+        const cItems = cSales.flatMap(s => s.items);
+        const cCommissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, cProductsSold, cRevenue, cItems);
         const cPaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cAllowancePaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cNetProfit = cGrossProfit - cCommissionEarned;
@@ -1920,7 +1931,8 @@ app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, as
       const totalSales = cSales.length;
       const totalProductsSold = cSales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-      const commissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, totalProductsSold, totalRevenue);
+      const cItems = cSales.flatMap(s => s.items);
+      const commissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, totalProductsSold, totalRevenue, cItems);
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
@@ -1986,7 +1998,8 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
     const totalSales = sales.length;
     const totalProductsSold = sales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue);
+    const allItems = sales.flatMap(s => s.items);
+    const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue, allItems);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
@@ -2178,12 +2191,14 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
     const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
     const productsSoldInCycle = sum(cycleSales, s => s.items.reduce((q, i) => q + i.qty, 0));
     const revenueInCycle = sum(cycleSales, s => parseFloat(s.totalPrice));
-    const commissionEarnedCycle = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, productsSoldInCycle, revenueInCycle);
+    const cycleItems = cycleSales.flatMap(s => s.items);
+    const commissionEarnedCycle = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, productsSoldInCycle, revenueInCycle, cycleItems);
 
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
     const totalProductsSoldAllTime = sum(allSales, s => s.items.reduce((q, i) => q + i.qty, 0));
     const revenueAllTime = sum(allSales, s => parseFloat(s.totalPrice));
-    const commissionEarnedAllTime = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSoldAllTime, revenueAllTime);
+    const allTimeItems = allSales.flatMap(s => s.items);
+    const commissionEarnedAllTime = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSoldAllTime, revenueAllTime, allTimeItems);
     const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
     const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
     const balance = commissionEarnedAllTime - commissionPaid;
