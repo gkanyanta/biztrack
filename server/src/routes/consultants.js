@@ -151,7 +151,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       const allowanceRemaining = allowanceCap !== null ? Math.max(0, allowanceCap - allowancePaid) : null;
 
       return {
-        consultant: { id: c.id, name: c.name, phone: c.phone, payType: c.payType, commissionRate: c.commissionRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive, startDate: c.startDate },
+        consultant: { id: c.id, name: c.name, phone: c.phone, payType: c.payType, commissionRate: c.commissionRate, tierThreshold: c.tierThreshold, tierRate: c.tierRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive, startDate: c.startDate },
         activeInPeriod,
         prorated: eff.prorated,
         effectiveFrom: eff.effectiveFrom,

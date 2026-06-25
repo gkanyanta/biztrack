@@ -572,6 +572,7 @@ export default function Consultants() {
                             <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                             <th className="text-right p-2 font-medium text-gray-600">Qty</th>
                             <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+                            {showDetail.payType === 'revenue_pct' && <th className="text-right p-2 font-medium text-gray-600">Commission</th>}
                             <th className="text-left p-2 font-medium text-gray-600">Status</th>
                           </tr>
                         </thead>
@@ -579,6 +580,11 @@ export default function Consultants() {
                           {allSales.map(s => {
                             const qty = (s.items || []).reduce((sum, i) => sum + i.qty, 0);
                             const isDup = dupIds.has(s.id);
+                            const saleTotal = parseFloat(s.totalPrice);
+                            const threshold = parseFloat(showDetail.tierThreshold) || 0;
+                            const tierRate = parseFloat(showDetail.tierRate) || 0;
+                            const rate = (threshold > 0 && tierRate > 0 && saleTotal > threshold) ? tierRate : parseFloat(showDetail.commissionRate);
+                            const saleComm = saleTotal * rate / 100;
                             return (
                               <tr key={s.id} className={`border-b border-gray-50 ${isDup ? 'bg-amber-50' : 'hover:bg-gray-50'}`}>
                                 <td className="p-2 font-mono text-xs text-gray-700">
@@ -589,6 +595,12 @@ export default function Consultants() {
                                 <td className="p-2 text-gray-800">{s.customerName || <span className="text-gray-400 italic">Walk-in</span>}</td>
                                 <td className="p-2 text-right font-medium">{qty}</td>
                                 <td className="p-2 text-right font-medium">{formatMoney(s.totalPrice)}</td>
+                                {showDetail.payType === 'revenue_pct' && (
+                                  <td className="p-2 text-right text-xs">
+                                    <span className={saleTotal > threshold && threshold > 0 && tierRate > 0 ? 'text-blue-600' : 'text-gray-600'}>{formatMoney(saleComm)}</span>
+                                    <span className="text-gray-400 ml-1">@{rate}%</span>
+                                  </td>
+                                )}
                                 <td className="p-2">
                                   <span className={`text-xs px-1.5 py-0.5 rounded-full ${s.paymentStatus === 'Paid' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{s.paymentStatus}</span>
                                 </td>
@@ -601,6 +613,7 @@ export default function Consultants() {
                             <td colSpan={3} className="p-2 text-xs font-semibold text-gray-600">Total</td>
                             <td className="p-2 text-right text-xs font-semibold">{allSales.reduce((s, x) => s + (x.items || []).reduce((q, i) => q + i.qty, 0), 0)}</td>
                             <td className="p-2 text-right text-xs font-semibold">{formatMoney(allSales.reduce((s, x) => s + parseFloat(x.totalPrice), 0))}</td>
+                            {showDetail.payType === 'revenue_pct' && <td className="p-2 text-right text-xs font-semibold">{formatMoney(showDetail.commissionEarned || 0)}</td>}
                             <td />
                           </tr>
                         </tfoot>
@@ -698,6 +711,7 @@ export default function Consultants() {
                             <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                             <th className="text-right p-2 font-medium text-gray-600">Qty</th>
                             <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+                            {showDetail.payType === 'revenue_pct' && <th className="text-right p-2 font-medium text-gray-600">Commission</th>}
                             <th className="text-left p-2 font-medium text-gray-600">Status</th>
                           </tr>
                         </thead>
@@ -705,6 +719,11 @@ export default function Consultants() {
                           {cycleSales.map(s => {
                             const qty = (s.items || []).reduce((sum, i) => sum + i.qty, 0);
                             const isDup = dupIds.has(s.id);
+                            const saleTotal = parseFloat(s.totalPrice);
+                            const threshold = parseFloat(showDetail.tierThreshold) || 0;
+                            const tierRate = parseFloat(showDetail.tierRate) || 0;
+                            const rate = (threshold > 0 && tierRate > 0 && saleTotal > threshold) ? tierRate : parseFloat(showDetail.commissionRate);
+                            const saleComm = saleTotal * rate / 100;
                             return (
                               <tr key={s.id} className={`border-b border-gray-50 ${isDup ? 'bg-amber-50' : 'hover:bg-gray-50'}`}>
                                 <td className="p-2 font-mono text-xs text-gray-700">
@@ -715,6 +734,12 @@ export default function Consultants() {
                                 <td className="p-2 text-gray-800">{s.customerName || <span className="text-gray-400 italic">Walk-in</span>}</td>
                                 <td className="p-2 text-right font-medium">{qty}</td>
                                 <td className="p-2 text-right font-medium">{formatMoney(s.totalPrice)}</td>
+                                {showDetail.payType === 'revenue_pct' && (
+                                  <td className="p-2 text-right text-xs">
+                                    <span className={saleTotal > threshold && threshold > 0 && tierRate > 0 ? 'text-blue-600' : 'text-gray-600'}>{formatMoney(saleComm)}</span>
+                                    <span className="text-gray-400 ml-1">@{rate}%</span>
+                                  </td>
+                                )}
                                 <td className="p-2">
                                   <span className={`text-xs px-1.5 py-0.5 rounded-full ${s.paymentStatus === 'Paid' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{s.paymentStatus}</span>
                                 </td>

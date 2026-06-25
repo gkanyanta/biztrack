@@ -34,7 +34,9 @@ export default function ConsultantDashboard() {
             <h2 className="text-xl font-bold">Welcome, {consultant.name}</h2>
             <p className="text-blue-100 text-sm">
               {consultant.payType === 'revenue_pct'
-                ? `Commission: ${parseFloat(consultant.commissionRate)}% of sales revenue`
+                ? consultant.tierThreshold && parseFloat(consultant.tierRate) > 0
+                  ? `Commission: ${parseFloat(consultant.commissionRate)}% (≤K${Number(consultant.tierThreshold).toLocaleString()}) · ${parseFloat(consultant.tierRate)}% (>K${Number(consultant.tierThreshold).toLocaleString()})`
+                  : `Commission: ${parseFloat(consultant.commissionRate)}% of sales revenue`
                 : `Commission: ${formatMoney(consultant.commissionRate)}/item (first ${consultant.tierThreshold}) then ${formatMoney(consultant.tierRate)}/item`}
             </p>
             {cycle && (
