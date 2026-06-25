@@ -328,8 +328,8 @@ export default function Consultants() {
                       {c.payType === 'revenue_pct' ? (
                         c.tierThreshold && parseFloat(c.tierRate) > 0 ? (
                           <span className="text-purple-700 font-medium text-xs leading-snug">
-                            {parseFloat(c.commissionRate)}% ≤K{Number(c.tierThreshold).toLocaleString()}<br />
-                            {parseFloat(c.tierRate)}% &gt;K{Number(c.tierThreshold).toLocaleString()}
+                            {parseFloat(c.commissionRate)}% (sale ≤K{Number(c.tierThreshold).toLocaleString()})<br />
+                            {parseFloat(c.tierRate)}% (sale &gt;K{Number(c.tierThreshold).toLocaleString()})
                           </span>
                         ) : (
                           <span className="text-purple-700 font-medium">{parseFloat(c.commissionRate)}% of revenue</span>
@@ -407,10 +407,10 @@ export default function Consultants() {
                   <p className="text-[11px] text-gray-500 mt-1">Applied to items at or below the price threshold</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Price Threshold (ZMW)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sale Total Threshold (ZMW)</label>
                   <input type="number" min="0" value={form.tierThreshold} onChange={e => setForm({...form, tierThreshold: e.target.value})}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                  <p className="text-[11px] text-gray-500 mt-1">Items priced above this earn the lower rate</p>
+                  <p className="text-[11px] text-gray-500 mt-1">Sales totalling above this earn the lower rate</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Rate Above Threshold (%)</label>
@@ -452,7 +452,7 @@ export default function Consultants() {
             <div className="sm:col-span-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
               {form.payType === 'revenue_pct'
                 ? form.tierThreshold && parseFloat(form.tierRate) > 0
-                  ? `Items ≤K${Number(form.tierThreshold).toLocaleString()}: ${form.commissionRate || 0}% commission — Items >K${Number(form.tierThreshold).toLocaleString()}: ${form.tierRate || 0}% commission`
+                  ? `Sales ≤K${Number(form.tierThreshold).toLocaleString()}: ${form.commissionRate || 0}% commission — Sales >K${Number(form.tierThreshold).toLocaleString()}: ${form.tierRate || 0}% commission`
                   : `Earns ${form.commissionRate || 0}% of all sales revenue each cycle (flat rate)`
                 : `First ${form.tierThreshold || 50} products: ${formatMoney(form.commissionRate || 50)}/product, then ${formatMoney(form.tierRate || 30)}/product after that`}
             </div>

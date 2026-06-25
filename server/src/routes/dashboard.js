@@ -32,10 +32,9 @@ router.get('/consultant', async (req, res) => {
         const threshold = parseFloat(consultant.tierThreshold) || 0;
         let comm = 0;
         for (const s of sales) {
-          for (const item of s.items) {
-            const r = (threshold > 0 && tierRate > 0 && parseFloat(item.unitPrice) > threshold) ? tierRate : rate;
-            comm += parseFloat(item.totalPrice) * r / 100;
-          }
+          const saleTotal = parseFloat(s.totalPrice);
+          const r = (threshold > 0 && tierRate > 0 && saleTotal > threshold) ? tierRate : rate;
+          comm += saleTotal * r / 100;
         }
         return Math.round(comm * 100) / 100;
       }
@@ -211,10 +210,9 @@ router.get('/', requireAdmin, async (req, res) => {
         const threshold = parseFloat(c.tierThreshold) || 0;
         let comm = 0;
         for (const s of cSales) {
-          for (const item of s.items) {
-            const r = (threshold > 0 && tierRate > 0 && parseFloat(item.unitPrice) > threshold) ? tierRate : rate;
-            comm += parseFloat(item.totalPrice) * r / 100;
-          }
+          const saleTotal = parseFloat(s.totalPrice);
+          const r = (threshold > 0 && tierRate > 0 && saleTotal > threshold) ? tierRate : rate;
+          comm += saleTotal * r / 100;
         }
         return Math.round(comm * 100) / 100;
       }

@@ -3,8 +3,17 @@ const bcrypt = require('bcryptjs');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { getConsultantPayPeriod, payPeriodFromLabel, getEffectivePeriod } = require('../utils/payPeriod');
 
-function calcCommission(payType, commissionRate, tierThreshold, tierRate, totalProductsSold, totalRevenue) {
+function calcCommission(payType, commissionRate, tierThreshold, tierRate, totalProductsSold, totalRevenue, sales = null) {
   if (payType === 'revenue_pct') {
+    if (sales && sales.length > 0 && tierThreshold && parseFloat(tierRate) > 0) {
+      let comm = 0;
+      for (const sale of sales) {
+        const saleTotal = parseFloat(sale.totalPrice);
+        const rate = saleTotal > parseFloat(tierThreshold) ? parseFloat(tierRate) : parseFloat(commissionRate);
+        comm += saleTotal * rate / 100;
+      }
+      return Math.round(comm * 100) / 100;
+    }
     return Math.round((totalRevenue * parseFloat(commissionRate) / 100) * 100) / 100;
   }
   // per_unit: tiered — first N products at base rate, rest at tier rate.
@@ -130,7 +139,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       const totalSales = cSales.length;
       const totalProductsSold = cSales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
       const totalRevenue = cSales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-      const commissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, totalProductsSold, totalRevenue);
+      const commissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, totalProductsSold, totalRevenue, cSales);
 
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
@@ -209,7 +218,7 @@ router.get('/:id', async (req, res) => {
     const totalSales = sales.length;
     const totalProductsSold = sales.reduce((sum, s) => sum + s.items.reduce((q, i) => q + i.qty, 0), 0);
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
-    const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue);
+    const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue, sales);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const balance = commissionEarned - commissionPaid;
