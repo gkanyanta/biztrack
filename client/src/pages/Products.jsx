@@ -6,12 +6,14 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import SortableHeader from '../components/SortableHeader';
-import useTableControls from '../hooks/useTableControls';
+import useServerTable from '../hooks/useServerTable';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle, FiPackage, FiUpload, FiImage } from 'react-icons/fi';
 
 export default function Products() {
   const [products, setProducts] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -57,14 +59,17 @@ export default function Products() {
     reader.readAsDataURL(file);
   };
 
+  const table = useServerTable({ pageSize: 25 });
+
   const loadProducts = () => {
     setLoading(true);
-    getProducts({ search: search || undefined, lowStock: filterLowStock || undefined })
-      .then(res => setProducts(res.data))
+    getProducts({ search: search || undefined, lowStock: filterLowStock || undefined, ...table.params })
+      .then(res => { setProducts(res.data.data); setTotal(res.data.total); setTotalPages(res.data.totalPages); })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadProducts(); }, [search, filterLowStock]);
+  useEffect(() => { loadProducts(); }, [search, filterLowStock, table.page, table.pageSize, table.sort]);
+  useEffect(() => { table.setPage(1); }, [search, filterLowStock]);
 
   const openCreate = () => {
     setEditing(null);
@@ -121,8 +126,10 @@ export default function Products() {
     }
   };
 
-  const openRestock = () => {
-    setRestockItems(products.filter(p => p.isActive).map(p => ({ productId: p.id, name: p.name, quantity: 0, currentStock: p.stock })));
+  const openRestock = async () => {
+    // Needs every active product, not just the current page — fetch unpaginated (legacy shape).
+    const res = await getProducts();
+    setRestockItems(res.data.filter(p => p.isActive).map(p => ({ productId: p.id, name: p.name, quantity: 0, currentStock: p.stock })));
     setShowRestock(true);
   };
 
@@ -144,8 +151,6 @@ export default function Products() {
     const res = await getStockLog(product.id);
     setStockLogs(res.data);
   };
-
-  const table = useTableControls(products, { pageSize: 25 });
 
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
@@ -195,7 +200,7 @@ export default function Products() {
               </tr>
             </thead>
             <tbody>
-              {table.pageRows.map(p => (
+              {products.map(p => (
                 <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 ${!p.isActive ? 'opacity-50' : ''}`}>
                   <td className="p-3">
                     <div className="flex items-center gap-2.5">
@@ -240,7 +245,7 @@ export default function Products() {
                   </td>
                 </tr>
               ))}
-              {table.pageRows.length === 0 && (
+              {products.length === 0 && (
                 <tr><td colSpan={8} className="p-8 text-center text-gray-500">
                   <FiPackage className="mx-auto mb-2" size={32} />
                   No products found
@@ -250,7 +255,7 @@ export default function Products() {
           </table>
         </div>
         <Pagination
-          page={table.page} totalPages={table.totalPages} total={table.total}
+          page={table.page} totalPages={totalPages} total={total}
           pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
         />
         </>

@@ -1,10 +1,17 @@
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { validateSale } = require('../middleware/validate');
+const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
 
 const saleInclude = { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true };
+const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerName', totalPrice: 'totalPrice', status: 'status', paymentStatus: 'paymentStatus', date: 'date' };
+
+function calcSaleProfit(s) {
+  const cogs = (s.items || []).reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
+  return parseFloat(s.totalPrice) - cogs - parseFloat(s.shippingCost) + parseFloat(s.shippingCharge) - parseFloat(s.discount);
+}
 
 // ---- Stock source helpers ----
 // Deduct stock for a single sale item, respecting explicit stockSourceConsultantId.
@@ -124,7 +131,7 @@ router.get('/', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { status, paymentStatus, paymentType, from, to, customerId, consultantId, search, creditOverdue } = req.query;
+    const { status, paymentStatus, paymentType, from, to, customerId, consultantId, search, creditOverdue, sortBy, sortDir } = req.query;
     const where = { companyId };
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
@@ -136,8 +143,28 @@ router.get('/', async (req, res) => {
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }, { customerPhone: { contains: search, mode: 'insensitive' } }]; }
-    const sales = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
-    res.json(sales);
+
+    const pagination = parsePagination(req.query);
+    if (!pagination) {
+      const sales = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
+      return res.json(sales);
+    }
+
+    // Profit isn't a DB column (it's derived from item COGS + shipping/discount), so it can't be
+    // pushed into orderBy. Compute it for the whole filtered set once, then slice the requested page.
+    if (sortBy === 'profit') {
+      const all = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
+      all.sort((a, b) => (sortDir === 'asc' ? 1 : -1) * (calcSaleProfit(b) - calcSaleProfit(a)));
+      const page = all.slice(pagination.skip, pagination.skip + pagination.take);
+      return res.json(paginatedResponse(page, all.length, pagination));
+    }
+
+    const orderBy = { [SALE_SORT_FIELDS[sortBy] || 'createdAt']: sortDir === 'asc' ? 'asc' : 'desc' };
+    const [total, sales] = await Promise.all([
+      prisma.sale.count({ where }),
+      prisma.sale.findMany({ where, include: saleInclude, orderBy, skip: pagination.skip, take: pagination.take }),
+    ]);
+    res.json(paginatedResponse(sales, total, pagination));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

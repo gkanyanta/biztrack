@@ -14,6 +14,18 @@ if (!global.__prisma) {
 }
 const prisma = global.__prisma;
 
+// Pagination is opt-in: only kicks in when the caller passes ?page=. Callers that need the
+// full unfiltered array (dropdowns, pickers, reports) keep working unchanged.
+function parsePagination(query, { defaultPageSize = 25, maxPageSize = 100 } = {}) {
+  if (query.page === undefined) return null;
+  const page = Math.max(1, parseInt(query.page) || 1);
+  const pageSize = Math.min(maxPageSize, Math.max(1, parseInt(query.pageSize) || defaultPageSize));
+  return { page, pageSize, skip: (page - 1) * pageSize, take: pageSize };
+}
+function paginatedResponse(data, total, pagination) {
+  return { data, total, page: pagination.page, pageSize: pagination.pageSize, totalPages: Math.max(1, Math.ceil(total / pagination.pageSize)) };
+}
+
 // Security headers
 app.use(helmet());
 
@@ -330,23 +342,59 @@ app.get('/api/v1/products/broken-images', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+const PRODUCT_SELECT_LIST = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true };
+const PRODUCT_SORT_FIELDS = ['name', 'sku', 'category', 'costPrice', 'sellingPrice', 'stock', 'createdAt'];
+
+async function attachProductImages(companyId, products) {
+  if (!products.length) return products;
+  const withImages = await prisma.product.findMany({ where: { companyId, id: { in: products.map(p => p.id) }, imageUrl: { not: null } }, select: { id: true } });
+  const imageIds = new Set(withImages.map(p => p.id));
+  return products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
+}
+
 app.get('/api/v1/products', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { search, category, lowStock } = req.query;
+    const { search, category, lowStock, sortBy, sortDir } = req.query;
     const where = { companyId };
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { sku: { contains: search, mode: 'insensitive' } }]; }
     if (category) where.category = category;
-    let products = await prisma.product.findMany({
-      where,
-      select: { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true },
-      orderBy: { createdAt: 'desc' },
-    });
-    const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
-    const imageIds = new Set(withImages.map(p => p.id));
-    products = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
+
+    const pagination = parsePagination(req.query);
+
+    // Plain column sorts with no low-stock filter can be pushed to the DB directly.
+    const canPushSort = pagination && sortBy && PRODUCT_SORT_FIELDS.includes(sortBy) && lowStock !== 'true';
+    if (canPushSort) {
+      const [total, rows] = await Promise.all([
+        prisma.product.count({ where }),
+        prisma.product.findMany({ where, select: PRODUCT_SELECT_LIST, orderBy: { [sortBy]: sortDir === 'desc' ? 'desc' : 'asc' }, skip: pagination.skip, take: pagination.take }),
+      ]);
+      let products = await attachProductImages(companyId, rows);
+      if (req.user.role === 'consultant') products = products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
+      return res.json(paginatedResponse(products, total, pagination));
+    }
+
+    // Margin is derived from costPrice/sellingPrice, not a DB column — compute across the
+    // whole filtered set, then slice the requested page before responding. Same for lowStock,
+    // since Prisma can't compare stock <= reorderLevel (two columns) directly in a where clause.
+    let products = await prisma.product.findMany({ where, select: PRODUCT_SELECT_LIST, orderBy: { createdAt: 'desc' } });
+    products = await attachProductImages(companyId, products);
+
+    if (sortBy === 'margin') {
+      products = products
+        .map(p => ({ ...p, _margin: parseFloat(p.sellingPrice) > 0 ? (parseFloat(p.sellingPrice) - parseFloat(p.costPrice)) / parseFloat(p.sellingPrice) : 0 }))
+        .sort((a, b) => sortDir === 'desc' ? b._margin - a._margin : a._margin - b._margin)
+        .map(({ _margin, ...rest }) => rest);
+    }
+
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     if (req.user.role === 'consultant') products = products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
+
+    if (pagination) {
+      const total = products.length;
+      const pageRows = products.slice(pagination.skip, pagination.skip + pagination.take);
+      return res.json(paginatedResponse(pageRows, total, pagination));
+    }
     res.json(products);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -515,10 +563,17 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+const SALE_INCLUDE = { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true };
+const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerName', totalPrice: 'totalPrice', status: 'status', paymentStatus: 'paymentStatus', date: 'date' };
+function calcSaleProfit(s) {
+  const cogs = (s.items || []).reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
+  return parseFloat(s.totalPrice) - cogs - parseFloat(s.shippingCost) + parseFloat(s.shippingCharge) - parseFloat(s.discount);
+}
+
 app.get('/api/v1/sales', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { status, paymentStatus, paymentType, from, to, customerId, consultantId, search, creditOverdue } = req.query;
+    const { status, paymentStatus, paymentType, from, to, customerId, consultantId, search, creditOverdue, sortBy, sortDir } = req.query;
     const where = { companyId };
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
@@ -529,8 +584,26 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
     if (consultantId) where.consultantId = consultantId;
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true }, orderBy: { createdAt: 'desc' } });
-    res.json(sales);
+
+    const pagination = parsePagination(req.query);
+    if (!pagination) {
+      const sales = await prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy: { createdAt: 'desc' } });
+      return res.json(sales);
+    }
+
+    if (sortBy === 'profit') {
+      const all = await prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy: { createdAt: 'desc' } });
+      all.sort((a, b) => (sortDir === 'asc' ? 1 : -1) * (calcSaleProfit(b) - calcSaleProfit(a)));
+      const page = all.slice(pagination.skip, pagination.skip + pagination.take);
+      return res.json(paginatedResponse(page, all.length, pagination));
+    }
+
+    const orderBy = { [SALE_SORT_FIELDS[sortBy] || 'createdAt']: sortDir === 'asc' ? 'asc' : 'desc' };
+    const [total, sales] = await Promise.all([
+      prisma.sale.count({ where }),
+      prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy, skip: pagination.skip, take: pagination.take }),
+    ]);
+    res.json(paginatedResponse(sales, total, pagination));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -892,14 +965,32 @@ app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
 });
 
 // ---- EXPENSES ----
+const EXPENSE_SORT_FIELDS = { date: 'date', description: 'description', category: 'category', amount: 'amount' };
+
 app.get('/api/v1/expenses', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { category, from, to } = req.query;
+    const { category, from, to, sortBy, sortDir } = req.query;
     const where = { companyId };
     if (category) where.category = category;
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const expenses = await prisma.expense.findMany({ where, orderBy: { date: 'desc' } });
+    const orderBy = { [EXPENSE_SORT_FIELDS[sortBy] || 'date']: sortDir === 'asc' ? 'asc' : 'desc' };
+
+    const pagination = parsePagination(req.query);
+    if (pagination) {
+      const [total, expenses, sumAgg, byCategory] = await Promise.all([
+        prisma.expense.count({ where }),
+        prisma.expense.findMany({ where, orderBy, skip: pagination.skip, take: pagination.take }),
+        prisma.expense.aggregate({ where, _sum: { amount: true } }),
+        prisma.expense.groupBy({ by: ['category'], where, _sum: { amount: true } }),
+      ]);
+      return res.json({
+        ...paginatedResponse(expenses, total, pagination),
+        sumAmount: sumAgg._sum.amount || 0,
+        byCategory: Object.fromEntries(byCategory.map(c => [c.category, c._sum.amount || 0])),
+      });
+    }
+    const expenses = await prisma.expense.findMany({ where, orderBy });
     res.json(expenses);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -936,13 +1027,32 @@ app.delete('/api/v1/expenses/:id', authenticate, requireAdmin, async (req, res) 
 });
 
 // ---- CUSTOMERS ----
+function customerOrderBy(sortBy, sortDir) {
+  const dir = sortDir === 'asc' ? 'asc' : 'desc';
+  if (sortBy === 'orders') return { sales: { _count: dir } };
+  if (['name', 'phone', 'city', 'source'].includes(sortBy)) return { [sortBy]: dir };
+  return { createdAt: 'desc' };
+}
+
 app.get('/api/v1/customers', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { search } = req.query;
+    const { search, sortBy, sortDir } = req.query;
     const where = { companyId };
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { phone: { contains: search, mode: 'insensitive' } }]; }
-    const customers = await prisma.customer.findMany({ where, include: { _count: { select: { sales: true } } }, orderBy: { createdAt: 'desc' } });
+    const orderBy = customerOrderBy(sortBy, sortDir);
+
+    const pagination = parsePagination(req.query);
+    if (pagination) {
+      const [total, customers, repeatGroups] = await Promise.all([
+        prisma.customer.count({ where }),
+        prisma.customer.findMany({ where, include: { _count: { select: { sales: true } } }, orderBy, skip: pagination.skip, take: pagination.take }),
+        prisma.sale.groupBy({ by: ['customerId'], where: { companyId, customerId: { not: null } }, _count: { customerId: true } }),
+      ]);
+      const repeatCustomers = repeatGroups.filter(g => g._count.customerId > 1).length;
+      return res.json({ ...paginatedResponse(customers, total, pagination), repeatCustomers });
+    }
+    const customers = await prisma.customer.findMany({ where, include: { _count: { select: { sales: true } } }, orderBy });
     res.json(customers);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });

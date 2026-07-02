@@ -9,7 +9,7 @@ import ReceiptButton from '../components/ReceiptButton';
 import Pagination from '../components/Pagination';
 import SortableHeader from '../components/SortableHeader';
 import OrderTimeline from '../components/OrderTimeline';
-import useTableControls from '../hooks/useTableControls';
+import useServerTable from '../hooks/useServerTable';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera } from 'react-icons/fi';
 import BarcodeScanner from '../components/BarcodeScanner';
@@ -19,6 +19,8 @@ export default function Sales() {
   const { user } = useAuth();
   const isConsultant = user?.role === 'consultant';
   const [sales, setSales] = useState([]);
+  const [salesTotal, setSalesTotal] = useState(0);
+  const [salesTotalPages, setSalesTotalPages] = useState(1);
   const [products, setProducts] = useState([]);
   const [shippingRates, setShippingRates] = useState([]);
   const [consultants, setConsultants] = useState([]);
@@ -46,14 +48,17 @@ export default function Sales() {
   const [creditPaymentForm, setCreditPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
   const [showPaymentForm, setShowPaymentForm] = useState(false);
 
+  const salesTable = useServerTable({ pageSize: 25 });
+
   const loadSales = () => {
     setLoading(true);
-    getSales({ search: search || undefined, status: statusFilter || undefined })
-      .then(res => setSales(res.data))
+    getSales({ search: search || undefined, status: statusFilter || undefined, ...salesTable.params })
+      .then(res => { setSales(res.data.data); setSalesTotal(res.data.total); setSalesTotalPages(res.data.totalPages); })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadSales(); }, [search, statusFilter]);
+  useEffect(() => { loadSales(); }, [search, statusFilter, salesTable.page, salesTable.pageSize, salesTable.sort]);
+  useEffect(() => { salesTable.setPage(1); }, [search, statusFilter]);
   useEffect(() => {
     getProducts().then(res => setProducts(res.data.filter(p => p.isActive)));
     getShippingRates().then(res => setShippingRates(res.data));
@@ -207,8 +212,6 @@ export default function Sales() {
     !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase())
   );
 
-  const salesTable = useTableControls(sales, { pageSize: 25 });
-
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       {/* Quick Add from Product Tiles */}
@@ -300,7 +303,7 @@ export default function Sales() {
                 </tr>
               </thead>
               <tbody>
-                {salesTable.pageRows.map(s => (
+                {sales.map(s => (
                   <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="p-3">
                       <div className="font-medium text-gray-800">{s.orderNumber}</div>
@@ -336,7 +339,7 @@ export default function Sales() {
                     </td>
                   </tr>
                 ))}
-                {salesTable.pageRows.length === 0 && (
+                {sales.length === 0 && (
                   <tr><td colSpan={isConsultant ? 7 : 8} className="p-8 text-center text-gray-500">
                     <FiShoppingCart className="mx-auto mb-2" size={32} />No sales found
                   </td></tr>
@@ -346,8 +349,8 @@ export default function Sales() {
           </div>
           <Pagination
             page={salesTable.page}
-            totalPages={salesTable.totalPages}
-            total={salesTable.total}
+            totalPages={salesTotalPages}
+            total={salesTotal}
             pageSize={salesTable.pageSize}
             onPageChange={salesTable.setPage}
             onPageSizeChange={salesTable.setPageSize}

@@ -7,12 +7,15 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge } from '../components/StatusBadge';
 import Pagination from '../components/Pagination';
 import SortableHeader from '../components/SortableHeader';
-import useTableControls from '../hooks/useTableControls';
+import useServerTable from '../hooks/useServerTable';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiUsers, FiEye } from 'react-icons/fi';
 
 export default function Customers() {
   const [customers, setCustomers] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [repeatCustomers, setRepeatCustomers] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -24,14 +27,17 @@ export default function Customers() {
   const emptyForm = { name: '', phone: '', whatsapp: '', city: '', email: '', source: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
 
+  const table = useServerTable({ pageSize: 25 });
+
   const loadCustomers = () => {
     setLoading(true);
-    getCustomers({ search: search || undefined })
-      .then(res => setCustomers(res.data))
+    getCustomers({ search: search || undefined, ...table.params })
+      .then(res => { setCustomers(res.data.data); setTotal(res.data.total); setTotalPages(res.data.totalPages); setRepeatCustomers(res.data.repeatCustomers); })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadCustomers(); }, [search]);
+  useEffect(() => { loadCustomers(); }, [search, table.page, table.pageSize, table.sort]);
+  useEffect(() => { table.setPage(1); }, [search]);
 
   const openCreate = () => { setEditing(null); setForm(emptyForm); setShowForm(true); };
   const openEdit = (c) => {
@@ -72,9 +78,6 @@ export default function Customers() {
     setOrders(res.data);
   };
 
-  const repeatCustomers = customers.filter(c => (c._count?.sales || 0) > 1).length;
-  const table = useTableControls(customers, { pageSize: 25 });
-
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
       <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
@@ -85,7 +88,7 @@ export default function Customers() {
               className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm w-full sm:w-64 outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div className="text-sm text-gray-500">
-            {customers.length} total / {repeatCustomers} repeat
+            {total} total / {repeatCustomers} repeat
           </div>
         </div>
         <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
@@ -108,7 +111,7 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {table.pageRows.map(c => (
+              {customers.map(c => (
                 <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="p-3">
                     <div className="font-medium text-gray-800">{c.name}</div>
@@ -131,7 +134,7 @@ export default function Customers() {
                   </td>
                 </tr>
               ))}
-              {table.pageRows.length === 0 && (
+              {customers.length === 0 && (
                 <tr><td colSpan={6} className="p-8 text-center text-gray-500">
                   <FiUsers className="mx-auto mb-2" size={32} />No customers found
                 </td></tr>
@@ -140,7 +143,7 @@ export default function Customers() {
           </table>
         </div>
         <Pagination
-          page={table.page} totalPages={table.totalPages} total={table.total}
+          page={table.page} totalPages={totalPages} total={total}
           pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
         />
         </>

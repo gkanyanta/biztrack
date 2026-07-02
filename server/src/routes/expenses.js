@@ -1,19 +1,40 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { validateExpense } = require('../middleware/validate');
+const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
 router.use(requireAdmin);
+
+const SORT_FIELDS = { date: 'date', description: 'description', category: 'category', amount: 'amount' };
 
 router.get('/', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { category, from, to } = req.query;
+    const { category, from, to, sortBy, sortDir } = req.query;
     const where = { companyId };
     if (category) where.category = category;
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
-    const expenses = await prisma.expense.findMany({ where, orderBy: { date: 'desc' } });
+    const orderBy = { [SORT_FIELDS[sortBy] || 'date']: sortDir === 'asc' ? 'asc' : 'desc' };
+
+    const pagination = parsePagination(req.query);
+    if (pagination) {
+      // Sum/category breakdown must reflect the whole filtered set, not just the current page —
+      // these are financial totals, not a per-page display concern.
+      const [total, expenses, sumAgg, byCategory] = await Promise.all([
+        prisma.expense.count({ where }),
+        prisma.expense.findMany({ where, orderBy, skip: pagination.skip, take: pagination.take }),
+        prisma.expense.aggregate({ where, _sum: { amount: true } }),
+        prisma.expense.groupBy({ by: ['category'], where, _sum: { amount: true } }),
+      ]);
+      return res.json({
+        ...paginatedResponse(expenses, total, pagination),
+        sumAmount: sumAgg._sum.amount || 0,
+        byCategory: Object.fromEntries(byCategory.map(c => [c.category, c._sum.amount || 0])),
+      });
+    }
+    const expenses = await prisma.expense.findMany({ where, orderBy });
     res.json(expenses);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });

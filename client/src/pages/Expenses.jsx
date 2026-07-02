@@ -6,12 +6,16 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import SortableHeader from '../components/SortableHeader';
-import useTableControls from '../hooks/useTableControls';
+import useServerTable from '../hooks/useServerTable';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiDollarSign } from 'react-icons/fi';
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [sumAmount, setSumAmount] = useState(0);
+  const [byCategory, setByCategory] = useState({});
   const [loading, setLoading] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -23,14 +27,23 @@ export default function Expenses() {
   const emptyForm = { description: '', amount: '', category: '', date: '', paymentMethod: '', isRecurring: false, frequency: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
 
+  const table = useServerTable({ pageSize: 25 });
+
   const loadExpenses = () => {
     setLoading(true);
-    getExpenses({ category: categoryFilter || undefined, from: fromDate || undefined, to: toDate || undefined })
-      .then(res => setExpenses(res.data))
+    getExpenses({ category: categoryFilter || undefined, from: fromDate || undefined, to: toDate || undefined, ...table.params })
+      .then(res => {
+        setExpenses(res.data.data);
+        setTotalCount(res.data.total);
+        setTotalPages(res.data.totalPages);
+        setSumAmount(res.data.sumAmount);
+        setByCategory(res.data.byCategory);
+      })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadExpenses(); }, [categoryFilter, fromDate, toDate]);
+  useEffect(() => { loadExpenses(); }, [categoryFilter, fromDate, toDate, table.page, table.pageSize, table.sort]);
+  useEffect(() => { table.setPage(1); }, [categoryFilter, fromDate, toDate]);
 
   const openCreate = () => { setEditing(null); setForm(emptyForm); setShowForm(true); };
 
@@ -87,15 +100,6 @@ export default function Expenses() {
     } catch { toast.error('Error deleting expense'); }
   };
 
-  const total = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
-  const table = useTableControls(expenses, { pageSize: 25 });
-
-  // Group by category summary
-  const byCat = {};
-  expenses.forEach(e => {
-    if (!byCat[e.category]) byCat[e.category] = 0;
-    byCat[e.category] += parseFloat(e.amount);
-  });
 
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
@@ -119,8 +123,8 @@ export default function Expenses() {
       {/* Summary */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
         <div className="flex flex-wrap gap-4">
-          <div className="text-sm"><span className="text-gray-500">Total:</span> <span className="font-bold text-gray-800">{formatMoney(total)}</span></div>
-          {Object.entries(byCat).map(([cat, amt]) => (
+          <div className="text-sm"><span className="text-gray-500">Total:</span> <span className="font-bold text-gray-800">{formatMoney(sumAmount)}</span></div>
+          {Object.entries(byCategory).map(([cat, amt]) => (
             <div key={cat} className="text-sm"><span className="text-gray-500">{cat}:</span> <span className="font-medium">{formatMoney(amt)}</span></div>
           ))}
         </div>
@@ -141,7 +145,7 @@ export default function Expenses() {
               </tr>
             </thead>
             <tbody>
-              {table.pageRows.map(e => (
+              {expenses.map(e => (
                 <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="p-3 text-gray-600">{formatDate(e.date)}</td>
                   <td className="p-3">
@@ -160,7 +164,7 @@ export default function Expenses() {
                   </td>
                 </tr>
               ))}
-              {table.pageRows.length === 0 && (
+              {expenses.length === 0 && (
                 <tr><td colSpan={6} className="p-8 text-center text-gray-500">
                   <FiDollarSign className="mx-auto mb-2" size={32} />No expenses found
                 </td></tr>
@@ -169,7 +173,7 @@ export default function Expenses() {
           </table>
         </div>
         <Pagination
-          page={table.page} totalPages={table.totalPages} total={table.total}
+          page={table.page} totalPages={totalPages} total={totalCount}
           pageSize={table.pageSize} onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
         />
         </>
