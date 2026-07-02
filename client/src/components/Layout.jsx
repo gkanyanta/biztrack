@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Link, useLocation, Outlet } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import useDarkMode from '../hooks/useDarkMode';
+import useNewOrderNotifications from '../hooks/useNewOrderNotifications';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell
 } from 'react-icons/fi';
 
 const adminNavItems = [
@@ -37,8 +38,10 @@ const consultantNavItems = [
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dark, toggleDark] = useDarkMode();
+  const { count: newOrderCount, acknowledge: acknowledgeNewOrders } = useNewOrderNotifications(user?.role === 'admin');
   const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : adminNavItems;
 
   return (
@@ -107,6 +110,20 @@ export default function Layout() {
             {navItems.find(i => i.path === location.pathname || (i.path !== '/' && location.pathname.startsWith(i.path)))?.label || 'BizTrack'}
           </div>
           <div className="flex items-center gap-3">
+            {user?.role === 'admin' && (
+              <button
+                onClick={() => { acknowledgeNewOrders(); navigate('/sales'); }}
+                className="relative text-gray-500 hover:text-gray-700 p-1.5 rounded-lg hover:bg-gray-100"
+                title={newOrderCount > 0 ? `${newOrderCount} new online order${newOrderCount !== 1 ? 's' : ''}` : 'No new orders'}
+              >
+                <FiBell size={18} />
+                {newOrderCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                    {newOrderCount > 9 ? '9+' : newOrderCount}
+                  </span>
+                )}
+              </button>
+            )}
             <button
               onClick={toggleDark}
               className="text-gray-500 hover:text-gray-700 p-1.5 rounded-lg hover:bg-gray-100"

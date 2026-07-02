@@ -535,6 +535,20 @@ function normalizeItemStockSource(item, user) {
 }
 
 // ---- SALES ----
+// Lightweight poll target for the admin bell icon — only online-store orders, admin-only.
+app.get('/api/v1/sales/notifications/new', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const since = req.query.since ? new Date(req.query.since) : new Date(0);
+    const where = { companyId, source: 'Online Store', createdAt: { gt: since } };
+    const [count, orders] = await Promise.all([
+      prisma.sale.count({ where }),
+      prisma.sale.findMany({ where, select: { id: true, orderNumber: true, customerName: true, totalPrice: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 10 }),
+    ]);
+    res.json({ count, orders });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;

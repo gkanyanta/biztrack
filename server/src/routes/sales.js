@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireAdmin } = require('../middleware/auth');
 const { validateSale } = require('../middleware/validate');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
@@ -96,6 +96,22 @@ function normalizeItemStockSource(item, user) {
   }
   return src;
 }
+
+// ---- NEW ORDER NOTIFICATIONS (must be before /:id routes) ----
+// Lightweight poll target for the admin bell icon — only online-store orders, admin-only.
+router.get('/notifications/new', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const since = req.query.since ? new Date(req.query.since) : new Date(0);
+    const where = { companyId, source: 'Online Store', createdAt: { gt: since } };
+    const [count, orders] = await Promise.all([
+      prisma.sale.count({ where }),
+      prisma.sale.findMany({ where, select: { id: true, orderNumber: true, customerName: true, totalPrice: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 10 }),
+    ]);
+    res.json({ count, orders });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
 
 // ---- CREDIT SUMMARY (must be before /:id routes) ----
 router.get('/credit/summary', async (req, res) => {

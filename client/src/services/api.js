@@ -49,6 +49,7 @@ export const deleteSale = (id) => api.delete(`/sales/${id}`);
 export const recordCreditPayment = (saleId, data) => api.post(`/sales/${saleId}/payments`, data);
 export const getCreditPayments = (saleId) => api.get(`/sales/${saleId}/payments`);
 export const getCreditSummary = () => api.get('/sales/credit/summary');
+export const getNewOrderNotifications = (since) => api.get('/sales/notifications/new', { params: { since } });
 export const sendReminder = (saleId, data) => api.post(`/sales/${saleId}/reminders`, data);
 export const getSaleReceipt = (id) => api.get(`/sales/${id}/receipt`);
 
