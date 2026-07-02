@@ -81,6 +81,8 @@ model StockLog {
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
+
+  @@index([companyId, productId])
 }
 
 model Sale {
@@ -118,6 +120,8 @@ model Sale {
   debtReminders   DebtReminder[]
 
   @@unique([companyId, orderNumber])
+  @@index([companyId, date])
+  @@index([consultantId])
 }
 
 model SaleItem {
@@ -133,6 +137,9 @@ model SaleItem {
   serialNumber String?
   stockSourceConsultantId String?
   stockSourceConsultant   Consultant? @relation("StockSource", fields: [stockSourceConsultantId], references: [id])
+
+  @@index([saleId])
+  @@index([productId])
 }
 
 model OrderStatusLog {
@@ -144,6 +151,9 @@ model OrderStatusLog {
   companyId  String
   company    Company  @relation(fields: [companyId], references: [id])
   createdAt  DateTime @default(now())
+
+  @@index([saleId])
+  @@index([companyId])
 }
 
 model Customer {
@@ -159,6 +169,8 @@ model Customer {
   company   Company  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
   sales     Sale[]
+
+  @@index([companyId, phone])
 }
 
 model Expense {
@@ -174,6 +186,8 @@ model Expense {
   companyId     String
   company       Company  @relation(fields: [companyId], references: [id])
   createdAt     DateTime @default(now())
+
+  @@index([companyId, date])
 }
 
 model ShippingRate {
@@ -208,6 +222,9 @@ model CreditPayment {
   companyId     String
   company       Company  @relation(fields: [companyId], references: [id])
   createdAt     DateTime @default(now())
+
+  @@index([saleId])
+  @@index([companyId])
 }
 
 model DebtReminder {
@@ -219,6 +236,9 @@ model DebtReminder {
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
   sentAt    DateTime @default(now())
+
+  @@index([saleId])
+  @@index([companyId])
 }
 
 model Consultant {
@@ -260,6 +280,9 @@ model CommissionPayment {
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id])
   createdAt     DateTime   @default(now())
+
+  @@index([consultantId])
+  @@index([companyId])
 }
 
 model ConsultantStock {
@@ -274,6 +297,7 @@ model ConsultantStock {
   updatedAt     DateTime   @updatedAt
 
   @@unique([consultantId, productId])
+  @@index([companyId])
 }
 
 model StockTransfer {
@@ -288,6 +312,10 @@ model StockTransfer {
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id])
   createdAt     DateTime   @default(now())
+
+  @@index([consultantId])
+  @@index([companyId])
+  @@index([productId])
 }
 
 model SalesTarget {
