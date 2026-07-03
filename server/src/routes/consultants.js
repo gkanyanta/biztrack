@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 const { getConsultantPayPeriod, payPeriodFromLabel, getEffectivePeriod } = require('../utils/payPeriod');
 
 function calcCommission(payType, commissionRate, tierThreshold, tierRate, totalProductsSold, totalRevenue, sales = null) {
@@ -68,6 +68,37 @@ router.get('/me/transfers', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- STOCK LOCATIONS (e.g. "My Car") ----
+// These are Consultant rows flagged isStockLocation=true — they reuse the mini-stock/transfer
+// machinery but earn no commission and are excluded from commission/pay-statement calculations.
+// Scoped separately from the main roster so the inventory role never sees the sales-consultant
+// list or commission data, only the stock pools it's allowed to dispatch into.
+router.get('/stock-locations', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const locations = await prisma.consultant.findMany({
+      where: { companyId, isStockLocation: true, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(locations);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.post('/stock-locations', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const location = await prisma.consultant.create({
+      data: { name, companyId, isStockLocation: true, commissionRate: 0, tierThreshold: 0, tierRate: 0, monthlyAllowance: 0 },
+    });
+    res.status(201).json({ id: location.id, name: location.name });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 // ---- LIST CONSULTANTS (admin only) ----
 router.get('/', requireAdmin, async (req, res) => {
   try {
@@ -115,7 +146,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
 
     const [sales, consultants, payments] = await Promise.all([
       prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } }),
-      prisma.consultant.findMany({ where: { companyId } }),
+      prisma.consultant.findMany({ where: { companyId, isStockLocation: false } }),
       prisma.commissionPayment.findMany({ where: paymentWhere }),
     ]);
 
@@ -397,13 +428,14 @@ router.get('/:id/stock', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// Transfer stock to consultant (admin only)
-router.post('/:id/stock/transfer', requireAdmin, async (req, res) => {
+// Transfer stock to consultant (admin, or inventory role dispatching to a stock location like "My Car")
+router.post('/:id/stock/transfer', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    if (req.user.role === 'inventory' && !consultant.isStockLocation) return res.status(403).json({ error: 'Inventory staff can only dispatch to stock locations, not sales consultants' });
 
     const { productId, qty, notes } = req.body;
     if (!productId || !qty || parseInt(qty) <= 0) return res.status(400).json({ error: 'Product and quantity required' });
@@ -433,13 +465,14 @@ router.post('/:id/stock/transfer', requireAdmin, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// Return stock from consultant (admin only)
-router.post('/:id/stock/return', requireAdmin, async (req, res) => {
+// Return stock from consultant (admin, or inventory role returning from a stock location)
+router.post('/:id/stock/return', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    if (req.user.role === 'inventory' && !consultant.isStockLocation) return res.status(403).json({ error: 'Inventory staff can only return stock from stock locations, not sales consultants' });
 
     const { productId, qty, notes } = req.body;
     if (!productId || !qty || parseInt(qty) <= 0) return res.status(400).json({ error: 'Product and quantity required' });

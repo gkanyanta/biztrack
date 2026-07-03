@@ -533,7 +533,7 @@ export default function Sales() {
                 <select value={form.consultantId} onChange={e => setForm({...form, consultantId: e.target.value})}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">Direct Sale (No Consultant)</option>
-                  {consultants.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {consultants.filter(c => !c.isStockLocation).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             )}

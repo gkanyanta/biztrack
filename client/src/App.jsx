@@ -21,6 +21,7 @@ import ConsultantDashboard from './pages/ConsultantDashboard';
 import ConsultantStock from './pages/ConsultantStock';
 import Targets from './pages/Targets';
 import MoneySplits from './pages/MoneySplits';
+import Warehouse from './pages/Warehouse';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -36,10 +37,25 @@ function DashboardRouter() {
   const { user } = useAuth();
   if (user?.role === 'superadmin') return <Navigate to="/superadmin" />;
   if (user?.role === 'consultant') return <ConsultantDashboard />;
+  if (user?.role === 'inventory') return <Navigate to="/warehouse" />;
   return <Dashboard />;
 }
 
 function AdminOnly({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'consultant' || user?.role === 'inventory') return <Navigate to="/" />;
+  return children;
+}
+
+// Sales/credit/my-stock are open to admin+consultant today; inventory role gets its own
+// restricted Warehouse page instead, since those pages expose pricing/CRUD it shouldn't see.
+function NotInventory({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'inventory') return <Navigate to="/warehouse" />;
+  return children;
+}
+
+function WarehouseRoute({ children }) {
   const { user } = useAuth();
   if (user?.role === 'consultant') return <Navigate to="/" />;
   return children;
@@ -66,14 +82,15 @@ function AppRoutes() {
         <Route index element={<DashboardRouter />} />
         <Route path="superadmin" element={<SuperadminPanel />} />
         <Route path="products" element={<AdminOnly><Products /></AdminOnly>} />
-        <Route path="sales" element={<Sales />} />
+        <Route path="sales" element={<NotInventory><Sales /></NotInventory>} />
         <Route path="expenses" element={<AdminOnly><Expenses /></AdminOnly>} />
         <Route path="customers" element={<AdminOnly><Customers /></AdminOnly>} />
         <Route path="shipping" element={<AdminOnly><Shipping /></AdminOnly>} />
-        <Route path="credit" element={<CreditTracker />} />
+        <Route path="credit" element={<NotInventory><CreditTracker /></NotInventory>} />
         <Route path="inventory" element={<AdminOnly><Inventory /></AdminOnly>} />
         <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
-        <Route path="my-stock" element={<ConsultantStock />} />
+        <Route path="my-stock" element={<NotInventory><ConsultantStock /></NotInventory>} />
+        <Route path="warehouse" element={<WarehouseRoute><Warehouse /></WarehouseRoute>} />
         <Route path="reports" element={<AdminOnly><Reports /></AdminOnly>} />
         <Route path="targets" element={<AdminOnly><Targets /></AdminOnly>} />
         <Route path="money-splits" element={<AdminOnly><MoneySplits /></AdminOnly>} />

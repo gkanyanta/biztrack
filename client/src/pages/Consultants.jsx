@@ -60,7 +60,9 @@ export default function Consultants() {
       getConsultants(),
       getCommissionSummary({ period: periodLabel })
     ]).then(([cRes, sRes]) => {
-      setConsultants(cRes.data);
+      // Stock locations (e.g. "My Car") are Consultant rows under the hood but aren't
+      // salespeople — this page is sales-commission management, so keep them out of it.
+      setConsultants(cRes.data.filter(c => !c.isStockLocation));
       setSummary(sRes.data);
     }).finally(() => setLoading(false));
   };

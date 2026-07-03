@@ -220,7 +220,7 @@ router.get('/', requireAdmin, async (req, res) => {
       const n = cSales.reduce((s, r) => s + r.items.reduce((q, i) => q + i.qty, 0), 0);
       return n <= th ? n * b : (th * b) + ((n - th) * t);
     };
-    const consultants2 = await prisma.consultant.findMany({ where: { companyId } });
+    const consultants2 = await prisma.consultant.findMany({ where: { companyId, isStockLocation: false } });
     let consultantImpact = null;
     if (consultants2.length > 0) {
       const consultantSales2 = currentMonthSales.filter(s => s.consultantId);

@@ -147,6 +147,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireAdminOrInventory(req, res, next) {
+  if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'inventory') {
+    return res.status(403).json({ error: 'Admin or inventory access required' });
+  }
+  next();
+}
+
 // ---- INPUT VALIDATION ----
 function sanitizeString(val, maxLength = 500) {
   if (typeof val !== 'string') return val;
@@ -371,6 +378,7 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
       ]);
       let products = await attachProductImages(companyId, rows);
       if (req.user.role === 'consultant') products = products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
+      else if (req.user.role === 'inventory') products = products.map(({ costPrice, supplier, ...rest }) => rest);
       return res.json(paginatedResponse(products, total, pagination));
     }
 
@@ -389,6 +397,7 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
 
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     if (req.user.role === 'consultant') products = products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
+    else if (req.user.role === 'inventory') products = products.map(({ costPrice, supplier, ...rest }) => rest);
 
     if (pagination) {
       const total = products.length;
@@ -408,11 +417,15 @@ app.get('/api/v1/products/:id', authenticate, async (req, res) => {
       const { costPrice, supplier, reorderLevel, stockLogs, ...rest } = product;
       return res.json(rest);
     }
+    if (req.user.role === 'inventory') {
+      const { costPrice, supplier, ...rest } = product;
+      return res.json(rest);
+    }
     res.json(product);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.get('/api/v1/products/:id/stock-log', authenticate, requireAdmin, async (req, res) => {
+app.get('/api/v1/products/:id/stock-log', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const logs = await prisma.stockLog.findMany({ where: { productId: req.params.id, companyId }, orderBy: { createdAt: 'desc' } });
@@ -464,7 +477,7 @@ app.delete('/api/v1/products/:id', authenticate, requireAdmin, async (req, res) 
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/products/restock', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/v1/products/restock', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { items } = req.body;
@@ -1268,7 +1281,7 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     };
 
     // ---- CONSULTANT IMPACT ----
-    const consultants = await prisma.consultant.findMany({ where: { companyId } });
+    const consultants = await prisma.consultant.findMany({ where: { companyId, isStockLocation: false } });
     let consultantImpact = null;
     if (consultants.length > 0) {
       const consultantSales = thisMonthSales.filter(s => s.consultantId);
@@ -2018,6 +2031,32 @@ app.get('/api/v1/consultants/me/transfers', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// Stock locations (e.g. "My Car") — Consultant rows flagged isStockLocation=true. Reuse the
+// mini-stock/transfer machinery but earn no commission and are excluded from commission calcs.
+app.get('/api/v1/consultants/stock-locations', authenticate, requireAdminOrInventory, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const locations = await prisma.consultant.findMany({
+      where: { companyId, isStockLocation: true, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(locations);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/consultants/stock-locations', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const location = await prisma.consultant.create({
+      data: { name, companyId, isStockLocation: true, commissionRate: 0, tierThreshold: 0, tierRate: 0, monthlyAllowance: 0 },
+    });
+    res.status(201).json({ id: location.id, name: location.name });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
@@ -2038,7 +2077,7 @@ app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, as
 
     const [sales, consultants, payments] = await Promise.all([
       prisma.sale.findMany({ where: saleWhere, include: { consultant: true, items: true } }),
-      prisma.consultant.findMany({ where: { companyId } }),
+      prisma.consultant.findMany({ where: { companyId, isStockLocation: false } }),
       prisma.commissionPayment.findMany({ where: paymentWhere }),
     ]);
 
@@ -2244,11 +2283,12 @@ app.get('/api/v1/consultants/:id/stock', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/consultants/:id/stock/transfer', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/v1/consultants/:id/stock/transfer', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    if (req.user.role === 'inventory' && !consultant.isStockLocation) return res.status(403).json({ error: 'Inventory staff can only dispatch to stock locations, not sales consultants' });
     const { productId, qty, notes } = req.body;
     if (!productId || !qty || parseInt(qty) <= 0) return res.status(400).json({ error: 'Product and quantity required' });
     const quantity = parseInt(qty);
@@ -2263,11 +2303,12 @@ app.post('/api/v1/consultants/:id/stock/transfer', authenticate, requireAdmin, a
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/consultants/:id/stock/return', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/v1/consultants/:id/stock/return', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const consultant = await prisma.consultant.findFirst({ where: { id: req.params.id, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    if (req.user.role === 'inventory' && !consultant.isStockLocation) return res.status(403).json({ error: 'Inventory staff can only return stock from stock locations, not sales consultants' });
     const { productId, qty, notes } = req.body;
     if (!productId || !qty || parseInt(qty) <= 0) return res.status(400).json({ error: 'Product and quantity required' });
     const quantity = parseInt(qty);
@@ -2379,6 +2420,61 @@ app.delete('/api/v1/consultants/:id/login', authenticate, requireAdmin, async (r
     await prisma.consultant.update({ where: { id: consultant.id }, data: { userId: null } });
     await prisma.user.delete({ where: { id: userId } });
     res.json({ message: 'Login revoked' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- STAFF (non-consultant logins, e.g. inventory/warehouse role) ----
+const STAFF_ALLOWED_ROLES = ['inventory'];
+
+app.get('/api/v1/staff', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const staff = await prisma.user.findMany({
+      where: { companyId, role: { in: STAFF_ALLOWED_ROLES } },
+      select: { id: true, username: true, name: true, role: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(staff);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/staff', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { username, password, name, role } = req.body;
+    if (!STAFF_ALLOWED_ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    if (!username || typeof username !== 'string' || username.length < 3 || username.length > 50) return res.status(400).json({ error: 'Username must be 3-50 characters' });
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
+    if (!password || typeof password !== 'string' || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const existing = await prisma.user.findUnique({ where: { username } });
+    if (existing) return res.status(400).json({ error: 'Username already taken' });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({ data: { username, password: hashed, name, role, companyId } });
+    res.status(201).json({ id: user.id, username: user.username, name: user.name, role: user.role });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/staff/:id/reset-password', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const staffUser = await prisma.user.findFirst({ where: { id: req.params.id, companyId, role: { in: STAFF_ALLOWED_ROLES } } });
+    if (!staffUser) return res.status(404).json({ error: 'Staff account not found' });
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const hashed = await bcrypt.hash(password, 10);
+    await prisma.user.update({ where: { id: staffUser.id }, data: { password: hashed } });
+    res.json({ message: 'Password reset' });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.delete('/api/v1/staff/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const staffUser = await prisma.user.findFirst({ where: { id: req.params.id, companyId, role: { in: STAFF_ALLOWED_ROLES } } });
+    if (!staffUser) return res.status(404).json({ error: 'Staff account not found' });
+    await prisma.user.delete({ where: { id: staffUser.id } });
+    res.json({ message: 'Staff account removed' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

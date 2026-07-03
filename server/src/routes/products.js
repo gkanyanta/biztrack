@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 const { validateProduct } = require('../middleware/validate');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
@@ -7,6 +7,11 @@ router.use(authenticate);
 
 function stripForConsultant(products) {
   return products.map(({ costPrice, supplier, reorderLevel, ...rest }) => rest);
+}
+
+// Inventory role needs reorderLevel (their job is watching stock levels) but not cost/supplier.
+function stripForInventory(products) {
+  return products.map(({ costPrice, supplier, ...rest }) => rest);
 }
 
 const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true };
@@ -49,6 +54,7 @@ router.get('/', async (req, res) => {
       ]);
       let products = await attachImages(prisma, companyId, rows);
       if (req.user.role === 'consultant') products = stripForConsultant(products);
+      else if (req.user.role === 'inventory') products = stripForInventory(products);
       return res.json(paginatedResponse(products, total, pagination));
     }
 
@@ -87,6 +93,7 @@ router.get('/', async (req, res) => {
 
     if (lowStock === 'true') products = products.filter(p => p.stock <= p.reorderLevel);
     if (req.user.role === 'consultant') products = stripForConsultant(products);
+    else if (req.user.role === 'inventory') products = stripForInventory(products);
 
     if (pagination) {
       const total = products.length;
@@ -107,11 +114,15 @@ router.get('/:id', async (req, res) => {
       const { costPrice, supplier, reorderLevel, stockLogs, ...rest } = product;
       return res.json(rest);
     }
+    if (req.user.role === 'inventory') {
+      const { costPrice, supplier, ...rest } = product;
+      return res.json(rest);
+    }
     res.json(product);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.get('/:id/stock-log', requireAdmin, async (req, res) => {
+router.get('/:id/stock-log', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -166,7 +177,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/restock', requireAdmin, async (req, res) => {
+router.post('/restock', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;

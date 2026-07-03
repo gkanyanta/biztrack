@@ -115,6 +115,15 @@ export const getMyConsultantTransfers = () => api.get('/consultants/me/transfers
 export const createConsultantLogin = (consultantId, data) => api.post(`/consultants/${consultantId}/login`, data);
 export const resetConsultantPassword = (consultantId, data) => api.post(`/consultants/${consultantId}/reset-password`, data);
 export const revokeConsultantLogin = (consultantId) => api.delete(`/consultants/${consultantId}/login`);
+export const getStockLocations = () => api.get('/consultants/stock-locations');
+export const createStockLocation = (data) => api.post('/consultants/stock-locations', data);
+export const returnStockFromLocation = (locationId, data) => api.post(`/consultants/${locationId}/stock/return`, data);
+
+// Staff (non-consultant logins, e.g. inventory role)
+export const getStaff = () => api.get('/staff');
+export const createStaff = (data) => api.post('/staff', data);
+export const resetStaffPassword = (id, data) => api.post(`/staff/${id}/reset-password`, data);
+export const deleteStaff = (id) => api.delete(`/staff/${id}`);
 
 // Store (public)
 export const getStoreInfo = (slug) => api.get(`/store/${slug}/info`);

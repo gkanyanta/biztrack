@@ -252,6 +252,7 @@ model Consultant {
   tierRate         Decimal            @db.Decimal(10, 2) @default(30)
   monthlyAllowance Decimal            @db.Decimal(10, 2) @default(400)
   isActive         Boolean            @default(true)
+  isStockLocation  Boolean            @default(false)
   startDate        DateTime?
   notes            String?
   userId           String?            @unique

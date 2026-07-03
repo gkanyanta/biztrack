@@ -38,4 +38,11 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-module.exports = { authenticate, requireSuperadmin, requireAdmin };
+function requireAdminOrInventory(req, res, next) {
+  if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'inventory') {
+    return res.status(403).json({ error: 'Admin or inventory access required' });
+  }
+  next();
+}
+
+module.exports = { authenticate, requireSuperadmin, requireAdmin, requireAdminOrInventory };
