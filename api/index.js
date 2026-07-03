@@ -211,9 +211,13 @@ function validateProduct(req, res, next) {
   if (req.body.originalPrice !== undefined && req.body.originalPrice !== null && req.body.originalPrice !== '' && (isNaN(req.body.originalPrice) || Number(req.body.originalPrice) < 0)) {
     return res.status(400).json({ error: 'Original price must be a non-negative number' });
   }
+  if (req.body.groupId !== undefined && req.body.groupId !== null && typeof req.body.groupId !== 'string') {
+    return res.status(400).json({ error: 'Invalid product group' });
+  }
   req.body.name = sanitizeString(name, 200);
   if (req.body.description) req.body.description = sanitizeString(req.body.description, 1000);
   if (req.body.category) req.body.category = sanitizeString(req.body.category, 100);
+  if (req.body.variantLabel) req.body.variantLabel = sanitizeString(req.body.variantLabel, 100);
   next();
 }
 
@@ -339,6 +343,42 @@ app.get('/api/v1/products/meta/categories', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- PRODUCT GROUPS (variant families, e.g. "T-Shirt" grouping Red/Blue/Green) ----
+// Registered before /:id so Express doesn't treat "groups" as a product id.
+app.get('/api/v1/products/groups', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const groups = await prisma.productGroup.findMany({
+      where: { companyId },
+      orderBy: { name: 'asc' },
+      include: { products: { select: { id: true, name: true, variantLabel: true, sku: true, stock: true, isActive: true } } },
+    });
+    res.json(groups);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/products/groups', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Group name is required' });
+    const group = await prisma.productGroup.create({ data: { name, companyId } });
+    res.status(201).json(group);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.put('/api/v1/products/groups/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const existing = await prisma.productGroup.findFirst({ where: { id: req.params.id, companyId } });
+    if (!existing) return res.status(404).json({ error: 'Group not found' });
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Group name is required' });
+    const group = await prisma.productGroup.update({ where: { id: req.params.id }, data: { name } });
+    res.json(group);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 // Diagnostic: list products whose imageUrl is not a valid data URL (broken images)
 app.get('/api/v1/products/broken-images', authenticate, async (req, res) => {
   try {
@@ -349,7 +389,7 @@ app.get('/api/v1/products/broken-images', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-const PRODUCT_SELECT_LIST = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true };
+const PRODUCT_SELECT_LIST = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
 const PRODUCT_SORT_FIELDS = ['name', 'sku', 'category', 'costPrice', 'sellingPrice', 'stock', 'createdAt'];
 
 async function attachProductImages(companyId, products) {
@@ -411,7 +451,7 @@ app.get('/api/v1/products', authenticate, async (req, res) => {
 app.get('/api/v1/products/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 } } });
+    const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 }, group: true } });
     if (!product) return res.status(404).json({ error: 'Not found' });
     if (req.user.role === 'consultant') {
       const { costPrice, supplier, reorderLevel, stockLogs, ...rest } = product;
@@ -437,6 +477,10 @@ app.post('/api/v1/products', authenticate, requireAdmin, validateProduct, async 
   try {
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
+    if (data.groupId) {
+      const group = await prisma.productGroup.findFirst({ where: { id: data.groupId, companyId } });
+      if (!group) return res.status(400).json({ error: 'Invalid product group' });
+    }
     if (!data.sku) { const count = await prisma.product.count({ where: { companyId } }); data.sku = `SKU-${String(count + 1).padStart(4, '0')}`; }
     const product = await prisma.product.create({ data });
     if (data.stock && data.stock > 0) { await prisma.stockLog.create({ data: { productId: product.id, change: data.stock, reason: 'Initial Stock', companyId } }); }
@@ -457,6 +501,10 @@ app.put('/api/v1/products/:id', authenticate, requireAdmin, validateProduct, asy
     // Protect imageUrl from accidental overwrite: only accept data: URLs or null/empty (clear)
     if (data.imageUrl !== undefined && data.imageUrl !== null && data.imageUrl !== '' && !/^data:image\//.test(data.imageUrl)) {
       delete data.imageUrl;
+    }
+    if (data.groupId) {
+      const group = await prisma.productGroup.findFirst({ where: { id: data.groupId, companyId } });
+      if (!group) return res.status(400).json({ error: 'Invalid product group' });
     }
     const stockChange = data.stock !== undefined ? data.stock - existing.stock : 0;
     const product = await prisma.product.update({ where: { id: req.params.id }, data });
@@ -1854,16 +1902,45 @@ app.get('/api/v1/store/:slug/products', async (req, res) => {
     const company = await prisma.company.findUnique({ where: { slug: req.params.slug } });
     if (!company || !company.isActive) return res.status(404).json({ error: 'Store not found' });
     const { category, search } = req.query;
-    const where = { companyId: company.id, isActive: true, stock: { gt: 0 } };
+    // No stock filter here — an out-of-stock color variant still needs to appear (as a disabled
+    // swatch) if a sibling in its group is in stock. Zero-stock tiles are filtered out after grouping.
+    const where = { companyId: company.id, isActive: true };
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
-    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true }, orderBy: { name: 'asc' } });
+    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } } });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
     const imageIds = new Set(withImages.map(p => p.id));
-    const productsWithUrls = products.map(p => ({
-      ...p,
-      imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null
+    const enriched = products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
+
+    const byGroup = new Map();
+    const ungrouped = [];
+    for (const p of enriched) {
+      if (p.groupId) {
+        if (!byGroup.has(p.groupId)) byGroup.set(p.groupId, []);
+        byGroup.get(p.groupId).push(p);
+      } else {
+        ungrouped.push(p);
+      }
+    }
+    const toVariant = v => ({ id: v.id, variantLabel: v.variantLabel, sellingPrice: v.sellingPrice, originalPrice: v.originalPrice, stock: v.stock, imageUrl: v.imageUrl });
+    const groupedTiles = [...byGroup.entries()].map(([groupId, variants]) => {
+      variants.sort((a, b) => (a.variantLabel || a.name).localeCompare(b.variantLabel || b.name));
+      const primary = variants[0];
+      return {
+        id: primary.id, groupId, name: primary.group?.name || primary.name, description: primary.description, category: primary.category,
+        sellingPrice: primary.sellingPrice, originalPrice: primary.originalPrice,
+        stock: variants.reduce((sum, v) => sum + v.stock, 0), imageUrl: primary.imageUrl,
+        variants: variants.map(toVariant),
+      };
+    });
+    const ungroupedTiles = ungrouped.map(p => ({
+      id: p.id, groupId: null, name: p.name, description: p.description, category: p.category,
+      sellingPrice: p.sellingPrice, originalPrice: p.originalPrice, stock: p.stock, imageUrl: p.imageUrl,
+      variants: [toVariant(p)],
     }));
+    const productsWithUrls = [...ungroupedTiles, ...groupedTiles]
+      .filter(t => t.stock > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
     const allProducts = await prisma.product.findMany({ where: { companyId: company.id, isActive: true, stock: { gt: 0 } }, select: { category: true }, distinct: ['category'] });
     const categories = allProducts.map(p => p.category).filter(Boolean).sort();
     res.json({ products: productsWithUrls, categories });

@@ -38,6 +38,9 @@ export const deleteProduct = (id) => api.delete(`/products/${id}`);
 export const bulkRestock = (items) => api.post('/products/restock', { items });
 export const getStockLog = (id) => api.get(`/products/${id}/stock-log`);
 export const getCategories = () => api.get('/products/meta/categories');
+export const getProductGroups = () => api.get('/products/groups');
+export const createProductGroup = (data) => api.post('/products/groups', data);
+export const updateProductGroup = (id, data) => api.put(`/products/groups/${id}`, data);
 
 // Sales
 export const getSales = (params) => api.get('/sales', { params });

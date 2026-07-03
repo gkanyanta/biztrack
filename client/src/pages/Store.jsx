@@ -24,6 +24,7 @@ export default function Store() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [cart, setCart] = useState([]);
+  const [selectedVariants, setSelectedVariants] = useState({});
   const [showCart, setShowCart] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [orderResult, setOrderResult] = useState(null);
@@ -343,56 +344,81 @@ export default function Store() {
         {products.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {products.map(p => {
-              const inCart = cart.find(c => c.productId === p.id);
-              const onSale = p.originalPrice && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice);
-              const discountPct = onSale ? Math.round(((parseFloat(p.originalPrice) - parseFloat(p.sellingPrice)) / parseFloat(p.originalPrice)) * 100) : 0;
+              const selectedVariantId = selectedVariants[p.id] || p.variants[0].id;
+              const activeVariant = p.variants.find(v => v.id === selectedVariantId) || p.variants[0];
+              const cartLineProduct = {
+                id: activeVariant.id,
+                name: activeVariant.variantLabel ? `${p.name} - ${activeVariant.variantLabel}` : p.name,
+                sellingPrice: activeVariant.sellingPrice,
+                stock: activeVariant.stock,
+                imageUrl: activeVariant.imageUrl || p.imageUrl,
+              };
+              const inCart = cart.find(c => c.productId === cartLineProduct.id);
+              const onSale = activeVariant.originalPrice && parseFloat(activeVariant.originalPrice) > parseFloat(activeVariant.sellingPrice);
+              const discountPct = onSale ? Math.round(((parseFloat(activeVariant.originalPrice) - parseFloat(activeVariant.sellingPrice)) / parseFloat(activeVariant.originalPrice)) * 100) : 0;
               return (
                 <div key={p.id} className={`bg-white rounded-2xl border overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group ${onSale ? 'border-rose-200 ring-1 ring-rose-100' : 'border-slate-100'}`}>
                   <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden relative">
-                    {p.imageUrl ? (
+                    {cartLineProduct.imageUrl ? (
                       <img
-                        src={p.imageUrl}
+                        src={cartLineProduct.imageUrl}
                         alt={p.name}
                         loading="lazy"
                         onError={(e) => { e.currentTarget.style.display = 'none'; if (e.currentTarget.nextSibling) e.currentTarget.nextSibling.style.display = 'flex'; }}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       />
                     ) : null}
-                    <div className={`absolute inset-0 items-center justify-center ${p.imageUrl ? 'hidden' : 'flex'}`}><FiPackage className="text-slate-300" size={40} /></div>
+                    <div className={`absolute inset-0 items-center justify-center ${cartLineProduct.imageUrl ? 'hidden' : 'flex'}`}><FiPackage className="text-slate-300" size={40} /></div>
                     {onSale && (
                       <span className="absolute top-2 right-2 bg-rose-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-sm">-{discountPct}%</span>
                     )}
-                    {p.stock <= 3 && p.stock > 0 && (
-                      <span className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Only {p.stock} left</span>
+                    {activeVariant.stock <= 3 && activeVariant.stock > 0 && (
+                      <span className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Only {activeVariant.stock} left</span>
                     )}
                   </div>
                   <div className="p-3 sm:p-4">
                     <h3 className="font-semibold text-slate-800 text-sm leading-snug mb-1 line-clamp-2">{p.name}</h3>
                     {p.description && <p className="text-xs text-slate-400 mb-3 line-clamp-1">{p.description}</p>}
+                    {p.variants.length > 1 && (
+                      <div className="flex gap-1.5 mb-2 flex-wrap">
+                        {p.variants.map(v => (
+                          <button key={v.id} type="button"
+                            onClick={() => setSelectedVariants(s => ({ ...s, [p.id]: v.id }))}
+                            disabled={v.stock === 0}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                              v.id === selectedVariantId ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                            } ${v.stock === 0 ? 'opacity-40 cursor-not-allowed line-through' : ''}`}>
+                            {v.variantLabel || 'Option'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="mb-3 flex items-baseline gap-2 flex-wrap">
-                      <p className={`font-bold text-lg ${onSale ? 'text-rose-600' : 'text-slate-900'}`}>{formatMoney(p.sellingPrice, currency)}</p>
+                      <p className={`font-bold text-lg ${onSale ? 'text-rose-600' : 'text-slate-900'}`}>{formatMoney(activeVariant.sellingPrice, currency)}</p>
                       {onSale && (
-                        <p className="text-sm text-slate-400 line-through">{formatMoney(p.originalPrice, currency)}</p>
+                        <p className="text-sm text-slate-400 line-through">{formatMoney(activeVariant.originalPrice, currency)}</p>
                       )}
                     </div>
                     <div>
-                      {inCart ? (
+                      {activeVariant.stock === 0 ? (
+                        <div className="py-2.5 text-center text-xs font-medium text-slate-400 bg-slate-50 rounded-xl">Out of stock</div>
+                      ) : inCart ? (
                         <div className="flex items-center justify-between bg-slate-100 rounded-xl p-1">
-                          <button onClick={() => updateQty(p.id, inCart.qty - 1)} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-white rounded-lg transition-colors">
+                          <button onClick={() => updateQty(cartLineProduct.id, inCart.qty - 1)} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-white rounded-lg transition-colors">
                             <FiMinus size={14} />
                           </button>
                           <span className="font-bold text-slate-800 text-sm">{inCart.qty}</span>
-                          <button onClick={() => updateQty(p.id, inCart.qty + 1)} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-white rounded-lg transition-colors" disabled={inCart.qty >= p.stock}>
+                          <button onClick={() => updateQty(cartLineProduct.id, inCart.qty + 1)} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-white rounded-lg transition-colors" disabled={inCart.qty >= cartLineProduct.stock}>
                             <FiPlus size={14} />
                           </button>
                         </div>
                       ) : (
                         <div className="flex gap-2">
-                          <button onClick={() => addToCart(p)}
+                          <button onClick={() => addToCart(cartLineProduct)}
                             className="flex-1 py-2.5 bg-slate-800 text-white text-xs font-medium rounded-xl hover:bg-slate-700 flex items-center justify-center gap-1 transition-colors">
                             <FiPlus size={12} /> Add to Cart
                           </button>
-                          <button onClick={() => buyNow(p)}
+                          <button onClick={() => buyNow(cartLineProduct)}
                             className="py-2.5 px-4 bg-emerald-600 text-white text-xs font-medium rounded-xl hover:bg-emerald-500 flex items-center justify-center gap-1 transition-colors">
                             Buy Now
                           </button>

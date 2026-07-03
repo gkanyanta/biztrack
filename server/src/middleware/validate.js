@@ -57,10 +57,14 @@ function validateProduct(req, res, next) {
   if (req.body.stock !== undefined && (isNaN(req.body.stock) || Number(req.body.stock) < 0)) {
     return res.status(400).json({ error: 'Stock must be a non-negative number' });
   }
+  if (req.body.groupId !== undefined && req.body.groupId !== null && typeof req.body.groupId !== 'string') {
+    return res.status(400).json({ error: 'Invalid product group' });
+  }
   req.body.name = sanitizeString(name, 200);
   if (req.body.description) req.body.description = sanitizeString(req.body.description, 1000);
   if (req.body.category) req.body.category = sanitizeString(req.body.category, 100);
   if (req.body.supplier) req.body.supplier = sanitizeString(req.body.supplier, 200);
+  if (req.body.variantLabel) req.body.variantLabel = sanitizeString(req.body.variantLabel, 100);
   next();
 }
 

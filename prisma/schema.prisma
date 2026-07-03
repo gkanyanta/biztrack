@@ -32,6 +32,7 @@ model Company {
   consultantStock    ConsultantStock[]
   stockTransfers     StockTransfer[]
   salesTargets       SalesTarget[]
+  productGroups      ProductGroup[]
 }
 
 model User {
@@ -59,6 +60,8 @@ model Product {
   supplier     String?
   imageUrl     String?
   isActive     Boolean    @default(true)
+  groupId      String?
+  variantLabel String?
   companyId    String
   company      Company    @relation(fields: [companyId], references: [id])
   createdAt    DateTime   @default(now())
@@ -67,8 +70,21 @@ model Product {
   stockLogs       StockLog[]
   consultantStock ConsultantStock[]
   stockTransfers  StockTransfer[]
+  group           ProductGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@unique([companyId, sku])
+  @@index([companyId, groupId])
+}
+
+model ProductGroup {
+  id        String    @id @default(cuid())
+  name      String
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id])
+  products  Product[]
+  createdAt DateTime  @default(now())
+
+  @@index([companyId])
 }
 
 model StockLog {

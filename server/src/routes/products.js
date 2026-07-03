@@ -14,7 +14,7 @@ function stripForInventory(products) {
   return products.map(({ costPrice, supplier, ...rest }) => rest);
 }
 
-const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true };
+const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
 const PRODUCT_SORT_FIELDS = ['name', 'sku', 'category', 'costPrice', 'sellingPrice', 'stock', 'createdAt'];
 
 async function attachImages(prisma, companyId, products) {
@@ -30,6 +30,45 @@ router.get('/meta/categories', async (req, res) => {
     const companyId = req.user.companyId;
     const products = await prisma.product.findMany({ where: { companyId, category: { not: null } }, select: { category: true }, distinct: ['category'] });
     res.json(products.map(p => p.category).filter(Boolean));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- PRODUCT GROUPS (variant families, e.g. "T-Shirt" grouping Red/Blue/Green) ----
+// Registered before /:id so Express doesn't treat "groups" as a product id.
+router.get('/groups', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const groups = await prisma.productGroup.findMany({
+      where: { companyId },
+      orderBy: { name: 'asc' },
+      include: { products: { select: { id: true, name: true, variantLabel: true, sku: true, stock: true, isActive: true } } },
+    });
+    res.json(groups);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.post('/groups', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Group name is required' });
+    const group = await prisma.productGroup.create({ data: { name, companyId } });
+    res.status(201).json(group);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.put('/groups/:id', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const existing = await prisma.productGroup.findFirst({ where: { id: req.params.id, companyId } });
+    if (!existing) return res.status(404).json({ error: 'Group not found' });
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Group name is required' });
+    const group = await prisma.productGroup.update({ where: { id: req.params.id }, data: { name } });
+    res.json(group);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -108,7 +147,7 @@ router.get('/:id', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 } } });
+    const product = await prisma.product.findFirst({ where: { id: req.params.id, companyId }, include: { stockLogs: { orderBy: { createdAt: 'desc' }, take: 50 }, group: true } });
     if (!product) return res.status(404).json({ error: 'Product not found' });
     if (req.user.role === 'consultant') {
       const { costPrice, supplier, reorderLevel, stockLogs, ...rest } = product;
@@ -136,6 +175,10 @@ router.post('/', requireAdmin, validateProduct, async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
+    if (data.groupId) {
+      const group = await prisma.productGroup.findFirst({ where: { id: data.groupId, companyId } });
+      if (!group) return res.status(400).json({ error: 'Invalid product group' });
+    }
     if (!data.sku) { const count = await prisma.product.count({ where: { companyId } }); data.sku = `SKU-${String(count + 1).padStart(4, '0')}`; }
     const product = await prisma.product.create({ data });
     if (data.stock && data.stock > 0) { await prisma.stockLog.create({ data: { productId: product.id, change: data.stock, reason: 'Initial Stock', companyId } }); }
@@ -156,6 +199,10 @@ router.put('/:id', requireAdmin, validateProduct, async (req, res) => {
     delete data.companyId;
     if (data.imageUrl !== undefined && data.imageUrl !== null && data.imageUrl !== '' && !/^data:image\//.test(data.imageUrl)) {
       delete data.imageUrl;
+    }
+    if (data.groupId) {
+      const group = await prisma.productGroup.findFirst({ where: { id: data.groupId, companyId } });
+      if (!group) return res.status(400).json({ error: 'Invalid product group' });
     }
     const stockChange = data.stock !== undefined ? data.stock - existing.stock : 0;
     const product = await prisma.product.update({ where: { id: req.params.id }, data });

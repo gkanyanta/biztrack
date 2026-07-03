@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { getProducts, createProduct, updateProduct, deleteProduct, bulkRestock, getStockLog } from '../services/api';
+import { getProducts, createProduct, updateProduct, deleteProduct, bulkRestock, getStockLog, getProductGroups, createProductGroup } from '../services/api';
 import { formatMoney, calcMargin } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -24,11 +24,14 @@ export default function Products() {
   const [showStockLog, setShowStockLog] = useState(null);
   const [stockLogs, setStockLogs] = useState([]);
   const [filterLowStock, setFilterLowStock] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
 
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
     costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5',
-    supplier: '', imageUrl: '', imageChanged: false
+    supplier: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: ''
   });
   const imageInputRef = useRef(null);
 
@@ -70,10 +73,11 @@ export default function Products() {
 
   useEffect(() => { loadProducts(); }, [search, filterLowStock, table.page, table.pageSize, table.sort]);
   useEffect(() => { table.setPage(1); }, [search, filterLowStock]);
+  useEffect(() => { getProductGroups().then(res => setGroups(res.data)).catch(() => {}); }, []);
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '', imageChanged: false });
+    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: '' });
     setShowForm(true);
   };
 
@@ -82,9 +86,25 @@ export default function Products() {
     setForm({
       name: p.name, sku: p.sku, description: p.description || '', category: p.category || '',
       costPrice: p.costPrice, sellingPrice: p.sellingPrice, originalPrice: p.originalPrice || '', stock: String(p.stock), reorderLevel: String(p.reorderLevel),
-      supplier: p.supplier || '', imageUrl: p.imageUrl || '', imageChanged: false
+      supplier: p.supplier || '', imageUrl: p.imageUrl || '', imageChanged: false,
+      groupId: p.groupId || '', variantLabel: p.variantLabel || ''
     });
     setShowForm(true);
+  };
+
+  const handleCreateGroup = async () => {
+    const name = newGroupName.trim();
+    if (!name) return;
+    try {
+      const { data } = await createProductGroup({ name });
+      setGroups(g => [...g, { ...data, products: [] }].sort((a, b) => a.name.localeCompare(b.name)));
+      setForm(f => ({ ...f, groupId: data.id }));
+      setCreatingGroup(false);
+      setNewGroupName('');
+      toast.success('Group created');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error creating group');
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -97,7 +117,9 @@ export default function Products() {
         originalPrice: form.originalPrice === '' ? null : parseFloat(form.originalPrice),
         stock: parseInt(form.stock),
         reorderLevel: parseInt(form.reorderLevel),
-        sku: form.sku || undefined
+        sku: form.sku || undefined,
+        groupId: form.groupId || null,
+        variantLabel: form.variantLabel ? form.variantLabel.trim() : null,
       };
       if (editing && !form.imageChanged) delete data.imageUrl;
       delete data.imageChanged;
@@ -284,6 +306,30 @@ export default function Products() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
               <input type="text" value={form.supplier} onChange={e => setForm({...form, supplier: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Product Group <span className="text-gray-400 font-normal">(links color/size variants)</span></label>
+              {creatingGroup ? (
+                <div className="flex gap-2">
+                  <input type="text" autoFocus value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                    placeholder="e.g. T-Shirt" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                  <button type="button" onClick={handleCreateGroup} className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Add</button>
+                  <button type="button" onClick={() => { setCreatingGroup(false); setNewGroupName(''); }} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+                </div>
+              ) : (
+                <select value={form.groupId}
+                  onChange={e => e.target.value === '__new__' ? setCreatingGroup(true) : setForm({...form, groupId: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">No group (standalone product)</option>
+                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  <option value="__new__">+ Create new group…</option>
+                </select>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Variant Label <span className="text-gray-400 font-normal">(e.g. "Red")</span></label>
+              <input type="text" value={form.variantLabel} onChange={e => setForm({...form, variantLabel: e.target.value})}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>

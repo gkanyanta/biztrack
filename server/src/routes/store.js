@@ -66,10 +66,12 @@ router.get('/:slug/products', async (req, res) => {
     const company = await prisma.company.findUnique({ where: { slug: req.params.slug } });
     if (!company || !company.isActive) return res.status(404).json({ error: 'Store not found' });
     const { category, search } = req.query;
-    const where = { companyId: company.id, isActive: true, stock: { gt: 0 } };
+    // No stock filter here — an out-of-stock color variant still needs to appear (as a disabled
+    // swatch) if a sibling in its group is in stock. Zero-stock tiles are filtered out after grouping.
+    const where = { companyId: company.id, isActive: true };
     if (category) where.category = category;
     if (search) { where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }]; }
-    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true } });
+    const products = await prisma.product.findMany({ where, select: { id: true, name: true, description: true, category: true, sellingPrice: true, originalPrice: true, stock: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } } });
     const withImages = await prisma.product.findMany({ where: { ...where, imageUrl: { not: null } }, select: { id: true } });
     const imageIds = new Set(withImages.map(p => p.id));
 
@@ -84,11 +86,43 @@ router.get('/:slug/products', async (req, res) => {
       : [];
     const velocityMap = new Map(velocityRows.map(v => [v.productId, v._sum.qty || 0]));
 
-    const productsWithUrls = products
-      .map(p => {
-        const onSale = p.originalPrice != null && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice);
-        return { ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null, _onSale: onSale, _velocity: velocityMap.get(p.id) || 0 };
-      })
+    const enriched = products.map(p => {
+      const onSale = p.originalPrice != null && parseFloat(p.originalPrice) > parseFloat(p.sellingPrice);
+      return { ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null, _onSale: onSale, _velocity: velocityMap.get(p.id) || 0 };
+    });
+
+    // Collapse products sharing a groupId into one tile with a `variants` array; ungrouped
+    // products pass through as a single-variant tile with the same shape.
+    const byGroup = new Map();
+    const ungrouped = [];
+    for (const p of enriched) {
+      if (p.groupId) {
+        if (!byGroup.has(p.groupId)) byGroup.set(p.groupId, []);
+        byGroup.get(p.groupId).push(p);
+      } else {
+        ungrouped.push(p);
+      }
+    }
+    const toVariant = v => ({ id: v.id, variantLabel: v.variantLabel, sellingPrice: v.sellingPrice, originalPrice: v.originalPrice, stock: v.stock, imageUrl: v.imageUrl });
+    const groupedTiles = [...byGroup.entries()].map(([groupId, variants]) => {
+      variants.sort((a, b) => (a.variantLabel || a.name).localeCompare(b.variantLabel || b.name));
+      const primary = variants[0];
+      return {
+        id: primary.id, groupId, name: primary.group?.name || primary.name, description: primary.description, category: primary.category,
+        sellingPrice: primary.sellingPrice, originalPrice: primary.originalPrice,
+        stock: variants.reduce((sum, v) => sum + v.stock, 0), imageUrl: primary.imageUrl,
+        variants: variants.map(toVariant),
+        _onSale: variants.some(v => v._onSale), _velocity: variants.reduce((sum, v) => sum + v._velocity, 0),
+      };
+    });
+    const ungroupedTiles = ungrouped.map(p => ({
+      id: p.id, groupId: null, name: p.name, description: p.description, category: p.category,
+      sellingPrice: p.sellingPrice, originalPrice: p.originalPrice, stock: p.stock, imageUrl: p.imageUrl,
+      variants: [toVariant(p)], _onSale: p._onSale, _velocity: p._velocity,
+    }));
+
+    const productsWithUrls = [...ungroupedTiles, ...groupedTiles]
+      .filter(t => t.stock > 0)
       .sort((a, b) => {
         if (a._onSale !== b._onSale) return a._onSale ? -1 : 1;
         if (a._velocity !== b._velocity) return b._velocity - a._velocity;
