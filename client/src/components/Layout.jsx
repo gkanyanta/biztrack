@@ -5,13 +5,14 @@ import useDarkMode from '../hooks/useDarkMode';
 import useNewOrderNotifications from '../hooks/useNewOrderNotifications';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell, FiLayers
 } from 'react-icons/fi';
 
 const adminNavItems = [
   { path: '/', icon: FiHome, label: 'Dashboard' },
   { path: '/products', icon: FiPackage, label: 'Products' },
   { path: '/inventory', icon: FiClipboard, label: 'Inventory' },
+  { path: '/stock-allocations', icon: FiLayers, label: 'Allocations' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },

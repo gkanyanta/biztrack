@@ -22,6 +22,7 @@ import ConsultantStock from './pages/ConsultantStock';
 import Targets from './pages/Targets';
 import MoneySplits from './pages/MoneySplits';
 import Warehouse from './pages/Warehouse';
+import StockAllocations from './pages/StockAllocations';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -88,6 +89,7 @@ function AppRoutes() {
         <Route path="shipping" element={<AdminOnly><Shipping /></AdminOnly>} />
         <Route path="credit" element={<NotInventory><CreditTracker /></NotInventory>} />
         <Route path="inventory" element={<AdminOnly><Inventory /></AdminOnly>} />
+        <Route path="stock-allocations" element={<AdminOnly><StockAllocations /></AdminOnly>} />
         <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
         <Route path="my-stock" element={<NotInventory><ConsultantStock /></NotInventory>} />
         <Route path="warehouse" element={<WarehouseRoute><Warehouse /></WarehouseRoute>} />

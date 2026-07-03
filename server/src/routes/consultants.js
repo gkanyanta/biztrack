@@ -99,6 +99,51 @@ router.post('/stock-locations', requireAdmin, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- STOCK ALLOCATIONS (admin only) ----
+// Where every unit of stock currently sits: warehouse (Product.stock) + every consultant/car
+// mini-stock pool. Pulls from the same two tables everything else already deducts from, so
+// it's always in sync — no separate ledger to keep consistent.
+router.get('/stock-allocations', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+
+    const [warehouseProducts, holdings] = await Promise.all([
+      prisma.product.findMany({ where: { companyId, stock: { gt: 0 } }, select: { id: true, name: true, sku: true, stock: true }, orderBy: { name: 'asc' } }),
+      prisma.consultantStock.findMany({
+        where: { companyId, qty: { gt: 0 } },
+        include: { consultant: { select: { id: true, name: true, isStockLocation: true, isActive: true } }, product: { select: { id: true, name: true, sku: true } } },
+      }),
+    ]);
+
+    const warehouseItems = warehouseProducts.map(p => ({ productId: p.id, name: p.name, sku: p.sku, qty: p.stock }));
+    const warehouseTotal = warehouseItems.reduce((sum, i) => sum + i.qty, 0);
+
+    const byHolder = new Map();
+    for (const h of holdings) {
+      if (!h.consultant) continue;
+      if (!byHolder.has(h.consultant.id)) {
+        byHolder.set(h.consultant.id, {
+          id: h.consultant.id,
+          name: h.consultant.name,
+          type: h.consultant.isStockLocation ? 'car' : 'consultant',
+          isActive: h.consultant.isActive,
+          items: [],
+        });
+      }
+      byHolder.get(h.consultant.id).items.push({ productId: h.product.id, name: h.product.name, sku: h.product.sku, qty: h.qty });
+    }
+
+    const locations = [
+      { id: 'warehouse', name: 'Warehouse', type: 'warehouse', totalUnits: warehouseTotal, items: warehouseItems },
+      ...Array.from(byHolder.values()).map(h => ({ ...h, totalUnits: h.items.reduce((sum, i) => sum + i.qty, 0) })),
+    ];
+
+    const grandTotal = locations.reduce((sum, l) => sum + l.totalUnits, 0);
+    res.json({ locations, grandTotal });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 // ---- LIST CONSULTANTS (admin only) ----
 router.get('/', requireAdmin, async (req, res) => {
   try {

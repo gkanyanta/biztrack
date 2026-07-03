@@ -117,6 +117,7 @@ export const resetConsultantPassword = (consultantId, data) => api.post(`/consul
 export const revokeConsultantLogin = (consultantId) => api.delete(`/consultants/${consultantId}/login`);
 export const getStockLocations = () => api.get('/consultants/stock-locations');
 export const createStockLocation = (data) => api.post('/consultants/stock-locations', data);
+export const getStockAllocations = () => api.get('/consultants/stock-allocations');
 export const returnStockFromLocation = (locationId, data) => api.post(`/consultants/${locationId}/stock/return`, data);
 
 // Staff (non-consultant logins, e.g. inventory role)
