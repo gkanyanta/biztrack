@@ -1,17 +1,65 @@
 import { useState, useEffect } from 'react';
 import { getProducts, bulkRestock, getStockLocations, transferStockToConsultant, getSales, updateSaleStatus } from '../services/api';
-import { FiPackage, FiTruck, FiPlus, FiSearch, FiCheckCircle } from 'react-icons/fi';
+import { FiPackage, FiTruck, FiPlus, FiSearch, FiCheckCircle, FiX } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { formatDate } from '../utils/format';
 
-function ProductPicker({ products, value, onChange }) {
+// Searchable product picker — filters by name/SKU as you type instead of scrolling a long <select>.
+function ProductSearchPicker({ products, value, onChange, placeholder = 'Search product by name or SKU...' }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = products.find(p => p.id === value);
+
+  const filtered = query
+    ? products.filter(p => p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase())).slice(0, 50)
+    : products.slice(0, 50);
+
+  const select = (p) => {
+    onChange(p.id);
+    setQuery('');
+    setOpen(false);
+  };
+
   return (
-    <select value={value} onChange={e => onChange(e.target.value)} required
-      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-      <option value="">Select product...</option>
-      {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku}) — {p.stock} in stock</option>)}
-    </select>
+    <div className="relative">
+      {selected && !open ? (
+        <div className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50">
+          <span className="flex-1 truncate">{selected.name} <span className="text-gray-400">({selected.sku})</span> — {selected.stock} in stock</span>
+          <button type="button" onClick={() => { onChange(''); setQuery(''); setOpen(true); }} className="text-gray-400 hover:text-red-600 flex-shrink-0">
+            <FiX size={15} />
+          </button>
+        </div>
+      ) : (
+        <div className="relative">
+          <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+          <input
+            type="text"
+            value={query}
+            placeholder={placeholder}
+            onChange={e => setQuery(e.target.value)}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      )}
+      {open && (
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+          {filtered.length === 0 ? (
+            <p className="p-3 text-sm text-gray-400 text-center">No products match</p>
+          ) : (
+            filtered.map(p => (
+              <button key={p.id} type="button" onMouseDown={() => select(p)}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm text-left hover:bg-blue-50">
+                <span className="truncate">{p.name} <span className="text-gray-400 text-xs">{p.sku}</span></span>
+                <span className={`flex-shrink-0 ml-2 text-xs font-medium ${p.stock <= 0 ? 'text-red-500' : 'text-gray-500'}`}>{p.stock} in stock</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -19,6 +67,9 @@ export default function Warehouse() {
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(true);
+  // Unfiltered catalog for the Stock In / Dispatch pickers, kept separate from the "Warehouse
+  // Stock" table's search below so typing in one doesn't limit what the other can pick from.
+  const [allProducts, setAllProducts] = useState([]);
   const [locations, setLocations] = useState([]);
   const [locationId, setLocationId] = useState('');
   const [orders, setOrders] = useState([]);
@@ -34,7 +85,10 @@ export default function Warehouse() {
       .finally(() => setLoadingProducts(false));
   };
 
+  const loadAllProducts = () => { getProducts().then(res => setAllProducts(res.data)).catch(() => {}); };
+
   useEffect(() => { loadProducts(); }, [search]);
+  useEffect(() => { loadAllProducts(); }, []);
 
   useEffect(() => {
     getStockLocations().then(res => {
@@ -62,6 +116,7 @@ export default function Warehouse() {
       toast.success('Stock added to warehouse');
       setStockInForm({ productId: '', quantity: '' });
       loadProducts();
+      loadAllProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error adding stock');
     }
@@ -78,6 +133,7 @@ export default function Warehouse() {
       toast.success('Dispatched to car stock');
       setDispatchForm({ productId: '', qty: '', notes: '' });
       loadProducts();
+      loadAllProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error dispatching stock');
     }
@@ -89,6 +145,7 @@ export default function Warehouse() {
       toast.success(`Order ${order.orderNumber} marked dispatched`);
       loadOrders();
       loadProducts();
+      loadAllProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error updating order');
     }
@@ -102,7 +159,7 @@ export default function Warehouse() {
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><FiPlus /> Stock In (new purchases arriving)</h2>
           <form onSubmit={handleStockIn} className="space-y-3">
-            <ProductPicker products={products} value={stockInForm.productId} onChange={id => setStockInForm(f => ({ ...f, productId: id }))} />
+            <ProductSearchPicker products={allProducts} value={stockInForm.productId} onChange={id => setStockInForm(f => ({ ...f, productId: id }))} />
             <input type="number" min="1" placeholder="Quantity received" value={stockInForm.quantity}
               onChange={e => setStockInForm(f => ({ ...f, quantity: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
@@ -121,7 +178,7 @@ export default function Warehouse() {
                   {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               )}
-              <ProductPicker products={products} value={dispatchForm.productId} onChange={id => setDispatchForm(f => ({ ...f, productId: id }))} />
+              <ProductSearchPicker products={allProducts} value={dispatchForm.productId} onChange={id => setDispatchForm(f => ({ ...f, productId: id }))} />
               <input type="number" min="1" placeholder="Quantity" value={dispatchForm.qty}
                 onChange={e => setDispatchForm(f => ({ ...f, qty: e.target.value }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
