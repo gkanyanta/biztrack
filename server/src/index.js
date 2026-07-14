@@ -11,6 +11,11 @@ const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 5000;
 
+// Mirrors api/index.js: harmless locally (no proxy in front), but keeps behavior
+// identical to the deployed Vercel path where trusting one hop is required for
+// express-rate-limit to see the real client IP.
+app.set('trust proxy', 1);
+
 // Security headers
 app.use(helmet());
 

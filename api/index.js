@@ -9,6 +9,11 @@ const XLSX = require('xlsx');
 
 const app = express();
 
+// Vercel sits exactly one proxy hop in front of this function; trusting it lets
+// express-rate-limit (and req.ip generally) resolve the real client IP from
+// X-Forwarded-For instead of Vercel's internal address for every request.
+app.set('trust proxy', 1);
+
 if (!global.__prisma) {
   global.__prisma = new PrismaClient();
 }
