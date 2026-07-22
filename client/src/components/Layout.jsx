@@ -40,6 +40,10 @@ const inventoryNavItems = [
   { path: '/warehouse', icon: FiPackage, label: 'Warehouse' },
 ];
 
+const purchasingNavItems = [
+  { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
+];
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -47,7 +51,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dark, toggleDark] = useDarkMode();
   const { count: newOrderCount, acknowledge: acknowledgeNewOrders } = useNewOrderNotifications(user?.role === 'admin');
-  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : adminNavItems;
+  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
 
   return (
     <div className="flex h-screen bg-gray-50">

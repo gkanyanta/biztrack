@@ -159,6 +159,13 @@ function requireAdminOrInventory(req, res, next) {
   next();
 }
 
+function requireAdminOrPurchasing(req, res, next) {
+  if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'purchasing') {
+    return res.status(403).json({ error: 'Admin or purchasing access required' });
+  }
+  next();
+}
+
 // ---- INPUT VALIDATION ----
 function sanitizeString(val, maxLength = 500) {
   if (typeof val !== 'string') return val;
@@ -1047,7 +1054,7 @@ app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
 // ---- EXPENSES ----
 const EXPENSE_SORT_FIELDS = { date: 'date', description: 'description', category: 'category', amount: 'amount' };
 
-app.get('/api/v1/expenses', authenticate, requireAdmin, async (req, res) => {
+app.get('/api/v1/expenses', authenticate, requireAdminOrPurchasing, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { category, from, to, sortBy, sortDir } = req.query;
@@ -1075,7 +1082,7 @@ app.get('/api/v1/expenses', authenticate, requireAdmin, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/expenses', authenticate, requireAdmin, validateExpense, async (req, res) => {
+app.post('/api/v1/expenses', authenticate, requireAdminOrPurchasing, validateExpense, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = { ...req.body, companyId };
@@ -1084,7 +1091,7 @@ app.post('/api/v1/expenses', authenticate, requireAdmin, validateExpense, async 
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.put('/api/v1/expenses/:id', authenticate, requireAdmin, validateExpense, async (req, res) => {
+app.put('/api/v1/expenses/:id', authenticate, requireAdminOrPurchasing, validateExpense, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const existing = await prisma.expense.findFirst({ where: { id: req.params.id, companyId } });
@@ -2547,7 +2554,7 @@ app.delete('/api/v1/consultants/:id/login', authenticate, requireAdmin, async (r
 });
 
 // ---- STAFF (non-consultant logins, e.g. inventory/warehouse role) ----
-const STAFF_ALLOWED_ROLES = ['inventory'];
+const STAFF_ALLOWED_ROLES = ['inventory', 'purchasing'];
 
 app.get('/api/v1/staff', authenticate, requireAdmin, async (req, res) => {
   try {

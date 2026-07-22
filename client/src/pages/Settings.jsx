@@ -16,7 +16,7 @@ export default function Settings() {
 
   const [staff, setStaff] = useState([]);
   const [showStaffForm, setShowStaffForm] = useState(false);
-  const [staffForm, setStaffForm] = useState({ name: '', username: '', password: '' });
+  const [staffForm, setStaffForm] = useState({ name: '', username: '', password: '', role: 'inventory' });
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -44,10 +44,10 @@ export default function Settings() {
   const handleCreateStaff = async (e) => {
     e.preventDefault();
     try {
-      await createStaff({ ...staffForm, role: 'inventory' });
-      toast.success('Warehouse staff account created');
+      await createStaff(staffForm);
+      toast.success('Staff account created');
       setShowStaffForm(false);
-      setStaffForm({ name: '', username: '', password: '' });
+      setStaffForm({ name: '', username: '', password: '', role: 'inventory' });
       loadStaff();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error creating staff account');
@@ -273,17 +273,19 @@ export default function Settings() {
       {/* Warehouse Staff Accounts */}
       <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2"><FiUsers size={16} /> Warehouse Staff</h3>
+          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2"><FiUsers size={16} /> Staff Accounts</h3>
           <button onClick={() => setShowStaffForm(true)} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
             <FiPlus size={14} /> Add Staff
           </button>
         </div>
-        <p className="text-xs text-gray-400 mb-4">Logins with warehouse-only access — stock in, dispatch to your car, and marking orders dispatched. No pricing, financials, or other admin pages.</p>
+        <p className="text-xs text-gray-400 mb-4">Warehouse: stock in, dispatch, and marking orders dispatched — no pricing or financials. Purchasing: recording stock purchases and other expenses — no other admin pages.</p>
         <div className="space-y-2">
           {staff.map(s => (
             <div key={s.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
               <div>
-                <div className="text-sm font-medium text-gray-800">{s.name}</div>
+                <div className="text-sm font-medium text-gray-800">{s.name}
+                  <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">{s.role === 'purchasing' ? 'Purchasing' : 'Warehouse'}</span>
+                </div>
                 <div className="text-xs text-gray-400">@{s.username}</div>
               </div>
               <div className="flex gap-1">
@@ -296,8 +298,16 @@ export default function Settings() {
         </div>
       </div>
 
-      <Modal isOpen={showStaffForm} onClose={() => setShowStaffForm(false)} title="Add Warehouse Staff" size="sm">
+      <Modal isOpen={showStaffForm} onClose={() => setShowStaffForm(false)} title="Add Staff Account" size="sm">
         <form onSubmit={handleCreateStaff} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+            <select value={staffForm.role} onChange={e => setStaffForm({...staffForm, role: e.target.value})}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="inventory">Warehouse (stock & dispatch)</option>
+              <option value="purchasing">Purchasing (record expenses & stock purchases)</option>
+            </select>
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
             <input type="text" required value={staffForm.name} onChange={e => setStaffForm({...staffForm, name: e.target.value})}

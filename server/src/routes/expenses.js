@@ -1,10 +1,11 @@
 const router = require('express').Router();
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireAdminOrPurchasing } = require('../middleware/auth');
 const { validateExpense } = require('../middleware/validate');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
-router.use(requireAdmin);
+// Purchasing role can record and correct expenses; deleting stays admin-only.
+router.use(requireAdminOrPurchasing);
 
 const SORT_FIELDS = { date: 'date', description: 'description', category: 'category', amount: 'amount' };
 
@@ -62,7 +63,7 @@ router.put('/:id', validateExpense, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;

@@ -4,7 +4,7 @@ const { authenticate, requireAdmin } = require('../middleware/auth');
 
 // Non-consultant staff logins (e.g. inventory/warehouse role). Kept separate from the
 // Consultant-linked login flow since these users have no commission profile.
-const ALLOWED_ROLES = ['inventory'];
+const ALLOWED_ROLES = ['inventory', 'purchasing'];
 
 router.use(authenticate);
 router.use(requireAdmin);

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../hooks/useAuth';
 import { getExpenses, createExpense, updateExpense, deleteExpense, getMoneySplits } from '../services/api';
 import { formatMoney, formatDate, EXPENSE_CATEGORIES, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
@@ -11,6 +12,8 @@ import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiDollarSign } from 'react-icons/fi';
 
 export default function Expenses() {
+  const { user } = useAuth();
+  const canDelete = user?.role !== 'purchasing';
   const [expenses, setExpenses] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -159,7 +162,7 @@ export default function Expenses() {
                   <td className="p-3 text-right">
                     <div className="flex gap-1 justify-end">
                       <button onClick={() => openEdit(e)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={15} /></button>
-                      <button onClick={() => setDeleteConfirm(e)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>
+                      {canDelete && <button onClick={() => setDeleteConfirm(e)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>}
                     </div>
                   </td>
                 </tr>

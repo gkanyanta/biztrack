@@ -39,12 +39,13 @@ function DashboardRouter() {
   if (user?.role === 'superadmin') return <Navigate to="/superadmin" />;
   if (user?.role === 'consultant') return <ConsultantDashboard />;
   if (user?.role === 'inventory') return <Navigate to="/warehouse" />;
+  if (user?.role === 'purchasing') return <Navigate to="/expenses" />;
   return <Dashboard />;
 }
 
 function AdminOnly({ children }) {
   const { user } = useAuth();
-  if (user?.role === 'consultant' || user?.role === 'inventory') return <Navigate to="/" />;
+  if (user?.role === 'consultant' || user?.role === 'inventory' || user?.role === 'purchasing') return <Navigate to="/" />;
   return children;
 }
 
@@ -53,12 +54,20 @@ function AdminOnly({ children }) {
 function NotInventory({ children }) {
   const { user } = useAuth();
   if (user?.role === 'inventory') return <Navigate to="/warehouse" />;
+  if (user?.role === 'purchasing') return <Navigate to="/expenses" />;
   return children;
 }
 
 function WarehouseRoute({ children }) {
   const { user } = useAuth();
-  if (user?.role === 'consultant') return <Navigate to="/" />;
+  if (user?.role === 'consultant' || user?.role === 'purchasing') return <Navigate to="/" />;
+  return children;
+}
+
+// Purchasing role records stock purchases and running costs; admins keep full access.
+function ExpensesRoute({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'consultant' || user?.role === 'inventory') return <Navigate to="/" />;
   return children;
 }
 
@@ -84,7 +93,7 @@ function AppRoutes() {
         <Route path="superadmin" element={<SuperadminPanel />} />
         <Route path="products" element={<AdminOnly><Products /></AdminOnly>} />
         <Route path="sales" element={<NotInventory><Sales /></NotInventory>} />
-        <Route path="expenses" element={<AdminOnly><Expenses /></AdminOnly>} />
+        <Route path="expenses" element={<ExpensesRoute><Expenses /></ExpensesRoute>} />
         <Route path="customers" element={<AdminOnly><Customers /></AdminOnly>} />
         <Route path="shipping" element={<AdminOnly><Shipping /></AdminOnly>} />
         <Route path="credit" element={<NotInventory><CreditTracker /></NotInventory>} />
