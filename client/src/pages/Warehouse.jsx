@@ -100,7 +100,9 @@ export default function Warehouse() {
   const loadOrders = () => {
     setLoadingOrders(true);
     getSales({ status: 'Confirmed', page: 1, pageSize: 50 })
-      .then(res => setOrders(res.data.data))
+      // Only orders with at least one warehouse-sourced item need dispatching from here;
+      // orders fulfilled entirely from a consultant's own stock are already with the seller.
+      .then(res => setOrders(res.data.data.filter(o => (o.items || []).some(i => !i.stockSourceConsultantId))))
       .finally(() => setLoadingOrders(false));
   };
 

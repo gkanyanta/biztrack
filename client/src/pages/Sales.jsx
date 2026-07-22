@@ -42,7 +42,7 @@ export default function Sales() {
     shippingCost: '', shippingCharge: '', discount: '0', paymentMethod: '',
     paymentStatus: 'Unpaid', source: '', notes: '', date: '',
     paymentType: 'Cash', amountPaid: '', creditDueDate: '', creditNotes: '',
-    consultantId: ''
+    consultantId: '', status: 'Confirmed'
   };
   const [form, setForm] = useState(emptyForm);
   const [creditPaymentForm, setCreditPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
@@ -116,7 +116,7 @@ export default function Sales() {
       date: sale.date ? sale.date.slice(0, 10) : '',
       paymentType: sale.paymentType || 'Cash', amountPaid: sale.amountPaid || '',
       creditDueDate: sale.creditDueDate ? sale.creditDueDate.slice(0, 10) : '', creditNotes: sale.creditNotes || '',
-      consultantId: sale.consultantId || ''
+      consultantId: sale.consultantId || '', status: sale.status
     });
     setShowForm(true);
   };
@@ -495,6 +495,16 @@ export default function Sales() {
                 {PAYMENT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            {!editing && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Order Status</label>
+                <select value={form.status} onChange={e => setForm({...form, status: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                  {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Confirmed orders appear in the warehouse dispatch queue and deduct stock.</p>
+              </div>
+            )}
             {form.paymentType === 'Credit' && (
               <>
                 <div>
