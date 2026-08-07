@@ -74,7 +74,7 @@ router.get('/companies/:id', async (req, res) => {
     const sales = await prisma.sale.findMany({ where: { companyId: req.params.id, status: { not: 'Cancelled' } }, select: { totalPrice: true, costPrice: true, qty: true } });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const cogs = sales.reduce((s, r) => s + (parseFloat(r.costPrice) * r.qty), 0);
-    const expenses = await prisma.expense.findMany({ where: { companyId: req.params.id }, select: { amount: true } });
+    const expenses = await prisma.expense.findMany({ where: { companyId: req.params.id, category: { not: 'Stock Purchase' } }, select: { amount: true } });
     const totalExpenses = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
 
     const settingsObj = {};

@@ -181,7 +181,10 @@ router.post('/', requireAdmin, validateProduct, async (req, res) => {
     }
     if (!data.sku) { const count = await prisma.product.count({ where: { companyId } }); data.sku = `SKU-${String(count + 1).padStart(4, '0')}`; }
     const product = await prisma.product.create({ data });
-    if (data.stock && data.stock > 0) { await prisma.stockLog.create({ data: { productId: product.id, change: data.stock, reason: 'Initial Stock', companyId } }); }
+    if (data.stock && data.stock > 0) {
+      await prisma.stockLog.create({ data: { productId: product.id, change: data.stock, reason: 'Initial Stock', companyId } });
+      await prisma.expense.create({ data: { description: `Stock purchase: ${product.name} (${data.stock} units)`, amount: parseFloat(product.costPrice) * data.stock, category: 'Stock Purchase', companyId } });
+    }
     res.status(201).json(product);
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'SKU already exists' });
@@ -235,6 +238,7 @@ router.post('/restock', requireAdminOrInventory, async (req, res) => {
       if (!product) continue;
       const updated = await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
       await prisma.stockLog.create({ data: { productId: item.productId, change: item.quantity, reason: 'Restock', companyId } });
+      await prisma.expense.create({ data: { description: `Restock: ${product.name} (${item.quantity} units)`, amount: parseFloat(product.costPrice) * item.quantity, category: 'Stock Purchase', companyId } });
       results.push(updated);
     }
     res.json(results);

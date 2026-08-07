@@ -99,7 +99,7 @@ router.get('/pnl', async (req, res) => {
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
     const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
-    const expenses = await prisma.expense.findMany({ where: dateFilter });
+    const expenses = await prisma.expense.findMany({ where: { ...dateFilter, category: { not: 'Stock Purchase' } } });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
@@ -399,7 +399,7 @@ router.get('/export/csv', async (req, res) => {
       filename = 'expenses-report.csv';
     } else if (type === 'pnl') {
       const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
-      const expenses = await prisma.expense.findMany({ where: dateFilter });
+      const expenses = await prisma.expense.findMany({ where: { ...dateFilter, category: { not: 'Stock Purchase' } } });
       const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
       const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
       const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);

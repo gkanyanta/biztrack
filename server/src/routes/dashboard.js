@@ -83,7 +83,9 @@ router.get('/', requireAdmin, async (req, res) => {
     const totalDiscount = sales.reduce((sum, s) => sum + parseFloat(s.discount), 0);
     const grossProfit = totalRevenue - totalCOGS - totalShippingCost + totalShippingCharge - totalDiscount;
 
-    const expenses = await prisma.expense.findMany({ where: dateFilter });
+    // 'Stock Purchase' expenses are cash-outflow tracking only — COGS above already
+    // accounts for cost of goods at time of sale, so including both would double-count.
+    const expenses = await prisma.expense.findMany({ where: { ...dateFilter, category: { not: 'Stock Purchase' } } });
     const totalExpenses = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
     const netProfit = grossProfit - totalExpenses;
 

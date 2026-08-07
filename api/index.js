@@ -495,7 +495,10 @@ app.post('/api/v1/products', authenticate, requireAdmin, validateProduct, async 
     }
     if (!data.sku) { const count = await prisma.product.count({ where: { companyId } }); data.sku = `SKU-${String(count + 1).padStart(4, '0')}`; }
     const product = await prisma.product.create({ data });
-    if (data.stock && data.stock > 0) { await prisma.stockLog.create({ data: { productId: product.id, change: data.stock, reason: 'Initial Stock', companyId } }); }
+    if (data.stock && data.stock > 0) {
+      await prisma.stockLog.create({ data: { productId: product.id, change: data.stock, reason: 'Initial Stock', companyId } });
+      await prisma.expense.create({ data: { description: `Stock purchase: ${product.name} (${data.stock} units)`, amount: parseFloat(product.costPrice) * data.stock, category: 'Stock Purchase', companyId } });
+    }
     res.status(201).json(product);
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'SKU already exists' });
@@ -547,6 +550,7 @@ app.post('/api/v1/products/restock', authenticate, requireAdminOrInventory, asyn
       if (!product) continue;
       const updated = await prisma.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
       await prisma.stockLog.create({ data: { productId: item.productId, change: item.quantity, reason: 'Restock', companyId } });
+      await prisma.expense.create({ data: { description: `Restock: ${product.name} (${item.quantity} units)`, amount: parseFloat(product.costPrice) * item.quantity, category: 'Stock Purchase', companyId } });
       results.push(updated);
     }
     res.json(results);
@@ -1243,7 +1247,9 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const totalDiscount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
     const grossProfit = totalRevenue - totalCOGS - totalShippingCost + totalShippingCharge - totalDiscount;
 
-    const expenses = await prisma.expense.findMany({ where: dateFilter });
+    // 'Stock Purchase' expenses are cash-outflow tracking only — COGS above already
+    // accounts for cost of goods at time of sale, so including both would double-count.
+    const expenses = await prisma.expense.findMany({ where: { ...dateFilter, category: { not: 'Stock Purchase' } } });
     const totalExpenses = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
     const netProfit = grossProfit - totalExpenses;
     const adExpenses = expenses.filter(e => e.category === 'Facebook Ads');
@@ -1395,7 +1401,7 @@ app.get('/api/v1/reports/growth', authenticate, requireAdmin, async (req, res) =
   try {
     const companyId = req.user.companyId;
     const allSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' } }, orderBy: { date: 'asc' }, include: { items: true } });
-    const allExpenses = await prisma.expense.findMany({ where: { companyId }, orderBy: { date: 'asc' } });
+    const allExpenses = await prisma.expense.findMany({ where: { companyId, category: { not: 'Stock Purchase' } }, orderBy: { date: 'asc' } });
 
     const monthlyHistory = {};
     allSales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyHistory[m]) monthlyHistory[m] = { revenue: 0, cogs: 0, orders: 0, profit: 0, expenses: 0, adSpend: 0 }; const saleCogs = s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); const saleQty = s.items.reduce((sum, i) => sum + i.qty, 0); monthlyHistory[m].revenue += parseFloat(s.totalPrice); monthlyHistory[m].cogs += saleCogs; monthlyHistory[m].orders += saleQty; monthlyHistory[m].profit += parseFloat(s.totalPrice) - saleCogs; });
@@ -1435,7 +1441,7 @@ app.get('/api/v1/reports/pnl', authenticate, requireAdmin, async (req, res) => {
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
     const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
-    const expenses = await prisma.expense.findMany({ where: dateFilter });
+    const expenses = await prisma.expense.findMany({ where: { ...dateFilter, category: { not: 'Stock Purchase' } } });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
@@ -1591,7 +1597,7 @@ app.get('/api/v1/reports/export/csv', authenticate, requireAdmin, async (req, re
       filename = 'expenses-report.csv';
     } else if (type === 'pnl') {
       const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
-      const expenses = await prisma.expense.findMany({ where: dateFilter });
+      const expenses = await prisma.expense.findMany({ where: { ...dateFilter, category: { not: 'Stock Purchase' } } });
       const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
       const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
       const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
@@ -1761,7 +1767,7 @@ app.get('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, asy
     const sales = await prisma.sale.findMany({ where: { companyId: req.params.id, status: { not: 'Cancelled' } }, include: { items: true } });
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
-    const expenses = await prisma.expense.findMany({ where: { companyId: req.params.id }, select: { amount: true } });
+    const expenses = await prisma.expense.findMany({ where: { companyId: req.params.id, category: { not: 'Stock Purchase' } }, select: { amount: true } });
     const totalExpenses = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
     const settingsObj = {}; company.settings.forEach(s => { settingsObj[s.key] = s.value; });
     res.json({ ...company, settings: settingsObj, metrics: { revenue, cogs, grossProfit: revenue - cogs, totalExpenses, netProfit: revenue - cogs - totalExpenses, totalOrders: sales.length } });
