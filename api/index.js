@@ -1273,8 +1273,34 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const products = productIds.length > 0 ? await prisma.product.findMany({ where: { id: { in: productIds }, companyId } }) : [];
     const topProducts = products.map(p => ({ name: p.name, revenue: productSales[p.id].revenue, qty: productSales[p.id].qty })).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
 
-    const lowStock = await prisma.product.findMany({ where: { isActive: true, companyId }, orderBy: { stock: 'asc' }, take: 20 });
-    const lowStockProducts = lowStock.filter(p => p.stock <= p.reorderLevel);
+    // Velocity-aware restock alert: a static reorderLevel comparison misses fast movers
+    // whose reorder level was set too low for how quickly they actually sell.
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const [allActiveProducts, velocityRows] = await Promise.all([
+      prisma.product.findMany({ where: { isActive: true, companyId }, select: { id: true, name: true, sku: true, stock: true, reorderLevel: true } }),
+      prisma.saleItem.groupBy({ by: ['productId'], where: { sale: { companyId, date: { gte: ninetyDaysAgo }, status: { not: 'Cancelled' } } }, _sum: { qty: true } }),
+    ]);
+    const velocityMap = new Map(velocityRows.map(v => [v.productId, v._sum.qty || 0]));
+    const URGENCY_RANK = { out: 0, critical: 1, low: 2, watch: 3 };
+    const lowStockProducts = allActiveProducts.map(p => {
+      const unitsSold90d = velocityMap.get(p.id) || 0;
+      const dailyVelocity = unitsSold90d / 90;
+      const daysOfCover = dailyVelocity > 0 ? Math.round(p.stock / dailyVelocity) : null;
+      let urgency = null;
+      if (p.stock === 0 && unitsSold90d > 0) urgency = 'out';
+      else if (p.stock > 0 && daysOfCover !== null && daysOfCover < 7) urgency = 'critical';
+      else if (p.stock > 0 && daysOfCover !== null && daysOfCover < 14) urgency = 'low';
+      else if (p.stock <= p.reorderLevel) urgency = 'watch';
+      return { id: p.id, name: p.name, sku: p.sku, stock: p.stock, reorderLevel: p.reorderLevel, unitsSold90d, daysOfCover, urgency };
+    }).filter(p => p.urgency)
+      .sort((a, b) => {
+        if (URGENCY_RANK[a.urgency] !== URGENCY_RANK[b.urgency]) return URGENCY_RANK[a.urgency] - URGENCY_RANK[b.urgency];
+        // Out-of-stock items all have daysOfCover 0, so rank by past sales volume instead —
+        // a product that sold 35 units is a bigger miss than one that sold 1.
+        if (a.urgency === 'out') return b.unitsSold90d - a.unitsSold90d;
+        return (a.daysOfCover ?? 9999) - (b.daysOfCover ?? 9999) || a.stock - b.stock;
+      })
+      .slice(0, 20);
     const pendingOrders = await prisma.sale.count({ where: { companyId, status: { in: ['Pending', 'Confirmed'] } } });
 
     // ---- GROWTH ANALYSIS ----

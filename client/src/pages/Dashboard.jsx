@@ -410,18 +410,26 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {data.lowStockProducts.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <FiAlertTriangle className="text-orange-500" /> Low Stock Alerts
+            <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
+              <FiAlertTriangle className="text-orange-500" /> Restock Alerts
             </h3>
+            <p className="text-xs text-gray-400 mb-3">Ranked by how soon each product runs out, based on 90-day sales pace.</p>
             <div className="space-y-2">
-              {data.lowStockProducts.map(p => (
-                <div key={p.id} className="flex justify-between items-center text-sm py-1 border-b border-gray-50">
-                  <span className="text-gray-700">{p.name}</span>
-                  <span className={`font-medium ${p.stock === 0 ? 'text-red-600' : 'text-orange-600'}`}>
-                    {p.stock} left
-                  </span>
-                </div>
-              ))}
+              {data.lowStockProducts.map(p => {
+                const badge = p.urgency === 'out' ? { label: 'Out of stock', cls: 'bg-red-100 text-red-700' }
+                  : p.urgency === 'critical' ? { label: `${p.daysOfCover}d left`, cls: 'bg-red-100 text-red-700' }
+                  : p.urgency === 'low' ? { label: `${p.daysOfCover}d left`, cls: 'bg-orange-100 text-orange-700' }
+                  : { label: 'Watch', cls: 'bg-gray-100 text-gray-600' };
+                return (
+                  <div key={p.id} className="flex justify-between items-center text-sm py-1.5 border-b border-gray-50">
+                    <div>
+                      <div className="text-gray-700">{p.name}</div>
+                      <div className="text-xs text-gray-400">{p.stock} in stock · sold {p.unitsSold90d} in 90d</div>
+                    </div>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded whitespace-nowrap ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
