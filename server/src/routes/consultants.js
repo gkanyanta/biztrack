@@ -220,7 +220,10 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
-      const balance = commissionEarned - commissionPaid;
+      // Advances are money already given against future commission, so they net out of the balance owed —
+      // a consultant advanced more than they've earned will show a negative balance (they owe it back).
+      const advancePaid = cPayments.filter(p => p.type === 'advance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+      const balance = commissionEarned - commissionPaid - advancePaid;
 
       const baseAllowance = parseFloat(c.monthlyAllowance) || 0;
       const allowanceCap = isCycle ? Math.round(baseAllowance * eff.factor * 100) / 100 : null;
@@ -234,7 +237,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
         effectiveTo: eff.effectiveTo,
         totalSales, totalProductsSold, totalRevenue,
         commissionEarned, commissionPaid, balance,
-        allowancePaid, allowanceCap, allowanceRemaining,
+        allowancePaid, allowanceCap, allowanceRemaining, advancePaid,
       };
     });
 
@@ -244,6 +247,7 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       totalCommissionEarned: summary.reduce((s, c) => s + c.commissionEarned, 0),
       totalCommissionPaid: summary.reduce((s, c) => s + c.commissionPaid, 0),
       totalAllowancePaid: summary.reduce((s, c) => s + c.allowancePaid, 0),
+      totalAdvancePaid: summary.reduce((s, c) => s + c.advancePaid, 0),
       totalBalance: summary.reduce((s, c) => s + c.balance, 0),
     };
 
@@ -297,7 +301,8 @@ router.get('/:id', async (req, res) => {
     const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue, sales);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
-    const balance = commissionEarned - commissionPaid;
+    const advancePaid = payments.filter(p => p.type === 'advance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const balance = commissionEarned - commissionPaid - advancePaid;
 
     const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
     const allowanceCap = periodInfo ? Math.round(baseAllowance * (periodInfo.factor || 0) * 100) / 100 : null;
@@ -307,7 +312,7 @@ router.get('/:id', async (req, res) => {
       ...consultant,
       totalSales, totalProductsSold, totalRevenue,
       commissionEarned, commissionPaid, balance,
-      allowancePaid, allowanceCap, allowanceRemaining,
+      allowancePaid, allowanceCap, allowanceRemaining, advancePaid,
       period: periodInfo,
       sales, payments,
     });

@@ -51,13 +51,14 @@ router.get('/consultant', async (req, res) => {
     const commissionEarnedAllTime = calcComm(allSales);
     const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
     const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
-    const balance = commissionEarnedAllTime - commissionPaid;
+    const advancePaid = sum(payments.filter(p => p.type === 'advance'), p => parseFloat(p.amount));
+    const balance = commissionEarnedAllTime - commissionPaid - advancePaid;
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
       today: { ordersCount: todaySales.length, productsSold: sum(todaySales, s => s.items.reduce((q, i) => q + i.qty, 0)), revenue: sum(todaySales, s => parseFloat(s.totalPrice)) },
       thisMonth: { ordersCount: monthSales.length, productsSold: productsSoldInMonth, revenue: sum(monthSales, s => parseFloat(s.totalPrice)), commissionEarned: commissionEarnedMonth },
-      allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, balance },
+      allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
     });
@@ -268,7 +269,8 @@ router.get('/', requireAdmin, async (req, res) => {
         const cComm = calcComm(c, cSales);
         const cPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cAllPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
-        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotal, productsSold: cProdSold, revenue: cRev, grossProfit: cGP, commissionEarned: cComm, commissionPaid: cPaid, allowancePaid: cAllPaid, netProfit: cGP - cComm, avgOrderValue: cTotal > 0 ? cRev / cTotal : 0, balance: cComm - cPaid };
+        const cAdvPaid = commPayments.filter(p => p.consultantId === c.id && p.type === 'advance').reduce((s, p) => s + parseFloat(p.amount), 0);
+        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotal, productsSold: cProdSold, revenue: cRev, grossProfit: cGP, commissionEarned: cComm, commissionPaid: cPaid, allowancePaid: cAllPaid, advancePaid: cAdvPaid, netProfit: cGP - cComm, avgOrderValue: cTotal > 0 ? cRev / cTotal : 0, balance: cComm - cPaid - cAdvPaid };
       });
       const totalCommEarned = byConsultant.reduce((s, c) => s + c.commissionEarned, 0);
       consultantImpact = {

@@ -1394,9 +1394,10 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
         const cCommissionEarned = calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, cProductsSold, cRevenue, cSales);
         const cPaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'commission').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cAllowancePaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'allowance').reduce((s, p) => s + parseFloat(p.amount), 0);
+        const cAdvancePaid = commissionPayments.filter(p => p.consultantId === c.id && p.type === 'advance').reduce((s, p) => s + parseFloat(p.amount), 0);
         const cNetProfit = cGrossProfit - cCommissionEarned;
         const conversionRate = cTotalSales > 0 ? (cRevenue / cTotalSales) : 0;
-        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotalSales, productsSold: cProductsSold, revenue: cRevenue, grossProfit: cGrossProfit, commissionEarned: cCommissionEarned, commissionPaid: cPaid, allowancePaid: cAllowancePaid, netProfit: cNetProfit, avgOrderValue: conversionRate, balance: cCommissionEarned - cPaid };
+        return { id: c.id, name: c.name, isActive: c.isActive, totalSales: cTotalSales, productsSold: cProductsSold, revenue: cRevenue, grossProfit: cGrossProfit, commissionEarned: cCommissionEarned, commissionPaid: cPaid, allowancePaid: cAllowancePaid, advancePaid: cAdvancePaid, netProfit: cNetProfit, avgOrderValue: conversionRate, balance: cCommissionEarned - cPaid - cAdvancePaid };
       });
 
       const totalCommissionEarned = byConsultant.reduce((s, c) => s + c.commissionEarned, 0);
@@ -2259,7 +2260,10 @@ app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, as
       const cPayments = payments.filter(p => p.consultantId === c.id);
       const commissionPaid = cPayments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
       const allowancePaid = cPayments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
-      const balance = commissionEarned - commissionPaid;
+      // Advances are money already given against future commission, so they net out of the balance owed —
+      // a consultant advanced more than they've earned will show a negative balance (they owe it back).
+      const advancePaid = cPayments.filter(p => p.type === 'advance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+      const balance = commissionEarned - commissionPaid - advancePaid;
       const baseAllowance = parseFloat(c.monthlyAllowance) || 0;
       const allowanceCap = isCycle ? Math.round(baseAllowance * eff.factor * 100) / 100 : null;
       const allowanceRemaining = allowanceCap !== null ? Math.max(0, allowanceCap - allowancePaid) : null;
@@ -2267,10 +2271,10 @@ app.get('/api/v1/consultants/commission-summary', authenticate, requireAdmin, as
         consultant: { id: c.id, name: c.name, phone: c.phone, payType: c.payType, commissionRate: c.commissionRate, tierThreshold: c.tierThreshold, tierRate: c.tierRate, monthlyAllowance: c.monthlyAllowance, isActive: c.isActive, startDate: c.startDate },
         activeInPeriod, prorated: eff.prorated, effectiveFrom: eff.effectiveFrom, effectiveTo: eff.effectiveTo,
         totalSales, totalProductsSold, totalRevenue, commissionEarned, commissionPaid, balance,
-        allowancePaid, allowanceCap, allowanceRemaining,
+        allowancePaid, allowanceCap, allowanceRemaining, advancePaid,
       };
     });
-    const totals = { totalSales: summary.reduce((s, c) => s + c.totalSales, 0), totalRevenue: summary.reduce((s, c) => s + c.totalRevenue, 0), totalCommissionEarned: summary.reduce((s, c) => s + c.commissionEarned, 0), totalCommissionPaid: summary.reduce((s, c) => s + c.commissionPaid, 0), totalAllowancePaid: summary.reduce((s, c) => s + c.allowancePaid, 0), totalBalance: summary.reduce((s, c) => s + c.balance, 0) };
+    const totals = { totalSales: summary.reduce((s, c) => s + c.totalSales, 0), totalRevenue: summary.reduce((s, c) => s + c.totalRevenue, 0), totalCommissionEarned: summary.reduce((s, c) => s + c.commissionEarned, 0), totalCommissionPaid: summary.reduce((s, c) => s + c.commissionPaid, 0), totalAllowancePaid: summary.reduce((s, c) => s + c.allowancePaid, 0), totalAdvancePaid: summary.reduce((s, c) => s + c.advancePaid, 0), totalBalance: summary.reduce((s, c) => s + c.balance, 0) };
     res.json({ summary, totals, period: isCycle ? { from: periodFrom, to: periodTo, label: periodLabel, payDate, payDay } : null });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -2324,7 +2328,8 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
     const commissionEarned = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSold, totalRevenue, sales);
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
-    const balance = commissionEarned - commissionPaid;
+    const advancePaid = payments.filter(p => p.type === 'advance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const balance = commissionEarned - commissionPaid - advancePaid;
     const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
     const allowanceCap = periodInfo ? Math.round(baseAllowance * (periodInfo.factor || 0) * 100) / 100 : null;
     const allowanceRemaining = allowanceCap !== null ? Math.max(0, allowanceCap - allowancePaid) : null;
@@ -2333,7 +2338,7 @@ app.get('/api/v1/consultants/:id', authenticate, async (req, res) => {
       ...consultant,
       totalSales, totalProductsSold, totalRevenue,
       commissionEarned, commissionPaid, balance,
-      allowancePaid, allowanceCap, allowanceRemaining,
+      allowancePaid, allowanceCap, allowanceRemaining, advancePaid,
       period: periodInfo, sales, payments,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -2523,14 +2528,15 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
     const commissionEarnedAllTime = calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, totalProductsSoldAllTime, revenueAllTime, allSales);
     const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
     const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
-    const balance = commissionEarnedAllTime - commissionPaid;
+    const advancePaid = sum(payments.filter(p => p.type === 'advance'), p => parseFloat(p.amount));
+    const balance = commissionEarnedAllTime - commissionPaid - advancePaid;
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, payType: consultant.payType, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
       cycle: { from: currentCycle.periodFrom, to: currentCycle.periodTo, payDate: currentCycle.payDate, label: currentCycle.label },
       today: { ordersCount: todaySales.length, productsSold: sum(todaySales, s => s.items.reduce((q, i) => q + i.qty, 0)), revenue: sum(todaySales, s => parseFloat(s.totalPrice)) },
       thisCycle: { ordersCount: cycleSales.length, productsSold: productsSoldInCycle, revenue: revenueInCycle, commissionEarned: commissionEarnedCycle },
-      allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, balance },
+      allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
     });

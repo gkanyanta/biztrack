@@ -67,7 +67,7 @@ export default function PayStatementPDF({ consultant, payment, sales = [], summa
             </View>
           )}
           <View style={styles.row}>
-            <Text><Text style={styles.bold}>Payment Type:</Text> {payment.type === 'commission' ? 'Commission Payment' : 'Communication Allowance'}</Text>
+            <Text><Text style={styles.bold}>Payment Type:</Text> {payment.type === 'commission' ? 'Commission Payment' : payment.type === 'advance' ? 'Salary Advance' : 'Communication Allowance'}</Text>
             {payment.paymentMethod && <Text><Text style={styles.bold}>Method:</Text> {payment.paymentMethod}</Text>}
           </View>
           {payment.reference && (
@@ -151,6 +151,10 @@ export default function PayStatementPDF({ consultant, payment, sales = [], summa
             <Text>Total Allowance Paid</Text>
             <Text style={styles.bold}>{formatMoney(summary.allowancePaid || 0, currency)}</Text>
           </View>
+          <View style={styles.row}>
+            <Text>Total Salary Advances (deducted from balance)</Text>
+            <Text style={styles.bold}>{formatMoney(summary.advancePaid || 0, currency)}</Text>
+          </View>
         </View>
 
         {(summary.balance || 0) > 0 && (
@@ -158,6 +162,15 @@ export default function PayStatementPDF({ consultant, payment, sales = [], summa
             <View style={styles.row}>
               <Text style={[styles.bold, { color: '#92400e' }]}>Outstanding Balance</Text>
               <Text style={[styles.bold, { color: '#92400e' }]}>{formatMoney(summary.balance, currency)}</Text>
+            </View>
+          </View>
+        )}
+
+        {(summary.balance || 0) < 0 && (
+          <View style={[styles.balanceBox, { backgroundColor: '#fef2f2', borderColor: '#fecaca' }]}>
+            <View style={styles.row}>
+              <Text style={[styles.bold, { color: '#991b1b' }]}>Owed Back to Company (advances exceed earned commission)</Text>
+              <Text style={[styles.bold, { color: '#991b1b' }]}>{formatMoney(Math.abs(summary.balance), currency)}</Text>
             </View>
           </View>
         )}

@@ -184,6 +184,7 @@ export default function Consultants() {
         commissionEarned: consultantDetail?.commissionEarned || 0,
         commissionPaid: consultantDetail?.commissionPaid || 0,
         allowancePaid: consultantDetail?.allowancePaid || 0,
+        advancePaid: consultantDetail?.advancePaid || 0,
         balance: consultantDetail?.balance || 0,
       };
       const blob = await pdf(
@@ -192,7 +193,7 @@ export default function Consultants() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const typeLabel = payment.type === 'commission' ? 'Commission' : 'Allowance';
+      const typeLabel = payment.type === 'commission' ? 'Commission' : payment.type === 'advance' ? 'Advance' : 'Allowance';
       a.download = `PayStatement-${consultant.name.replace(/\s+/g, '_')}-${typeLabel}-${new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
@@ -344,8 +345,8 @@ export default function Consultants() {
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionEarned || 0)}</td>
                     <td className="p-3 text-right text-gray-800 hidden md:table-cell">{formatMoney(s?.commissionPaid || 0)}</td>
                     <td className="p-3 text-right font-medium">
-                      <span className={(s?.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}>
-                        {formatMoney(s?.balance || 0)}
+                      <span className={(s?.balance || 0) < 0 ? 'text-amber-600' : (s?.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'} title={(s?.balance || 0) < 0 ? 'Owes back (advanced more than earned)' : undefined}>
+                        {formatMoney(Math.abs(s?.balance || 0))}
                       </span>
                     </td>
                     <td className="p-3 text-right">
@@ -491,8 +492,10 @@ export default function Consultants() {
                 <div className="text-lg font-bold text-orange-600">{formatMoney(showDetail.commissionEarned || 0)}</div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500">Balance Owed</div>
-                <div className="text-lg font-bold text-red-600">{formatMoney(showDetail.balance || 0)}</div>
+                <div className="text-xs text-gray-500">{(showDetail.balance || 0) < 0 ? 'Owes Back (advance)' : 'Balance Owed'}</div>
+                <div className={`text-lg font-bold ${(showDetail.balance || 0) < 0 ? 'text-amber-600' : (showDetail.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {formatMoney(Math.abs(showDetail.balance || 0))}
+                </div>
               </div>
             </div>
 
@@ -508,7 +511,7 @@ export default function Consultants() {
                 )}
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="bg-blue-50 rounded-lg p-3">
                 <div className="text-xs text-gray-500">Commission Paid {showDetail.period ? '(this cycle)' : ''}</div>
                 <div className="text-lg font-bold text-blue-600">{formatMoney(showDetail.commissionPaid || 0)}</div>
@@ -524,6 +527,11 @@ export default function Consultants() {
                 {showDetail.allowanceRemaining !== null && showDetail.allowanceRemaining !== undefined && (
                   <div className="text-[11px] text-gray-500 mt-0.5">K{showDetail.allowanceRemaining.toFixed(2)} remaining</div>
                 )}
+              </div>
+              <div className="bg-purple-50 rounded-lg p-3">
+                <div className="text-xs text-gray-500">Advances {showDetail.period ? '(this cycle)' : ''}</div>
+                <div className="text-lg font-bold text-purple-600">{formatMoney(showDetail.advancePaid || 0)}</div>
+                <div className="text-[11px] text-gray-500 mt-0.5">Deducted from balance owed</div>
               </div>
             </div>
 
@@ -647,7 +655,7 @@ export default function Consultants() {
                         <tr key={p.id} className="border-b border-gray-50">
                           <td className="p-2 text-gray-600">{formatDate(p.createdAt)}</td>
                           <td className="p-2">
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${p.type === 'commission' ? 'bg-orange-50 text-orange-700' : 'bg-blue-50 text-blue-700'}`}>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${p.type === 'commission' ? 'bg-orange-50 text-orange-700' : p.type === 'advance' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
                               {p.type}
                             </span>
                           </td>
@@ -769,6 +777,7 @@ export default function Consultants() {
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
                       <option value="commission">Commission</option>
                       <option value="allowance">Communication Allowance</option>
+                      <option value="advance">Salary Advance</option>
                     </select>
                   </div>
                   <div>
