@@ -21,6 +21,7 @@ export default function Products() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [showRestock, setShowRestock] = useState(false);
   const [restockItems, setRestockItems] = useState([]);
+  const [restocking, setRestocking] = useState(false);
   const [showStockLog, setShowStockLog] = useState(null);
   const [stockLogs, setStockLogs] = useState([]);
   const [filterLowStock, setFilterLowStock] = useState(false);
@@ -156,15 +157,19 @@ export default function Products() {
   };
 
   const handleRestock = async () => {
+    if (restocking) return; // already submitting — ignore extra clicks
     const items = restockItems.filter(i => i.quantity > 0);
     if (items.length === 0) return toast.error('Enter quantities to restock');
+    setRestocking(true);
     try {
       await bulkRestock(items.map(i => ({ productId: i.productId, quantity: i.quantity })));
       toast.success(`${items.length} product(s) restocked`);
       setShowRestock(false);
       loadProducts();
-    } catch {
-      toast.error('Error restocking');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Error restocking');
+    } finally {
+      setRestocking(false);
     }
   };
 
@@ -430,8 +435,8 @@ export default function Products() {
           ))}
         </div>
         <div className="flex gap-3 justify-end pt-4">
-          <button onClick={() => setShowRestock(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={handleRestock} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Restock</button>
+          <button onClick={() => setShowRestock(false)} disabled={restocking} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+          <button onClick={handleRestock} disabled={restocking} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{restocking ? 'Restocking...' : 'Restock'}</button>
         </div>
       </Modal>
 
