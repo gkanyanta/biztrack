@@ -19,6 +19,28 @@ if (!global.__prisma) {
 }
 const prisma = global.__prisma;
 
+// Rejects an exact repeat of the same write (same user + route + body) that arrives within
+// a short window. Catches double-clicks and duplicate form submits (mirrors
+// server/src/middleware/dedupe.js). Kept on `global` so it survives warm Lambda reuse.
+if (!global.__recentSubmits) {
+  global.__recentSubmits = new Map();
+}
+const recentSubmits = global.__recentSubmits;
+const DEDUPE_WINDOW_MS = 5000;
+function preventDuplicateSubmit(req, res, next) {
+  const key = `${req.user.id}:${req.method}:${req.originalUrl}:${JSON.stringify(req.body)}`;
+  const now = Date.now();
+  const last = recentSubmits.get(key);
+  if (last && now - last < DEDUPE_WINDOW_MS) {
+    return res.status(409).json({ error: 'This looks like a duplicate submission. Please wait a moment and check before retrying.' });
+  }
+  recentSubmits.set(key, now);
+  if (recentSubmits.size > 1000) {
+    for (const [k, t] of recentSubmits) { if (now - t > DEDUPE_WINDOW_MS) recentSubmits.delete(k); }
+  }
+  next();
+}
+
 // Pagination is opt-in: only kicks in when the caller passes ?page=. Callers that need the
 // full unfiltered array (dropdowns, pickers, reports) keep working unchanged.
 function parsePagination(query, { defaultPageSize = 25, maxPageSize = 100 } = {}) {
@@ -540,7 +562,7 @@ app.delete('/api/v1/products/:id', authenticate, requireAdmin, async (req, res) 
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/products/restock', authenticate, requireAdminOrInventory, async (req, res) => {
+app.post('/api/v1/products/restock', authenticate, requireAdminOrInventory, preventDuplicateSubmit, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { items } = req.body;
@@ -712,7 +734,7 @@ app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
+app.post('/api/v1/sales', authenticate, validateSale, preventDuplicateSubmit, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const data = req.body;

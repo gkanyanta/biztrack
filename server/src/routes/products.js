@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 const { validateProduct } = require('../middleware/validate');
+const { preventDuplicateSubmit } = require('../middleware/dedupe');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
@@ -227,7 +228,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/restock', requireAdminOrInventory, async (req, res) => {
+router.post('/restock', requireAdminOrInventory, preventDuplicateSubmit, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;

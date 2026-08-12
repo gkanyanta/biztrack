@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { validateSale } = require('../middleware/validate');
+const { preventDuplicateSubmit } = require('../middleware/dedupe');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
@@ -200,7 +201,7 @@ router.get('/:id', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-router.post('/', validateSale, async (req, res) => {
+router.post('/', validateSale, preventDuplicateSubmit, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
