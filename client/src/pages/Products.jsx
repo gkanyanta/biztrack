@@ -27,6 +27,8 @@ export default function Products() {
   const [groups, setGroups] = useState([]);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [restocking, setRestocking] = useState(false);
 
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
@@ -109,6 +111,8 @@ export default function Products() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const data = {
         ...form,
@@ -134,6 +138,8 @@ export default function Products() {
       loadProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error saving product');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -156,8 +162,10 @@ export default function Products() {
   };
 
   const handleRestock = async () => {
+    if (restocking) return;
     const items = restockItems.filter(i => i.quantity > 0);
     if (items.length === 0) return toast.error('Enter quantities to restock');
+    setRestocking(true);
     try {
       await bulkRestock(items.map(i => ({ productId: i.productId, quantity: i.quantity })));
       toast.success(`${items.length} product(s) restocked`);
@@ -165,6 +173,8 @@ export default function Products() {
       loadProducts();
     } catch {
       toast.error('Error restocking');
+    } finally {
+      setRestocking(false);
     }
   };
 
@@ -401,8 +411,8 @@ export default function Products() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              {editing ? 'Update' : 'Create'}
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              {submitting ? 'Saving...' : editing ? 'Update' : 'Create'}
             </button>
           </div>
         </form>
@@ -431,7 +441,7 @@ export default function Products() {
         </div>
         <div className="flex gap-3 justify-end pt-4">
           <button onClick={() => setShowRestock(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-          <button onClick={handleRestock} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Restock</button>
+          <button onClick={handleRestock} disabled={restocking} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{restocking ? 'Restocking...' : 'Restock'}</button>
         </div>
       </Modal>
 

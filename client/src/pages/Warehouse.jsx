@@ -77,6 +77,8 @@ export default function Warehouse() {
 
   const [stockInForm, setStockInForm] = useState({ productId: '', quantity: '' });
   const [dispatchForm, setDispatchForm] = useState({ productId: '', qty: '', notes: '' });
+  const [stockInSubmitting, setStockInSubmitting] = useState(false);
+  const [dispatchSubmitting, setDispatchSubmitting] = useState(false);
 
   const loadProducts = () => {
     setLoadingProducts(true);
@@ -110,9 +112,11 @@ export default function Warehouse() {
 
   const handleStockIn = async (e) => {
     e.preventDefault();
+    if (stockInSubmitting) return;
     if (!stockInForm.productId || !stockInForm.quantity || parseInt(stockInForm.quantity) <= 0) {
       return toast.error('Select a product and enter a quantity');
     }
+    setStockInSubmitting(true);
     try {
       await bulkRestock([{ productId: stockInForm.productId, quantity: parseInt(stockInForm.quantity) }]);
       toast.success('Stock added to warehouse');
@@ -121,15 +125,19 @@ export default function Warehouse() {
       loadAllProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error adding stock');
+    } finally {
+      setStockInSubmitting(false);
     }
   };
 
   const handleDispatchToCar = async (e) => {
     e.preventDefault();
+    if (dispatchSubmitting) return;
     if (!locationId) return toast.error('No car stock location set up — ask an admin to set one up in Settings');
     if (!dispatchForm.productId || !dispatchForm.qty || parseInt(dispatchForm.qty) <= 0) {
       return toast.error('Select a product and enter a quantity');
     }
+    setDispatchSubmitting(true);
     try {
       await transferStockToConsultant(locationId, { productId: dispatchForm.productId, qty: parseInt(dispatchForm.qty), notes: dispatchForm.notes || undefined });
       toast.success('Dispatched to car stock');
@@ -138,6 +146,8 @@ export default function Warehouse() {
       loadAllProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error dispatching stock');
+    } finally {
+      setDispatchSubmitting(false);
     }
   };
 
@@ -165,7 +175,7 @@ export default function Warehouse() {
             <input type="number" min="1" placeholder="Quantity received" value={stockInForm.quantity}
               onChange={e => setStockInForm(f => ({ ...f, quantity: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-            <button type="submit" className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">Add to Warehouse Stock</button>
+            <button type="submit" disabled={stockInSubmitting} className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{stockInSubmitting ? 'Adding...' : 'Add to Warehouse Stock'}</button>
           </form>
         </div>
 
@@ -187,7 +197,7 @@ export default function Warehouse() {
               <input type="text" placeholder="Notes (optional)" value={dispatchForm.notes}
                 onChange={e => setDispatchForm(f => ({ ...f, notes: e.target.value }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              <button type="submit" className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">Dispatch</button>
+              <button type="submit" disabled={dispatchSubmitting} className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">{dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}</button>
             </form>
           )}
         </div>

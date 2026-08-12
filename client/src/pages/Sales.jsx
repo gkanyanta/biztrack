@@ -34,6 +34,7 @@ export default function Sales() {
   const [productSearch, setProductSearch] = useState('');
   const [showProductPicker, setShowProductPicker] = useState(false);
   const [scanningItemIdx, setScanningItemIdx] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Line items for the order
   const [orderItems, setOrderItems] = useState([]);
@@ -47,6 +48,7 @@ export default function Sales() {
   const [form, setForm] = useState(emptyForm);
   const [creditPaymentForm, setCreditPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
   const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 
   const salesTable = useServerTable({ pageSize: 25 });
 
@@ -130,7 +132,9 @@ export default function Sales() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     if (!orderItems.length) { toast.error('Add at least one product'); return; }
+    setSubmitting(true);
     try {
       const data = {
         ...form,
@@ -155,6 +159,8 @@ export default function Sales() {
       getProducts().then(res => setProducts(res.data.filter(p => p.isActive)));
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error saving sale');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -177,6 +183,8 @@ export default function Sales() {
 
   const handleRecordPayment = async (e) => {
     e.preventDefault();
+    if (paymentSubmitting) return;
+    setPaymentSubmitting(true);
     try {
       const { data } = await recordCreditPayment(showDetail.id, {
         amount: parseFloat(creditPaymentForm.amount),
@@ -190,6 +198,7 @@ export default function Sales() {
       setCreditPaymentForm({ amount: '', paymentMethod: '', reference: '', notes: '' });
       loadSales();
     } catch (err) { toast.error(err.response?.data?.error || 'Error recording payment'); }
+    finally { setPaymentSubmitting(false); }
   };
 
   const openDetail = async (sale) => {
@@ -568,7 +577,7 @@ export default function Sales() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => { setShowForm(false); setOrderItems([]); }} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Record Sale'}</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Record Sale'}</button>
           </div>
         </form>
       </Modal>
@@ -670,7 +679,7 @@ export default function Sales() {
                       className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
                     <div className="flex gap-2 justify-end">
                       <button type="button" onClick={() => setShowPaymentForm(false)} className="px-3 py-1 text-xs border rounded-lg hover:bg-gray-50">Cancel</button>
-                      <button type="submit" className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700">Save Payment</button>
+                      <button type="submit" disabled={paymentSubmitting} className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">{paymentSubmitting ? 'Saving...' : 'Save Payment'}</button>
                     </div>
                   </form>
                 )}
