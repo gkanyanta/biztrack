@@ -91,6 +91,29 @@ function validateSale(req, res, next) {
   next();
 }
 
+function validateQuote(req, res, next) {
+  const { items } = req.body;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'At least one item is required' });
+  }
+  for (const item of items) {
+    if (!item.productId || typeof item.productId !== 'string') {
+      return res.status(400).json({ error: 'Each item must have a valid productId' });
+    }
+    if (!item.qty || isNaN(item.qty) || Number(item.qty) < 1) {
+      return res.status(400).json({ error: 'Each item must have a quantity of at least 1' });
+    }
+  }
+  if (req.body.discount !== undefined && (isNaN(req.body.discount) || Number(req.body.discount) < 0)) {
+    return res.status(400).json({ error: 'Discount must be a non-negative number' });
+  }
+  if (req.body.customerName) req.body.customerName = sanitizeString(req.body.customerName, 200);
+  if (req.body.customerPhone) req.body.customerPhone = sanitizeString(req.body.customerPhone, 30);
+  if (req.body.customerCity) req.body.customerCity = sanitizeString(req.body.customerCity, 100);
+  if (req.body.notes) req.body.notes = sanitizeString(req.body.notes, 1000);
+  next();
+}
+
 function validateExpense(req, res, next) {
   const { description, amount, category } = req.body;
   if (!description || typeof description !== 'string' || description.length < 1) {
@@ -127,6 +150,7 @@ module.exports = {
   validateLogin,
   validateProduct,
   validateSale,
+  validateQuote,
   validateExpense,
   validateCustomer
 };

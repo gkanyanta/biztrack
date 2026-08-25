@@ -7,6 +7,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
 import Sales from './pages/Sales';
+import Quotes from './pages/Quotes';
 import Expenses from './pages/Expenses';
 import Customers from './pages/Customers';
 import Shipping from './pages/Shipping';
@@ -93,6 +94,7 @@ function AppRoutes() {
         <Route path="superadmin" element={<SuperadminPanel />} />
         <Route path="products" element={<AdminOnly><Products /></AdminOnly>} />
         <Route path="sales" element={<NotInventory><Sales /></NotInventory>} />
+        <Route path="quotes" element={<NotInventory><Quotes /></NotInventory>} />
         <Route path="expenses" element={<ExpensesRoute><Expenses /></ExpensesRoute>} />
         <Route path="customers" element={<AdminOnly><Customers /></AdminOnly>} />
         <Route path="shipping" element={<AdminOnly><Shipping /></AdminOnly>} />

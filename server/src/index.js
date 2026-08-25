@@ -54,6 +54,7 @@ app.locals.prisma = prisma;
 app.use('/api/v1/auth', authLimiter, require('./routes/auth'));
 app.use('/api/v1/products', require('./routes/products'));
 app.use('/api/v1/sales', require('./routes/sales'));
+app.use('/api/v1/quotes', require('./routes/quotes'));
 app.use('/api/v1/expenses', require('./routes/expenses'));
 app.use('/api/v1/customers', require('./routes/customers'));
 app.use('/api/v1/shipping-rates', require('./routes/shippingRates'));

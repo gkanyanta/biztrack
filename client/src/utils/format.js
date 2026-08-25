@@ -89,3 +89,12 @@ export const PAYMENT_STATUSES = ['Unpaid', 'Partial', 'Paid'];
 export const PAYMENT_METHODS = ['Mobile Money', 'Cash', 'Bank Transfer', 'Other'];
 export const SOURCES = ['Facebook Ad', 'WhatsApp', 'Referral', 'Repeat Customer', 'Other'];
 export const PAYMENT_TYPES = ['Cash', 'Credit'];
+
+export const QUOTE_STATUSES = ['Sent', 'Accepted', 'Declined', 'Expired'];
+export const QUOTE_STATUS_COLORS = {
+  Sent: 'bg-blue-100 text-blue-800',
+  Accepted: 'bg-green-100 text-green-800',
+  Declined: 'bg-red-100 text-red-800',
+  Expired: 'bg-gray-100 text-gray-600',
+  Converted: 'bg-purple-100 text-purple-800',
+};

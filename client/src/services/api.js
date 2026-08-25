@@ -56,6 +56,16 @@ export const getNewOrderNotifications = (since) => api.get('/sales/notifications
 export const sendReminder = (saleId, data) => api.post(`/sales/${saleId}/reminders`, data);
 export const getSaleReceipt = (id) => api.get(`/sales/${id}/receipt`);
 
+// Quotes
+export const getQuotes = (params) => api.get('/quotes', { params });
+export const getQuote = (id) => api.get(`/quotes/${id}`);
+export const createQuote = (data) => api.post('/quotes', data);
+export const updateQuote = (id, data) => api.put(`/quotes/${id}`, data);
+export const updateQuoteStatus = (id, status) => api.put(`/quotes/${id}/status`, { status });
+export const convertQuoteToSale = (id) => api.post(`/quotes/${id}/convert`);
+export const deleteQuote = (id) => api.delete(`/quotes/${id}`);
+export const getQuotePdfData = (id) => api.get(`/quotes/${id}/pdf-data`);
+
 // Expenses
 export const getExpenses = (params) => api.get('/expenses', { params });
 export const createExpense = (data) => api.post('/expenses', data);

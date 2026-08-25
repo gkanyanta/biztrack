@@ -5,7 +5,7 @@ import useDarkMode from '../hooks/useDarkMode';
 import useNewOrderNotifications from '../hooks/useNewOrderNotifications';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell, FiLayers
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell, FiLayers, FiFileText
 } from 'react-icons/fi';
 
 const adminNavItems = [
@@ -14,6 +14,7 @@ const adminNavItems = [
   { path: '/inventory', icon: FiClipboard, label: 'Inventory' },
   { path: '/stock-allocations', icon: FiLayers, label: 'Allocations' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
+  { path: '/quotes', icon: FiFileText, label: 'Quotes' },
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
   { path: '/consultants', icon: FiUserCheck, label: 'Consultants' },
@@ -32,6 +33,7 @@ const superadminNavItems = [
 const consultantNavItems = [
   { path: '/', icon: FiHome, label: 'Dashboard' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
+  { path: '/quotes', icon: FiFileText, label: 'Quotes' },
   { path: '/my-stock', icon: FiPackage, label: 'My Stock' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
 ];

@@ -35,6 +35,7 @@ model Company {
   stockTransfers     StockTransfer[]
   salesTargets       SalesTarget[]
   productGroups      ProductGroup[]
+  quotes             Quote[]
 }
 
 model User {
@@ -72,6 +73,7 @@ model Product {
   stockLogs       StockLog[]
   consultantStock ConsultantStock[]
   stockTransfers  StockTransfer[]
+  quoteItems      QuoteItem[]
   group           ProductGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@unique([companyId, sku])
@@ -136,6 +138,7 @@ model Sale {
   statusHistory   OrderStatusLog[]
   creditPayments  CreditPayment[]
   debtReminders   DebtReminder[]
+  quote           Quote?
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -187,8 +190,55 @@ model Customer {
   company   Company  @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
   sales     Sale[]
+  quotes    Quote[]
 
   @@index([companyId, phone])
+}
+
+// Price quotation issued to a customer on request — no stock deduction or commission
+// impact until explicitly converted into a real Sale via convertedSaleId.
+model Quote {
+  id              String      @id @default(cuid())
+  quoteNumber     String
+  date            DateTime    @default(now())
+  expiresAt       DateTime?
+  status          String      @default("Sent")
+  customerId      String?
+  customer        Customer?   @relation(fields: [customerId], references: [id])
+  customerName    String?
+  customerPhone   String?
+  customerCity    String?
+  shippingCharge  Decimal     @db.Decimal(10, 2) @default(0)
+  discount        Decimal     @db.Decimal(10, 2) @default(0)
+  totalPrice      Decimal     @db.Decimal(10, 2)
+  notes           String?
+  consultantId    String?
+  consultant      Consultant? @relation(fields: [consultantId], references: [id])
+  convertedSaleId String?     @unique
+  convertedSale   Sale?       @relation(fields: [convertedSaleId], references: [id])
+  companyId       String
+  company         Company     @relation(fields: [companyId], references: [id])
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  items           QuoteItem[]
+
+  @@unique([companyId, quoteNumber])
+  @@index([companyId, date])
+  @@index([consultantId])
+}
+
+model QuoteItem {
+  id         String  @id @default(cuid())
+  quoteId    String
+  quote      Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product @relation(fields: [productId], references: [id])
+  qty        Int
+  unitPrice  Decimal @db.Decimal(10, 2)
+  totalPrice Decimal @db.Decimal(10, 2)
+
+  @@index([quoteId])
+  @@index([productId])
 }
 
 model Expense {
@@ -283,6 +333,7 @@ model Consultant {
   stock              ConsultantStock[]
   stockTransfers     StockTransfer[]
   saleItemSources    SaleItem[]          @relation("StockSource")
+  quotes             Quote[]
 }
 
 model CommissionPayment {
