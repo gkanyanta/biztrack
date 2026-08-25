@@ -36,6 +36,7 @@ model Company {
   salesTargets       SalesTarget[]
   productGroups      ProductGroup[]
   quotes             Quote[]
+  paymentNotes       PaymentNote[]
 }
 
 model User {
@@ -138,6 +139,7 @@ model Sale {
   statusHistory   OrderStatusLog[]
   creditPayments  CreditPayment[]
   debtReminders   DebtReminder[]
+  paymentNotes    PaymentNote[]
   quote           Quote?
 
   @@unique([companyId, orderNumber])
@@ -304,6 +306,21 @@ model DebtReminder {
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
   sentAt    DateTime @default(now())
+
+  @@index([saleId])
+  @@index([companyId])
+}
+
+// Timestamped log of payment-position comments on an order (e.g. "will pay tomorrow via
+// MoMo", "paid, ref 4521") — an activity trail, not a single overwritable status field.
+model PaymentNote {
+  id        String   @id @default(cuid())
+  saleId    String
+  sale      Sale     @relation(fields: [saleId], references: [id])
+  note      String
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  createdAt DateTime @default(now())
 
   @@index([saleId])
   @@index([companyId])

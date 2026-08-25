@@ -55,6 +55,8 @@ export const getCreditSummary = () => api.get('/sales/credit/summary');
 export const getNewOrderNotifications = (since) => api.get('/sales/notifications/new', { params: { since } });
 export const sendReminder = (saleId, data) => api.post(`/sales/${saleId}/reminders`, data);
 export const getSaleReceipt = (id) => api.get(`/sales/${id}/receipt`);
+export const updateSalePayment = (id, data) => api.put(`/sales/${id}/payment`, data);
+export const getDailySalesReport = (params) => api.get('/sales/reports/daily', { params });
 
 // Quotes
 export const getQuotes = (params) => api.get('/quotes', { params });

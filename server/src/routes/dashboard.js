@@ -141,6 +141,26 @@ router.get('/', requireAdmin, async (req, res) => {
       .slice(0, 20);
     const pendingOrders = await prisma.sale.count({ where: { companyId, status: { in: ['Pending', 'Confirmed'] } } });
 
+    // Cash-type orders sitting unpaid/partial — Credit sales are excluded since they're
+    // expected to be outstanding and already tracked via the Credit Tracker's aging view.
+    const unpaidCashWhere = { companyId, paymentType: 'Cash', paymentStatus: { in: ['Unpaid', 'Partial'] }, status: { not: 'Cancelled' } };
+    const [unpaidCashRows, unpaidCashAgg] = await Promise.all([
+      prisma.sale.findMany({
+        where: unpaidCashWhere,
+        select: { id: true, orderNumber: true, customerName: true, customerPhone: true, totalPrice: true, amountPaid: true, paymentStatus: true, date: true, consultant: { select: { name: true } } },
+        orderBy: { date: 'asc' },
+        take: 20,
+      }),
+      prisma.sale.aggregate({ where: unpaidCashWhere, _count: true, _sum: { totalPrice: true, amountPaid: true } }),
+    ]);
+    const unpaidCashOrders = unpaidCashRows.map(s => ({
+      id: s.id, orderNumber: s.orderNumber, customerName: s.customerName || 'Unknown', customerPhone: s.customerPhone,
+      balance: parseFloat(s.totalPrice) - parseFloat(s.amountPaid), paymentStatus: s.paymentStatus, date: s.date,
+      consultantName: s.consultant?.name || null,
+    }));
+    const unpaidCashCount = unpaidCashAgg._count;
+    const unpaidCashTotal = parseFloat(unpaidCashAgg._sum.totalPrice || 0) - parseFloat(unpaidCashAgg._sum.amountPaid || 0);
+
     // ---- GROWTH TRACKER ----
     const now = new Date();
     const thisMonthStart2 = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -286,7 +306,7 @@ router.get('/', requireAdmin, async (req, res) => {
       };
     }
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth, savings, consultantImpact });
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, unpaidCashOrders, unpaidCashCount, unpaidCashTotal, growth, savings, consultantImpact });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

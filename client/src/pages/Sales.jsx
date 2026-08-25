@@ -9,6 +9,7 @@ import ReceiptButton from '../components/ReceiptButton';
 import Pagination from '../components/Pagination';
 import SortableHeader from '../components/SortableHeader';
 import OrderTimeline from '../components/OrderTimeline';
+import PaymentStatusModal from '../components/PaymentStatusModal';
 import useServerTable from '../hooks/useServerTable';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera } from 'react-icons/fi';
@@ -35,6 +36,7 @@ export default function Sales() {
   const [showProductPicker, setShowProductPicker] = useState(false);
   const [scanningItemIdx, setScanningItemIdx] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [paymentModalSale, setPaymentModalSale] = useState(null);
 
   // Line items for the order
   const [orderItems, setOrderItems] = useState([]);
@@ -337,7 +339,11 @@ export default function Sales() {
                         {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                       </select>
                     </td>
-                    <td className="p-3 text-center hidden sm:table-cell"><PaymentBadge status={s.paymentStatus} /></td>
+                    <td className="p-3 text-center hidden sm:table-cell">
+                      <button onClick={() => setPaymentModalSale(s)} className="hover:opacity-75" title="Click to update payment status">
+                        <PaymentBadge status={s.paymentStatus} />
+                      </button>
+                    </td>
                     <td className="p-3 text-right">
                       <div className="flex gap-1 justify-end">
                         <ReceiptButton saleId={s.id} size={15} className="p-1.5" />
@@ -716,6 +722,9 @@ export default function Sales() {
 
       <ConfirmDialog isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete}
         title="Delete Sale" message={`Delete order ${deleteConfirm?.orderNumber}? Stock will be restored if applicable.`} />
+
+      <PaymentStatusModal sale={paymentModalSale} isOpen={!!paymentModalSale} onClose={() => setPaymentModalSale(null)}
+        onUpdated={() => loadSales()} />
     </div>
   );
 }

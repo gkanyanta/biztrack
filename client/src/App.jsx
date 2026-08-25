@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
 import Sales from './pages/Sales';
 import Quotes from './pages/Quotes';
+import DailySalesReport from './pages/DailySalesReport';
 import Expenses from './pages/Expenses';
 import Customers from './pages/Customers';
 import Shipping from './pages/Shipping';
@@ -95,6 +96,7 @@ function AppRoutes() {
         <Route path="products" element={<AdminOnly><Products /></AdminOnly>} />
         <Route path="sales" element={<NotInventory><Sales /></NotInventory>} />
         <Route path="quotes" element={<NotInventory><Quotes /></NotInventory>} />
+        <Route path="daily-report" element={<NotInventory><DailySalesReport /></NotInventory>} />
         <Route path="expenses" element={<ExpensesRoute><Expenses /></ExpensesRoute>} />
         <Route path="customers" element={<AdminOnly><Customers /></AdminOnly>} />
         <Route path="shipping" element={<AdminOnly><Shipping /></AdminOnly>} />

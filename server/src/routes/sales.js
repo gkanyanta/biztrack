@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
-const { validateSale } = require('../middleware/validate');
+const { validateSale, sanitizeString } = require('../middleware/validate');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
@@ -143,6 +143,68 @@ router.get('/credit/summary', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- DAILY SALES REPORT (must be before /:id routes) ----
+// One-day snapshot of orders with payment position, built for consultants to generate their
+// own end-of-day report and for admins to review any consultant's (or everyone's) day.
+router.get('/reports/daily', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    const dayStart = new Date(date + 'T00:00:00.000Z');
+    const dayEnd = new Date(date + 'T23:59:59.999Z');
+
+    const where = { companyId, date: { gte: dayStart, lte: dayEnd }, status: { not: 'Cancelled' } };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    else if (req.query.consultantId) where.consultantId = req.query.consultantId;
+
+    const sales = await prisma.sale.findMany({
+      where,
+      include: {
+        items: { include: { product: { select: { name: true } } } },
+        consultant: { select: { id: true, name: true } },
+        customer: { select: { name: true, phone: true } },
+        paymentNotes: { orderBy: { createdAt: 'desc' }, take: 1 },
+        _count: { select: { paymentNotes: true } },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    let totalRevenue = 0, paidCount = 0, paidAmount = 0, partialCount = 0, partialOutstanding = 0, unpaidCount = 0, unpaidAmount = 0;
+    const orders = sales.map(s => {
+      const total = parseFloat(s.totalPrice);
+      const amountPaid = parseFloat(s.amountPaid);
+      totalRevenue += total;
+      if (s.paymentStatus === 'Paid') { paidCount++; paidAmount += total; }
+      else if (s.paymentStatus === 'Partial') { partialCount++; partialOutstanding += (total - amountPaid); }
+      else { unpaidCount++; unpaidAmount += total; }
+      return {
+        id: s.id, orderNumber: s.orderNumber, date: s.date,
+        customerName: s.customerName || s.customer?.name || 'Unknown', customerPhone: s.customerPhone || s.customer?.phone || null,
+        items: s.items.map(i => ({ name: i.product?.name || 'Product', qty: i.qty })),
+        totalPrice: total, amountPaid, balance: total - amountPaid,
+        paymentType: s.paymentType, paymentStatus: s.paymentStatus,
+        consultant: s.consultant, latestNote: s.paymentNotes[0]?.note || null, notesCount: s._count.paymentNotes,
+      };
+    });
+
+    let consultantInfo = null;
+    if (where.consultantId) {
+      const c = await prisma.consultant.findFirst({ where: { id: where.consultantId, companyId }, select: { id: true, name: true } });
+      consultantInfo = c || null;
+    }
+
+    res.json({
+      date, consultant: consultantInfo, orders,
+      summary: {
+        totalOrders: orders.length, totalRevenue,
+        paidCount, paidAmount, partialCount, partialOutstanding, unpaidCount, unpaidAmount,
+        totalOutstanding: partialOutstanding + unpaidAmount,
+      },
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 router.get('/', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
@@ -190,7 +252,7 @@ router.get('/:id', async (req, res) => {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } }, paymentNotes: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     // Strip cost-exposing fields for consultants
     if (req.user.role === 'consultant') {
@@ -449,6 +511,49 @@ router.put('/:id/status', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// Quick binary Paid/Unpaid toggle for Cash-type orders, so admins/consultants don't have
+// to open the full edit form just to flip payment status. Credit sales stay out of this —
+// they're paid down incrementally via the Credit Tracker's CreditPayment ledger instead,
+// and blindly toggling would corrupt that ledger's amountPaid tracking. A note can be
+// logged independently of (or alongside) a status change — it's a running activity trail,
+// not a field that gets overwritten each time.
+router.put('/:id/payment', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const { paymentStatus, note } = req.body;
+    if (paymentStatus !== undefined && !['Paid', 'Unpaid'].includes(paymentStatus)) {
+      return res.status(400).json({ error: 'Payment status must be Paid or Unpaid' });
+    }
+    const trimmedNote = typeof note === 'string' ? note.trim() : '';
+    if (paymentStatus === undefined && !trimmedNote) {
+      return res.status(400).json({ error: 'Provide a payment status change, a note, or both' });
+    }
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where });
+    if (!sale) return res.status(404).json({ error: 'Sale not found' });
+    if (paymentStatus !== undefined && sale.paymentType === 'Credit') {
+      return res.status(400).json({ error: 'Credit sales are paid down via the Credit Tracker, not this toggle' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (paymentStatus !== undefined) {
+        await tx.sale.update({
+          where: { id: sale.id },
+          data: { paymentStatus, amountPaid: paymentStatus === 'Paid' ? sale.totalPrice : 0 },
+        });
+      }
+      if (trimmedNote) {
+        await tx.paymentNote.create({ data: { saleId: sale.id, note: sanitizeString(trimmedNote, 500), companyId } });
+      }
+    });
+
+    const updated = await prisma.sale.findFirst({ where: { id: sale.id }, include: { ...saleInclude, paymentNotes: { orderBy: { createdAt: 'desc' } } } });
+    res.json(updated);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 router.delete('/:id', async (req, res) => {
   try {
     // Consultants cannot delete sales
@@ -466,6 +571,7 @@ router.delete('/:id', async (req, res) => {
       }
       await tx.creditPayment.deleteMany({ where: { saleId: req.params.id } });
       await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
+      await tx.paymentNote.deleteMany({ where: { saleId: req.params.id } });
       await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
       await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
       await tx.sale.delete({ where: { id: req.params.id } });

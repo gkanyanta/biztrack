@@ -677,6 +677,66 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- DAILY SALES REPORT (must be before /:id routes) ----
+// One-day snapshot of orders with payment position (mirrors server/src/routes/sales.js).
+app.get('/api/v1/sales/reports/daily', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    const dayStart = new Date(date + 'T00:00:00.000Z');
+    const dayEnd = new Date(date + 'T23:59:59.999Z');
+
+    const where = { companyId, date: { gte: dayStart, lte: dayEnd }, status: { not: 'Cancelled' } };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    else if (req.query.consultantId) where.consultantId = req.query.consultantId;
+
+    const sales = await prisma.sale.findMany({
+      where,
+      include: {
+        items: { include: { product: { select: { name: true } } } },
+        consultant: { select: { id: true, name: true } },
+        customer: { select: { name: true, phone: true } },
+        paymentNotes: { orderBy: { createdAt: 'desc' }, take: 1 },
+        _count: { select: { paymentNotes: true } },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    let totalRevenue = 0, paidCount = 0, paidAmount = 0, partialCount = 0, partialOutstanding = 0, unpaidCount = 0, unpaidAmount = 0;
+    const orders = sales.map(s => {
+      const total = parseFloat(s.totalPrice);
+      const amountPaid = parseFloat(s.amountPaid);
+      totalRevenue += total;
+      if (s.paymentStatus === 'Paid') { paidCount++; paidAmount += total; }
+      else if (s.paymentStatus === 'Partial') { partialCount++; partialOutstanding += (total - amountPaid); }
+      else { unpaidCount++; unpaidAmount += total; }
+      return {
+        id: s.id, orderNumber: s.orderNumber, date: s.date,
+        customerName: s.customerName || s.customer?.name || 'Unknown', customerPhone: s.customerPhone || s.customer?.phone || null,
+        items: s.items.map(i => ({ name: i.product?.name || 'Product', qty: i.qty })),
+        totalPrice: total, amountPaid, balance: total - amountPaid,
+        paymentType: s.paymentType, paymentStatus: s.paymentStatus,
+        consultant: s.consultant, latestNote: s.paymentNotes[0]?.note || null, notesCount: s._count.paymentNotes,
+      };
+    });
+
+    let consultantInfo = null;
+    if (where.consultantId) {
+      const c = await prisma.consultant.findFirst({ where: { id: where.consultantId, companyId }, select: { id: true, name: true } });
+      consultantInfo = c || null;
+    }
+
+    res.json({
+      date, consultant: consultantInfo, orders,
+      summary: {
+        totalOrders: orders.length, totalRevenue,
+        paidCount, paidAmount, partialCount, partialOutstanding, unpaidCount, unpaidAmount,
+        totalOutstanding: partialOutstanding + unpaidAmount,
+      },
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 const SALE_INCLUDE = { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true };
 const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerName', totalPrice: 'totalPrice', status: 'status', paymentStatus: 'paymentStatus', date: 'date' };
 function calcSaleProfit(s) {
@@ -726,7 +786,7 @@ app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } }, paymentNotes: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     if (req.user.role === 'consultant') {
       sale.items = (sale.items || []).map(({ costPrice, ...rest }) => rest);
@@ -978,6 +1038,47 @@ app.put('/api/v1/sales/:id/status', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// Quick binary Paid/Unpaid toggle for Cash-type orders (mirrors server/src/routes/sales.js).
+// Credit sales are excluded — they're paid down via the Credit Tracker's CreditPayment
+// ledger instead, and toggling here would corrupt that ledger's amountPaid tracking.
+// A note can be logged independently of (or alongside) a status change — it's a running
+// activity trail, not a field that gets overwritten each time.
+app.put('/api/v1/sales/:id/payment', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { paymentStatus, note } = req.body;
+    if (paymentStatus !== undefined && !['Paid', 'Unpaid'].includes(paymentStatus)) {
+      return res.status(400).json({ error: 'Payment status must be Paid or Unpaid' });
+    }
+    const trimmedNote = typeof note === 'string' ? note.trim() : '';
+    if (paymentStatus === undefined && !trimmedNote) {
+      return res.status(400).json({ error: 'Provide a payment status change, a note, or both' });
+    }
+    const where = { id: req.params.id, companyId };
+    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    const sale = await prisma.sale.findFirst({ where });
+    if (!sale) return res.status(404).json({ error: 'Sale not found' });
+    if (paymentStatus !== undefined && sale.paymentType === 'Credit') {
+      return res.status(400).json({ error: 'Credit sales are paid down via the Credit Tracker, not this toggle' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (paymentStatus !== undefined) {
+        await tx.sale.update({
+          where: { id: sale.id },
+          data: { paymentStatus, amountPaid: paymentStatus === 'Paid' ? sale.totalPrice : 0 },
+        });
+      }
+      if (trimmedNote) {
+        await tx.paymentNote.create({ data: { saleId: sale.id, note: sanitizeString(trimmedNote, 500), companyId } });
+      }
+    });
+
+    const updated = await prisma.sale.findFirst({ where: { id: sale.id }, include: { ...SALE_INCLUDE, paymentNotes: { orderBy: { createdAt: 'desc' } } } });
+    res.json(updated);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     if (req.user.role === 'consultant') return res.status(403).json({ error: 'Consultants cannot delete sales' });
@@ -993,6 +1094,7 @@ app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
         }
         await tx.creditPayment.deleteMany({ where: { saleId: req.params.id } });
         await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
+        await tx.paymentNote.deleteMany({ where: { saleId: req.params.id } });
         await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
         await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
         await tx.sale.delete({ where: { id: req.params.id } });
@@ -1565,6 +1667,26 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
       .slice(0, 20);
     const pendingOrders = await prisma.sale.count({ where: { companyId, status: { in: ['Pending', 'Confirmed'] } } });
 
+    // Cash-type orders sitting unpaid/partial — Credit sales are excluded since they're
+    // expected to be outstanding and already tracked via the Credit Tracker's aging view.
+    const unpaidCashWhere = { companyId, paymentType: 'Cash', paymentStatus: { in: ['Unpaid', 'Partial'] }, status: { not: 'Cancelled' } };
+    const [unpaidCashRows, unpaidCashAgg] = await Promise.all([
+      prisma.sale.findMany({
+        where: unpaidCashWhere,
+        select: { id: true, orderNumber: true, customerName: true, customerPhone: true, totalPrice: true, amountPaid: true, paymentStatus: true, date: true, consultant: { select: { name: true } } },
+        orderBy: { date: 'asc' },
+        take: 20,
+      }),
+      prisma.sale.aggregate({ where: unpaidCashWhere, _count: true, _sum: { totalPrice: true, amountPaid: true } }),
+    ]);
+    const unpaidCashOrders = unpaidCashRows.map(s => ({
+      id: s.id, orderNumber: s.orderNumber, customerName: s.customerName || 'Unknown', customerPhone: s.customerPhone,
+      balance: parseFloat(s.totalPrice) - parseFloat(s.amountPaid), paymentStatus: s.paymentStatus, date: s.date,
+      consultantName: s.consultant?.name || null,
+    }));
+    const unpaidCashCount = unpaidCashAgg._count;
+    const unpaidCashTotal = parseFloat(unpaidCashAgg._sum.totalPrice || 0) - parseFloat(unpaidCashAgg._sum.amountPaid || 0);
+
     // ---- GROWTH ANALYSIS ----
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1681,7 +1803,7 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
       };
     }
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, growth, savings, consultantImpact });
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, unpaidCashOrders, unpaidCashCount, unpaidCashTotal, growth, savings, consultantImpact });
   } catch (err) { console.error('DASHBOARD ERROR:', err); res.status(500).json({ error: err.message, stack: err.stack }); }
 });
 

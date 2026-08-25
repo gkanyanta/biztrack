@@ -3,7 +3,8 @@ import { getDashboard } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import DateRangePicker from '../components/DateRangePicker';
-import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave, FiUserCheck } from 'react-icons/fi';
+import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave, FiUserCheck, FiClock } from 'react-icons/fi';
+import { Link } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend
@@ -451,6 +452,33 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {data.unpaidCashOrders?.length > 0 && (
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <FiClock className="text-red-500" /> Unpaid Orders
+              </h3>
+              <Link to="/sales" className="text-xs text-blue-600 hover:text-blue-800">Manage in Sales →</Link>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">
+              Cash orders sitting unpaid or partially paid — {data.unpaidCashCount} order{data.unpaidCashCount === 1 ? '' : 's'}, {formatMoney(data.unpaidCashTotal)} outstanding. Credit sales are tracked separately in Credit Tracker.
+            </p>
+            <div className="space-y-2">
+              {data.unpaidCashOrders.map(o => (
+                <div key={o.id} className="flex justify-between items-center text-sm py-1.5 border-b border-gray-50">
+                  <div>
+                    <div className="text-gray-700">{o.orderNumber} · {o.customerName}</div>
+                    <div className="text-xs text-gray-400">{o.consultantName || 'Direct'} · {new Date(o.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
+                  </div>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded whitespace-nowrap ${o.paymentStatus === 'Partial' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                    {formatMoney(o.balance)} due
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
