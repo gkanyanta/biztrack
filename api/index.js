@@ -677,16 +677,19 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// ---- DAILY SALES REPORT (must be before /:id routes) ----
-// One-day snapshot of orders with payment position (mirrors server/src/routes/sales.js).
+// ---- SALES REPORT (day/week/month, mirrors server/src/routes/sales.js) ----
+// The period shape (day/week/month) is entirely a client-side concern — this endpoint just
+// takes an inclusive from/to range, so a "day" report is simply from === to.
 app.get('/api/v1/sales/reports/daily', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const date = req.query.date || new Date().toISOString().slice(0, 10);
-    const dayStart = new Date(date + 'T00:00:00.000Z');
-    const dayEnd = new Date(date + 'T23:59:59.999Z');
+    const today = new Date().toISOString().slice(0, 10);
+    const from = req.query.from || req.query.date || today;
+    const to = req.query.to || from;
+    const rangeStart = new Date(from + 'T00:00:00.000Z');
+    const rangeEnd = new Date(to + 'T23:59:59.999Z');
 
-    const where = { companyId, date: { gte: dayStart, lte: dayEnd }, status: { not: 'Cancelled' } };
+    const where = { companyId, date: { gte: rangeStart, lte: rangeEnd }, status: { not: 'Cancelled' } };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
     else if (req.query.consultantId) where.consultantId = req.query.consultantId;
 
@@ -727,7 +730,7 @@ app.get('/api/v1/sales/reports/daily', authenticate, async (req, res) => {
     }
 
     res.json({
-      date, consultant: consultantInfo, orders,
+      from, to, consultant: consultantInfo, orders,
       summary: {
         totalOrders: orders.length, totalRevenue,
         paidCount, paidAmount, partialCount, partialOutstanding, unpaidCount, unpaidAmount,

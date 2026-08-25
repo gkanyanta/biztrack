@@ -41,10 +41,11 @@ function formatDate(date) {
   return new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export default function DailySalesReportPDF({ report, settings = {} }) {
+export default function DailySalesReportPDF({ report, settings = {}, periodLabel, reportTypeLabel = 'Daily' }) {
   const currency = settings.currencySymbol || settings.currency || 'K';
   const businessName = settings.businessName || 'BizTrack';
-  const { date, consultant, orders = [], summary = {} } = report;
+  const { from, consultant, orders = [], summary = {} } = report;
+  const displayLabel = periodLabel || formatDate(from);
 
   return (
     <Document>
@@ -54,7 +55,7 @@ export default function DailySalesReportPDF({ report, settings = {} }) {
           <View style={styles.headerText}>
             <Text style={styles.businessName}>{businessName}</Text>
             {settings.companyPhone && <Text style={styles.companyDetail}>Tel: {settings.companyPhone}</Text>}
-            <Text style={styles.reportTitle}>DAILY SALES REPORT — {formatDate(date)}</Text>
+            <Text style={styles.reportTitle}>{reportTypeLabel.toUpperCase()} SALES REPORT — {displayLabel}</Text>
             {consultant?.name && <Text style={styles.companyDetail}>Consultant: {consultant.name}</Text>}
           </View>
         </View>

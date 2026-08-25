@@ -15,7 +15,7 @@ const adminNavItems = [
   { path: '/stock-allocations', icon: FiLayers, label: 'Allocations' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
   { path: '/quotes', icon: FiFileText, label: 'Quotes' },
-  { path: '/daily-report', icon: FiCalendar, label: 'Daily Report' },
+  { path: '/daily-report', icon: FiCalendar, label: 'Sales Report' },
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
   { path: '/consultants', icon: FiUserCheck, label: 'Consultants' },
@@ -35,7 +35,7 @@ const consultantNavItems = [
   { path: '/', icon: FiHome, label: 'Dashboard' },
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
   { path: '/quotes', icon: FiFileText, label: 'Quotes' },
-  { path: '/daily-report', icon: FiCalendar, label: 'Daily Report' },
+  { path: '/daily-report', icon: FiCalendar, label: 'Sales Report' },
   { path: '/my-stock', icon: FiPackage, label: 'My Stock' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
 ];

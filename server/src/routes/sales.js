@@ -143,18 +143,22 @@ router.get('/credit/summary', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-// ---- DAILY SALES REPORT (must be before /:id routes) ----
-// One-day snapshot of orders with payment position, built for consultants to generate their
-// own end-of-day report and for admins to review any consultant's (or everyone's) day.
+// ---- SALES REPORT (day/week/month, must be before /:id routes) ----
+// Date-range snapshot of orders with payment position, built for consultants to generate
+// their own report and for admins to review any consultant's (or everyone's) period.
+// The period shape (day/week/month) is entirely a client-side concern — this endpoint just
+// takes an inclusive from/to range, so a "day" report is simply from === to.
 router.get('/reports/daily', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const date = req.query.date || new Date().toISOString().slice(0, 10);
-    const dayStart = new Date(date + 'T00:00:00.000Z');
-    const dayEnd = new Date(date + 'T23:59:59.999Z');
+    const today = new Date().toISOString().slice(0, 10);
+    const from = req.query.from || req.query.date || today;
+    const to = req.query.to || from;
+    const rangeStart = new Date(from + 'T00:00:00.000Z');
+    const rangeEnd = new Date(to + 'T23:59:59.999Z');
 
-    const where = { companyId, date: { gte: dayStart, lte: dayEnd }, status: { not: 'Cancelled' } };
+    const where = { companyId, date: { gte: rangeStart, lte: rangeEnd }, status: { not: 'Cancelled' } };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
     else if (req.query.consultantId) where.consultantId = req.query.consultantId;
 
@@ -195,7 +199,7 @@ router.get('/reports/daily', async (req, res) => {
     }
 
     res.json({
-      date, consultant: consultantInfo, orders,
+      from, to, consultant: consultantInfo, orders,
       summary: {
         totalOrders: orders.length, totalRevenue,
         paidCount, paidAmount, partialCount, partialOutstanding, unpaidCount, unpaidAmount,
