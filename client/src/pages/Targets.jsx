@@ -39,6 +39,7 @@ export default function Targets() {
   const [editing, setEditing] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -66,6 +67,8 @@ export default function Targets() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const savingsRate = parseFloat(form.savingsRatePercent) / 100;
       const data = {
@@ -86,6 +89,8 @@ export default function Targets() {
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -195,7 +200,7 @@ export default function Targets() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Create'}</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Create'}</button>
           </div>
         </form>
       </Modal>

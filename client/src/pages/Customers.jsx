@@ -23,6 +23,7 @@ export default function Customers() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [showOrders, setShowOrders] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
   const emptyForm = { name: '', phone: '', whatsapp: '', city: '', email: '', source: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
@@ -48,6 +49,8 @@ export default function Customers() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       if (editing) {
         await updateCustomer(editing.id, form);
@@ -60,6 +63,8 @@ export default function Customers() {
       loadCustomers();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -193,7 +198,7 @@ export default function Customers() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Add'}</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Add'}</button>
           </div>
         </form>
       </Modal>

@@ -79,6 +79,7 @@ export default function Warehouse() {
   const [dispatchForm, setDispatchForm] = useState({ productId: '', qty: '', notes: '' });
   const [stockInSubmitting, setStockInSubmitting] = useState(false);
   const [dispatchSubmitting, setDispatchSubmitting] = useState(false);
+  const [dispatchingOrderId, setDispatchingOrderId] = useState(null);
 
   const loadProducts = () => {
     setLoadingProducts(true);
@@ -152,6 +153,8 @@ export default function Warehouse() {
   };
 
   const handleMarkDispatched = async (order) => {
+    if (dispatchingOrderId) return;
+    setDispatchingOrderId(order.id);
     try {
       await updateSaleStatus(order.id, 'Shipped');
       toast.success(`Order ${order.orderNumber} marked dispatched`);
@@ -160,6 +163,8 @@ export default function Warehouse() {
       loadAllProducts();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error updating order');
+    } finally {
+      setDispatchingOrderId(null);
     }
   };
 
@@ -216,8 +221,8 @@ export default function Warehouse() {
                   <div className="text-xs text-gray-500">{o.customerName || 'Walk-in'} · {formatDate(o.date)}</div>
                   <div className="text-xs text-gray-400">{(o.items || []).map(i => `${i.product?.name || 'Item'} x${i.qty}`).join(', ')}</div>
                 </div>
-                <button onClick={() => handleMarkDispatched(o)} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700">
-                  <FiCheckCircle size={14} /> Mark Dispatched
+                <button onClick={() => handleMarkDispatched(o)} disabled={dispatchingOrderId === o.id} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <FiCheckCircle size={14} /> {dispatchingOrderId === o.id ? 'Dispatching...' : 'Mark Dispatched'}
                 </button>
               </div>
             ))}

@@ -14,6 +14,7 @@ export default function Shipping() {
   const [editing, setEditing] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [form, setForm] = useState({ city: '', region: '', rate: '' });
+  const [submitting, setSubmitting] = useState(false);
 
   // Pricing calculator state
   const [calcMode, setCalcMode] = useState('margin'); // margin or price
@@ -33,6 +34,8 @@ export default function Shipping() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const data = { ...form, rate: parseFloat(form.rate) };
       if (editing) {
@@ -46,6 +49,8 @@ export default function Shipping() {
       loadRates();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -181,7 +186,7 @@ export default function Shipping() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Add'}</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Add'}</button>
           </div>
         </form>
       </Modal>

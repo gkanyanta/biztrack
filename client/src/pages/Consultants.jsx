@@ -56,6 +56,10 @@ export default function Consultants() {
   const [payReview, setPayReview] = useState(null);
   const [showPayReview, setShowPayReview] = useState(false);
   const [payReviewLoading, setPayReviewLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
 
   const loadData = () => {
     setLoading(true);
@@ -97,6 +101,8 @@ export default function Consultants() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       if (editing) {
         await updateConsultant(editing.id, form);
@@ -108,6 +114,7 @@ export default function Consultants() {
       setShowForm(false);
       loadData();
     } catch (err) { toast.error(err.response?.data?.error || 'Error saving consultant'); }
+    finally { setSubmitting(false); }
   };
 
   const handleDelete = async () => {
@@ -152,12 +159,15 @@ export default function Consultants() {
 
   const handleCreateLogin = async (e) => {
     e.preventDefault();
+    if (loginSubmitting) return;
+    setLoginSubmitting(true);
     try {
       await createConsultantLogin(loginModal.id, loginForm);
       toast.success('Login created');
       setLoginCreatedFor({ username: loginForm.username, password: loginForm.password, name: loginModal.name });
       loadData();
     } catch (err) { toast.error(err.response?.data?.error || 'Error creating login'); }
+    finally { setLoginSubmitting(false); }
   };
 
   const handleResetPassword = async () => {
@@ -216,6 +226,8 @@ export default function Consultants() {
 
   const handlePayment = async (e) => {
     e.preventDefault();
+    if (paymentSubmitting) return;
+    setPaymentSubmitting(true);
     try {
       const { data: payment } = await recordCommissionPayment(showDetail.id, paymentForm);
       toast.success('Payment recorded');
@@ -227,6 +239,7 @@ export default function Consultants() {
       // Auto-generate pay statement PDF
       await generatePayStatement(showDetail, payment, data);
     } catch (err) { toast.error(err.response?.data?.error || 'Error recording payment'); }
+    finally { setPaymentSubmitting(false); }
   };
 
   const getSummaryFor = (id) => summary?.summary?.find(s => s.consultant.id === id);
@@ -249,7 +262,8 @@ export default function Consultants() {
 
   const handleTransfer = async (e) => {
     e.preventDefault();
-    if (!showStockModal) return;
+    if (!showStockModal || transferSubmitting) return;
+    setTransferSubmitting(true);
     try {
       const fn = transferDirection === 'to_consultant' ? transferStockToConsultant : returnStockFromConsultant;
       const { data } = await fn(showStockModal.id, transferForm);
@@ -260,6 +274,7 @@ export default function Consultants() {
       setConsultantStockList(stockRes.data);
       setStockTransfers(transferRes.data);
     } catch (err) { toast.error(err.response?.data?.error || 'Transfer failed'); }
+    finally { setTransferSubmitting(false); }
   };
 
   return (
@@ -483,7 +498,7 @@ export default function Consultants() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Add'}</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Add'}</button>
           </div>
         </form>
       </Modal>
@@ -827,7 +842,7 @@ export default function Consultants() {
                 </div>
                 <div className="flex gap-3 justify-end pt-2">
                   <button type="button" onClick={() => setShowPaymentForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                  <button type="submit" className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Record Payment</button>
+                  <button type="submit" disabled={paymentSubmitting} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">{paymentSubmitting ? 'Saving...' : 'Record Payment'}</button>
                 </div>
               </form>
             </div>
@@ -858,7 +873,7 @@ export default function Consultants() {
             </div>
             <div className="flex gap-3 justify-end pt-2">
               <button type="button" onClick={() => setLoginModal(null)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Create Login</button>
+              <button type="submit" disabled={loginSubmitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{loginSubmitting ? 'Creating...' : 'Create Login'}</button>
             </div>
           </form>
         )}
@@ -953,8 +968,8 @@ export default function Consultants() {
                   placeholder="Qty" className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
                 <input type="text" value={transferForm.notes} onChange={e => setTransferForm({ ...transferForm, notes: e.target.value })}
                   placeholder="Notes (optional)" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                <button type="submit" className={`px-4 py-2 text-sm text-white rounded-lg ${transferDirection === 'to_consultant' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-orange-600 hover:bg-orange-700'}`}>
-                  {transferDirection === 'to_consultant' ? 'Transfer' : 'Return'}
+                <button type="submit" disabled={transferSubmitting} className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${transferDirection === 'to_consultant' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-orange-600 hover:bg-orange-700'}`}>
+                  {transferSubmitting ? '...' : transferDirection === 'to_consultant' ? 'Transfer' : 'Return'}
                 </button>
               </form>
             </div>

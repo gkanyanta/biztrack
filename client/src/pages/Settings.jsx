@@ -20,6 +20,7 @@ export default function Settings() {
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [staffSubmitting, setStaffSubmitting] = useState(false);
 
   const loadStockLocations = () => getStockLocations().then(res => setLocations(res.data)).catch(() => {});
   const loadStaff = () => getStaff().then(res => setStaff(res.data)).catch(() => {});
@@ -43,6 +44,8 @@ export default function Settings() {
 
   const handleCreateStaff = async (e) => {
     e.preventDefault();
+    if (staffSubmitting) return;
+    setStaffSubmitting(true);
     try {
       await createStaff(staffForm);
       toast.success('Staff account created');
@@ -51,6 +54,8 @@ export default function Settings() {
       loadStaff();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error creating staff account');
+    } finally {
+      setStaffSubmitting(false);
     }
   };
 
@@ -325,7 +330,7 @@ export default function Settings() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowStaffForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Create</button>
+            <button type="submit" disabled={staffSubmitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{staffSubmitting ? 'Creating...' : 'Create'}</button>
           </div>
         </form>
       </Modal>

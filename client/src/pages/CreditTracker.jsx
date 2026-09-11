@@ -22,6 +22,8 @@ export default function CreditTracker() {
   const [showReminder, setShowReminder] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
   const [reminderForm, setReminderForm] = useState({ channel: 'whatsapp', message: '' });
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [reminderSubmitting, setReminderSubmitting] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -52,6 +54,8 @@ export default function CreditTracker() {
 
   const handleRecordPayment = async (e) => {
     e.preventDefault();
+    if (paymentSubmitting) return;
+    setPaymentSubmitting(true);
     try {
       await recordCreditPayment(selectedSale.id, {
         amount: parseFloat(paymentForm.amount),
@@ -66,11 +70,15 @@ export default function CreditTracker() {
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error recording payment');
+    } finally {
+      setPaymentSubmitting(false);
     }
   };
 
   const handleSendReminder = async (e) => {
     e.preventDefault();
+    if (reminderSubmitting) return;
+    setReminderSubmitting(true);
     const sale = selectedSale;
     const phone = sale.customerPhone || sale.customer?.phone || sale.customer?.whatsapp;
     const message = reminderForm.message;
@@ -91,6 +99,8 @@ export default function CreditTracker() {
       loadData();
     } catch (err) {
       toast.error('Failed to log reminder');
+    } finally {
+      setReminderSubmitting(false);
     }
   };
 
@@ -348,7 +358,7 @@ export default function CreditTracker() {
               <div className="flex gap-3 justify-end pt-2">
                 <button type="button" onClick={() => { setShowPayment(false); setSelectedSale(null); }}
                   className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Record Payment</button>
+                <button type="submit" disabled={paymentSubmitting} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">{paymentSubmitting ? 'Saving...' : 'Record Payment'}</button>
               </div>
             </form>
           </div>
@@ -383,7 +393,7 @@ export default function CreditTracker() {
             <div className="flex gap-3 justify-end pt-2">
               <button type="button" onClick={() => { setShowReminder(false); setSelectedSale(null); }}
                 className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button type="submit" className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Send Reminder</button>
+              <button type="submit" disabled={reminderSubmitting} className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">{reminderSubmitting ? 'Sending...' : 'Send Reminder'}</button>
             </div>
           </form>
         )}

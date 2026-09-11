@@ -26,6 +26,7 @@ export default function Expenses() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const emptyForm = { description: '', amount: '', category: '', date: '', paymentMethod: '', isRecurring: false, frequency: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
@@ -62,6 +63,8 @@ export default function Expenses() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const data = { ...form, amount: parseFloat(form.amount) };
       data.date = data.date ? new Date(data.date).toISOString() : new Date().toISOString();
@@ -91,6 +94,8 @@ export default function Expenses() {
       }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error saving expense');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -238,7 +243,7 @@ export default function Expenses() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">{editing ? 'Update' : 'Add'}</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Add'}</button>
           </div>
         </form>
       </Modal>

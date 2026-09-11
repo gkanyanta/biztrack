@@ -29,6 +29,7 @@ export default function Products() {
   const [newGroupName, setNewGroupName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [restocking, setRestocking] = useState(false);
+  const [groupSubmitting, setGroupSubmitting] = useState(false);
 
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
@@ -96,7 +97,8 @@ export default function Products() {
 
   const handleCreateGroup = async () => {
     const name = newGroupName.trim();
-    if (!name) return;
+    if (!name || groupSubmitting) return;
+    setGroupSubmitting(true);
     try {
       const { data } = await createProductGroup({ name });
       setGroups(g => [...g, { ...data, products: [] }].sort((a, b) => a.name.localeCompare(b.name)));
@@ -106,6 +108,8 @@ export default function Products() {
       toast.success('Group created');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Error creating group');
+    } finally {
+      setGroupSubmitting(false);
     }
   };
 
@@ -324,7 +328,7 @@ export default function Products() {
                 <div className="flex gap-2">
                   <input type="text" autoFocus value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
                     placeholder="e.g. T-Shirt" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                  <button type="button" onClick={handleCreateGroup} className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Add</button>
+                  <button type="button" onClick={handleCreateGroup} disabled={groupSubmitting} className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{groupSubmitting ? '...' : 'Add'}</button>
                   <button type="button" onClick={() => { setCreatingGroup(false); setNewGroupName(''); }} className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
                 </div>
               ) : (

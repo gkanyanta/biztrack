@@ -78,6 +78,7 @@ export default function SuperadminPanel() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     try {
       await createCompanyAdmin(createForm);
@@ -92,6 +93,7 @@ export default function SuperadminPanel() {
 
   const handleReset = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     try {
       await resetAdminPassword(showReset.id, resetForm);
@@ -105,6 +107,7 @@ export default function SuperadminPanel() {
 
   const handleEdit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     try {
       await updateCompany(showEdit.id, editForm);
@@ -128,6 +131,7 @@ export default function SuperadminPanel() {
   };
 
   const handleDelete = async () => {
+    if (submitting) return;
     setSubmitting(true);
     try {
       await deleteCompany(showDelete.id);
@@ -143,6 +147,7 @@ export default function SuperadminPanel() {
 
   const handleAddUser = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     try {
       await addCompanyUser(showAddUser.id, addUserForm);
@@ -166,6 +171,7 @@ export default function SuperadminPanel() {
   };
 
   const handleLogoUpload = async () => {
+    if (submitting) return;
     setSubmitting(true);
     try {
       await uploadCompanyLogo(showLogo.id, logoPreview || '');
