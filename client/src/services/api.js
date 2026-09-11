@@ -119,6 +119,7 @@ export const createConsultant = (data) => api.post('/consultants', data);
 export const updateConsultant = (id, data) => api.put(`/consultants/${id}`, data);
 export const deleteConsultant = (id) => api.delete(`/consultants/${id}`);
 export const getCommissionSummary = (params) => api.get('/consultants/commission-summary', { params });
+export const getPayReview = (params) => api.get('/consultants/pay-review', { params });
 export const recordCommissionPayment = (consultantId, data) => api.post(`/consultants/${consultantId}/payments`, data);
 export const getCommissionPayments = (consultantId) => api.get(`/consultants/${consultantId}/payments`);
 export const getConsultantStock = (consultantId) => api.get(`/consultants/${consultantId}/stock`);

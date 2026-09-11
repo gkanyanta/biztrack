@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts, createConsultantLogin, resetConsultantPassword, revokeConsultantLogin } from '../services/api';
+import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, getPayReview, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts, createConsultantLogin, resetConsultantPassword, revokeConsultantLogin } from '../services/api';
 import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -7,7 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import PayStatementPDF from '../components/PayStatementPDF';
 import { pdf } from '@react-pdf/renderer';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft, FiKey, FiUserCheck, FiChevronLeft, FiChevronRight, FiCalendar } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiDollarSign, FiEye, FiUsers, FiTrendingUp, FiDownload, FiPackage, FiArrowRight, FiArrowLeft, FiKey, FiUserCheck, FiChevronLeft, FiChevronRight, FiCalendar, FiAlertTriangle } from 'react-icons/fi';
 
 // Pay-cycle helpers (mirror server/src/utils/payPeriod.js).
 // Cycle label = YYYY-MM of the month the cycle closes & is paid (e.g. May 11 cycle = "2026-05").
@@ -53,6 +53,9 @@ export default function Consultants() {
   const [loginModal, setLoginModal] = useState(null); // consultant for login actions
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [loginCreatedFor, setLoginCreatedFor] = useState(null); // { username, password, name }
+  const [payReview, setPayReview] = useState(null);
+  const [showPayReview, setShowPayReview] = useState(false);
+  const [payReviewLoading, setPayReviewLoading] = useState(false);
 
   const loadData = () => {
     setLoading(true);
@@ -68,6 +71,14 @@ export default function Consultants() {
   };
 
   useEffect(() => { loadData(); }, [periodLabel]);
+
+  const openPayReview = () => {
+    setShowPayReview(true);
+    setPayReviewLoading(true);
+    getPayReview({ period: periodLabel }).then(({ data }) => setPayReview(data))
+      .catch(() => toast.error('Failed to load pay review'))
+      .finally(() => setPayReviewLoading(false));
+  };
 
   const openCreate = () => { setEditing(null); setForm(emptyForm); setShowForm(true); };
 
@@ -275,9 +286,14 @@ export default function Consultants() {
           <button onClick={() => setPeriodLabel(getCurrentPayCycleLabel())}
             className="px-2 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50">Current</button>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-          <FiPlus size={16} /> Add Consultant
-        </button>
+        <div className="flex gap-2">
+          <button onClick={openPayReview} className="flex items-center gap-1.5 px-3 py-2 text-sm bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100">
+            <FiAlertTriangle size={15} /> Review Before Paying
+          </button>
+          <button onClick={openCreate} className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <FiPlus size={16} /> Add Consultant
+          </button>
+        </div>
       </div>
 
       {/* Totals Summary */}
@@ -975,6 +991,86 @@ export default function Consultants() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={showPayReview} onClose={() => setShowPayReview(false)} title="Review Before Paying" size="xl">
+        {payReviewLoading ? <LoadingSpinner /> : !payReview ? null : (
+          <div className="space-y-6">
+            <p className="text-xs text-gray-500">
+              Checking cycle {payReview.period ? (
+                <>{new Date(payReview.period.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(new Date(payReview.period.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</>
+              ) : 'all time'} for sales that shouldn't count toward commission yet, and sales that look like accidental duplicates.
+            </p>
+
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Unpaid / Partially Paid Sales</h3>
+              <p className="text-xs text-gray-500 mb-2">
+                These earn no commission (Unpaid) or only partial commission on the amount paid so far (Partial) — {payReview.unpaidCount} sale{payReview.unpaidCount === 1 ? '' : 's'}, {formatMoney(payReview.unpaidTotal)} outstanding.
+              </p>
+              {payReview.unpaidSales.length === 0 ? (
+                <p className="text-sm text-gray-400 bg-gray-50 rounded-lg p-3 text-center">No unpaid or partially paid sales in this period</p>
+              ) : (
+                <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <th className="text-left p-2 font-medium text-gray-600">Order #</th>
+                        <th className="text-left p-2 font-medium text-gray-600">Consultant</th>
+                        <th className="text-left p-2 font-medium text-gray-600">Customer</th>
+                        <th className="text-right p-2 font-medium text-gray-600">Total</th>
+                        <th className="text-right p-2 font-medium text-gray-600">Paid</th>
+                        <th className="text-right p-2 font-medium text-gray-600">Balance</th>
+                        <th className="text-left p-2 font-medium text-gray-600">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {payReview.unpaidSales.map(s => (
+                        <tr key={s.id} className="border-b border-gray-50">
+                          <td className="p-2 font-medium text-gray-800">{s.orderNumber}</td>
+                          <td className="p-2 text-gray-600">{s.consultantName || '-'}</td>
+                          <td className="p-2 text-gray-600">{s.customerName || 'Unknown'}</td>
+                          <td className="p-2 text-right text-gray-800">{formatMoney(s.totalPrice)}</td>
+                          <td className="p-2 text-right text-gray-600">{formatMoney(s.amountPaid)}</td>
+                          <td className="p-2 text-right font-medium text-red-600">{formatMoney(s.balance)}</td>
+                          <td className="p-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[11px] ${s.paymentStatus === 'Unpaid' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{s.paymentStatus}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Possible Duplicate Sales</h3>
+              <p className="text-xs text-gray-500 mb-2">
+                Same consultant, same customer, same amount, created within a couple hours of each other — {payReview.duplicateGroupCount} group{payReview.duplicateGroupCount === 1 ? '' : 's'} ({payReview.duplicateSaleCount} sales). Verify in Sales before paying commission on these.
+              </p>
+              {payReview.possibleDuplicates.length === 0 ? (
+                <p className="text-sm text-gray-400 bg-gray-50 rounded-lg p-3 text-center">No likely duplicates found in this period</p>
+              ) : (
+                <div className="space-y-2">
+                  {payReview.possibleDuplicates.map((g, idx) => (
+                    <div key={idx} className="border border-amber-200 bg-amber-50 rounded-lg p-3">
+                      <div className="text-xs font-medium text-gray-800 mb-1.5">
+                        {g.consultantName || 'Unassigned'} · {g.customerName || 'Unknown customer'} · {formatMoney(g.totalPrice)}
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                        {g.sales.map(s => (
+                          <span key={s.id}>
+                            <span className="font-medium text-gray-800">{s.orderNumber}</span> — {formatDate(s.date)} ({s.paymentStatus})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Modal>
