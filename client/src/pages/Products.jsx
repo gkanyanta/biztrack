@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getProducts, createProduct, updateProduct, deleteProduct, bulkRestock, getStockLog, getProductGroups, createProductGroup } from '../services/api';
 import { formatMoney, calcMargin } from '../utils/format';
 import Modal from '../components/Modal';
@@ -11,6 +12,7 @@ import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle, FiPackage, FiUpload, FiImage } from 'react-icons/fi';
 
 export default function Products() {
+  const [searchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -23,7 +25,7 @@ export default function Products() {
   const [restockItems, setRestockItems] = useState([]);
   const [showStockLog, setShowStockLog] = useState(null);
   const [stockLogs, setStockLogs] = useState([]);
-  const [filterLowStock, setFilterLowStock] = useState(false);
+  const [filterLowStock, setFilterLowStock] = useState(() => searchParams.get('lowStock') === '1');
   const [groups, setGroups] = useState([]);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -76,6 +78,11 @@ export default function Products() {
 
   useEffect(() => { loadProducts(); }, [search, filterLowStock, table.page, table.pageSize, table.sort]);
   useEffect(() => { table.setPage(1); }, [search, filterLowStock]);
+  // Deep-link support: e.g. /products?lowStock=1 (used by the Dashboard's Restock Alerts card).
+  useEffect(() => {
+    const lowStock = searchParams.get('lowStock');
+    if (lowStock !== null) setFilterLowStock(lowStock === '1');
+  }, [searchParams]);
   useEffect(() => { getProductGroups().then(res => setGroups(res.data)).catch(() => {}); }, []);
 
   const openCreate = () => {

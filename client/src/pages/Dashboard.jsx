@@ -34,15 +34,18 @@ export default function Dashboard() {
 
   const g = data.growth;
 
+  // Carries the dashboard's active date range into the detail page so the numbers still line up.
+  const rangeQuery = `from=${range.from || ''}&to=${range.to || ''}`;
+
   const cards = [
-    { label: 'Total Revenue', value: formatMoney(data.totalRevenue), icon: FiDollarSign, color: 'bg-blue-500' },
-    { label: 'Net Profit', value: formatMoney(data.netProfit), icon: FiTrendingUp, color: data.netProfit >= 0 ? 'bg-green-500' : 'bg-red-500' },
-    { label: 'Total Orders', value: data.totalOrders, icon: FiShoppingCart, color: 'bg-purple-500' },
-    { label: 'Avg Order Value', value: formatMoney(data.avgOrderValue), icon: FiDollarSign, color: 'bg-indigo-500' },
-    { label: 'Total Expenses', value: formatMoney(data.totalExpenses), icon: FiDollarSign, color: 'bg-orange-500' },
-    { label: 'Ad Spend', value: formatMoney(data.adSpend), icon: FiDollarSign, color: 'bg-pink-500' },
-    { label: 'ROAS', value: `${data.roas.toFixed(2)}x`, icon: FiTrendingUp, color: 'bg-cyan-500' },
-    { label: 'Profit Margin', value: `${data.profitMargin.toFixed(1)}%`, icon: FiTrendingUp, color: data.profitMargin >= 0 ? 'bg-emerald-500' : 'bg-red-500' },
+    { label: 'Total Revenue', value: formatMoney(data.totalRevenue), icon: FiDollarSign, color: 'bg-blue-500', to: `/reports?tab=sales&${rangeQuery}` },
+    { label: 'Net Profit', value: formatMoney(data.netProfit), icon: FiTrendingUp, color: data.netProfit >= 0 ? 'bg-green-500' : 'bg-red-500', to: `/reports?tab=pnl&${rangeQuery}` },
+    { label: 'Total Orders', value: data.totalOrders, icon: FiShoppingCart, color: 'bg-purple-500', to: `/reports?tab=sales&${rangeQuery}` },
+    { label: 'Avg Order Value', value: formatMoney(data.avgOrderValue), icon: FiDollarSign, color: 'bg-indigo-500', to: `/reports?tab=sales&${rangeQuery}` },
+    { label: 'Total Expenses', value: formatMoney(data.totalExpenses), icon: FiDollarSign, color: 'bg-orange-500', to: `/expenses?${rangeQuery}` },
+    { label: 'Ad Spend', value: formatMoney(data.adSpend), icon: FiDollarSign, color: 'bg-pink-500', to: `/expenses?category=${encodeURIComponent('Facebook Ads')}&${rangeQuery}` },
+    { label: 'ROAS', value: `${data.roas.toFixed(2)}x`, icon: FiTrendingUp, color: 'bg-cyan-500', to: `/expenses?category=${encodeURIComponent('Facebook Ads')}&${rangeQuery}` },
+    { label: 'Profit Margin', value: `${data.profitMargin.toFixed(1)}%`, icon: FiTrendingUp, color: data.profitMargin >= 0 ? 'bg-emerald-500' : 'bg-red-500', to: `/reports?tab=pnl&${rangeQuery}` },
   ];
 
   const expensePieData = Object.entries(data.expenseByCategory).map(([name, value]) => ({ name, value }));
@@ -67,6 +70,7 @@ export default function Dashboard() {
             <FiTarget size={20} />
             <h3 className="font-bold text-lg">{at ? 'Target Tracker' : '200% Growth Tracker'}</h3>
             <span className="ml-auto text-blue-100 text-xs font-medium bg-white/15 px-2 py-1 rounded-full">{periodLabel}</span>
+            <Link to="/reports?tab=growth" className="text-blue-100 text-xs hover:text-white hover:underline">Details →</Link>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -132,6 +136,7 @@ export default function Dashboard() {
             <span className="ml-auto text-emerald-200 text-xs font-medium bg-white/15 px-2 py-1 rounded-full">
               {(data.savings.rate * 100).toFixed(0)}% of gross profit
             </span>
+            <Link to="/money-splits" className="text-emerald-200 text-xs hover:text-white hover:underline">Details →</Link>
           </div>
 
           {/* Today's breakdown */}
@@ -258,6 +263,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 mb-4">
             <FiUserCheck className="text-indigo-600" size={18} />
             <h3 className="text-sm font-bold text-gray-800">Consultant Impact (This Month)</h3>
+            <Link to="/consultants" className="ml-auto text-xs text-blue-600 hover:text-blue-800">Details →</Link>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -327,7 +333,7 @@ export default function Dashboard() {
       {/* Stats cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map(card => (
-          <div key={card.label} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <Link key={card.label} to={card.to} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 hover:shadow-md hover:border-blue-200 transition-shadow block">
             <div className="flex items-center gap-3">
               <div className={`${card.color} p-2 rounded-lg text-white`}>
                 <card.icon size={18} />
@@ -337,7 +343,7 @@ export default function Dashboard() {
                 <p className="text-lg font-bold text-gray-800">{card.value}</p>
               </div>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
 
@@ -411,9 +417,12 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {data.lowStockProducts.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-            <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
-              <FiAlertTriangle className="text-orange-500" /> Restock Alerts
-            </h3>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <FiAlertTriangle className="text-orange-500" /> Restock Alerts
+              </h3>
+              <Link to="/products?lowStock=1" className="text-xs text-blue-600 hover:text-blue-800">Manage in Products →</Link>
+            </div>
             <p className="text-xs text-gray-400 mb-3">Ranked by how soon each product runs out, based on 90-day sales pace.</p>
             <div className="space-y-2">
               {data.lowStockProducts.map(p => {
@@ -438,18 +447,18 @@ export default function Dashboard() {
         <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Quick Stats</h3>
           <div className="space-y-3">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Pending Orders</span>
-              <span className="font-medium text-gray-800">{data.pendingOrders}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Gross Profit</span>
-              <span className="font-medium text-gray-800">{formatMoney(data.grossProfit)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">COGS</span>
-              <span className="font-medium text-gray-800">{formatMoney(data.totalCOGS)}</span>
-            </div>
+            <Link to="/sales?status=Pending" className="flex justify-between text-sm hover:text-blue-600 group">
+              <span className="text-gray-500 group-hover:text-blue-600">Pending Orders</span>
+              <span className="font-medium text-gray-800 group-hover:text-blue-600">{data.pendingOrders}</span>
+            </Link>
+            <Link to={`/reports?tab=pnl&${rangeQuery}`} className="flex justify-between text-sm hover:text-blue-600 group">
+              <span className="text-gray-500 group-hover:text-blue-600">Gross Profit</span>
+              <span className="font-medium text-gray-800 group-hover:text-blue-600">{formatMoney(data.grossProfit)}</span>
+            </Link>
+            <Link to={`/reports?tab=pnl&${rangeQuery}`} className="flex justify-between text-sm hover:text-blue-600 group">
+              <span className="text-gray-500 group-hover:text-blue-600">COGS</span>
+              <span className="font-medium text-gray-800 group-hover:text-blue-600">{formatMoney(data.totalCOGS)}</span>
+            </Link>
           </div>
         </div>
 

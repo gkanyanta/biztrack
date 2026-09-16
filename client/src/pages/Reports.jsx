@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getPnlReport, getSalesReport, getExpenseReport, getProductReport, getCustomerReport, getGrowthReport, getCreditReport, getInventoryReport, getCommissionSummary, exportCSV } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -11,6 +12,7 @@ import {
 } from 'recharts';
 
 export default function Reports() {
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState('pnl');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -36,30 +38,33 @@ export default function Reports() {
 
   const autoLoadTabs = ['growth', 'credit', 'inventory'];
 
-  const loadReport = async () => {
+  const loadReport = async (opts = {}) => {
+    const tab = opts.tab ?? activeTab;
+    const f = opts.from ?? from;
+    const t = opts.to ?? to;
     setLoading(true);
     try {
-      if (activeTab === 'growth') {
+      if (tab === 'growth') {
         const res = await getGrowthReport();
         setGrowthData(res.data);
         setData(null); setCreditData(null); setInventoryData(null);
-      } else if (activeTab === 'credit') {
+      } else if (tab === 'credit') {
         const res = await getCreditReport();
         setCreditData(res.data);
         setData(null); setGrowthData(null); setInventoryData(null);
-      } else if (activeTab === 'inventory') {
+      } else if (tab === 'inventory') {
         const res = await getInventoryReport();
         setInventoryData(res.data);
         setData(null); setGrowthData(null); setCreditData(null);
-      } else if (activeTab === 'consultants') {
-        const params = { from: from || undefined, to: to || undefined };
+      } else if (tab === 'consultants') {
+        const params = { from: f || undefined, to: t || undefined };
         const res = await getCommissionSummary(params);
         setConsultantData(res.data);
         setData(null); setGrowthData(null); setCreditData(null); setInventoryData(null);
       } else {
-        const params = { from: from || undefined, to: to || undefined };
+        const params = { from: f || undefined, to: t || undefined };
         let res;
-        switch (activeTab) {
+        switch (tab) {
           case 'pnl': res = await getPnlReport(params); break;
           case 'sales': res = await getSalesReport(params); break;
           case 'expenses': res = await getExpenseReport(params); break;
@@ -76,6 +81,21 @@ export default function Reports() {
   useEffect(() => {
     if (autoLoadTabs.includes(activeTab)) loadReport();
   }, [activeTab]);
+
+  // Deep-link support: e.g. /reports?tab=pnl&from=2026-01-01&to=2026-01-31 (used by
+  // the Dashboard's clickable summary cards to jump straight to the relevant detail).
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (!tab || !tabs.some(x => x.id === tab)) return;
+    const f = searchParams.get('from') || '';
+    const t = searchParams.get('to') || '';
+    setActiveTab(tab);
+    setFrom(f);
+    setTo(t);
+    // autoLoadTabs already fetch via the effect above when activeTab changes.
+    if (!autoLoadTabs.includes(tab)) loadReport({ tab, from: f, to: t });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const handleExport = async (type) => {
     try {

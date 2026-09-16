@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { getExpenses, createExpense, updateExpense, deleteExpense, getMoneySplits } from '../services/api';
 import { formatMoney, formatDate, EXPENSE_CATEGORIES, PAYMENT_METHODS } from '../utils/format';
@@ -14,15 +15,16 @@ import { FiPlus, FiEdit2, FiTrash2, FiDollarSign } from 'react-icons/fi';
 export default function Expenses() {
   const { user } = useAuth();
   const canDelete = user?.role !== 'purchasing';
+  const [searchParams] = useSearchParams();
   const [expenses, setExpenses] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [sumAmount, setSumAmount] = useState(0);
   const [byCategory, setByCategory] = useState({});
   const [loading, setLoading] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState(() => searchParams.get('category') || '');
+  const [fromDate, setFromDate] = useState(() => searchParams.get('from') || '');
+  const [toDate, setToDate] = useState(() => searchParams.get('to') || '');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -48,6 +50,16 @@ export default function Expenses() {
 
   useEffect(() => { loadExpenses(); }, [categoryFilter, fromDate, toDate, table.page, table.pageSize, table.sort]);
   useEffect(() => { table.setPage(1); }, [categoryFilter, fromDate, toDate]);
+  // Deep-link support: e.g. /expenses?category=Facebook+Ads&from=&to= (used by the
+  // Dashboard's clickable Total Expenses / Ad Spend / ROAS summary cards).
+  useEffect(() => {
+    const category = searchParams.get('category');
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    if (category !== null) setCategoryFilter(category);
+    if (from !== null) setFromDate(from);
+    if (to !== null) setToDate(to);
+  }, [searchParams]);
 
   const openCreate = () => { setEditing(null); setForm(emptyForm); setShowForm(true); };
 

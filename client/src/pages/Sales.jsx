@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getSales, createSale, updateSale, updateSaleStatus, deleteSale, getProducts, getShippingRates, recordCreditPayment, getSale, getConsultants } from '../services/api';
 import { formatMoney, formatDate, formatDateTime, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_METHODS, SOURCES, PAYMENT_TYPES } from '../utils/format';
 import Modal from '../components/Modal';
@@ -19,6 +20,7 @@ import { useAuth } from '../hooks/useAuth';
 export default function Sales() {
   const { user } = useAuth();
   const isConsultant = user?.role === 'consultant';
+  const [searchParams] = useSearchParams();
   const [sales, setSales] = useState([]);
   const [salesTotal, setSalesTotal] = useState(0);
   const [salesTotalPages, setSalesTotalPages] = useState(1);
@@ -27,7 +29,7 @@ export default function Sales() {
   const [consultants, setConsultants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || '');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -63,6 +65,11 @@ export default function Sales() {
 
   useEffect(() => { loadSales(); }, [search, statusFilter, salesTable.page, salesTable.pageSize, salesTable.sort]);
   useEffect(() => { salesTable.setPage(1); }, [search, statusFilter]);
+  // Deep-link support: e.g. /sales?status=Pending (used by the Dashboard's clickable summary cards).
+  useEffect(() => {
+    const status = searchParams.get('status');
+    if (status !== null) setStatusFilter(status);
+  }, [searchParams]);
   useEffect(() => {
     getProducts().then(res => setProducts(res.data.filter(p => p.isActive)));
     getShippingRates().then(res => setShippingRates(res.data));
