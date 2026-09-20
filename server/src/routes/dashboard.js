@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
+const { calcCommission } = require('../utils/commission');
 
 router.use(authenticate);
 
@@ -25,39 +26,7 @@ router.get('/consultant', async (req, res) => {
     const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
     const productsSoldInMonth = sum(monthSales, s => s.items.reduce((q, i) => q + i.qty, 0));
 
-    // Commission is earned only on money actually collected: an unpaid sale contributes
-    // nothing, a partially paid sale contributes only the paid fraction. Computed live, so
-    // this applies to past cycles too, not just new sales.
-    const calcComm = (sales) => {
-      if (consultant.payType === 'revenue_pct') {
-        const rate = parseFloat(consultant.commissionRate);
-        const tierRate = parseFloat(consultant.tierRate);
-        const threshold = parseFloat(consultant.tierThreshold) || 0;
-        let comm = 0;
-        for (const s of sales) {
-          const saleTotal = parseFloat(s.totalPrice);
-          if (saleTotal <= 0) continue;
-          const paidAmount = Math.min(parseFloat(s.amountPaid) || 0, saleTotal);
-          if (paidAmount <= 0) continue;
-          const r = (threshold > 0 && tierRate > 0 && saleTotal > threshold) ? tierRate : rate;
-          comm += paidAmount * r / 100;
-        }
-        return Math.round(comm * 100) / 100;
-      }
-      const base = parseFloat(consultant.commissionRate);
-      const tier = parseFloat(consultant.tierRate);
-      const th = parseInt(consultant.tierThreshold) || 50;
-      let n = 0;
-      for (const s of sales) {
-        const saleTotal = parseFloat(s.totalPrice);
-        if (saleTotal <= 0) continue;
-        const units = s.items.reduce((q, i) => q + i.qty, 0);
-        const paidFraction = Math.min(1, (parseFloat(s.amountPaid) || 0) / saleTotal);
-        n += units * paidFraction;
-      }
-      const comm = n <= th ? n * base : (th * base) + ((n - th) * tier);
-      return Math.round(comm * 100) / 100;
-    };
+    const calcComm = (sales) => calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, sales);
     const commissionEarnedMonth = calcComm(monthSales);
 
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
@@ -266,35 +235,7 @@ router.get('/', requireAdmin, async (req, res) => {
     };
 
     // ---- CONSULTANT IMPACT ----
-    // Same paid-amount-only rule as the self-dashboard's calcComm above.
-    const calcComm = (c, cSales) => {
-      if (c.payType === 'revenue_pct') {
-        const rate = parseFloat(c.commissionRate);
-        const tierRate = parseFloat(c.tierRate);
-        const threshold = parseFloat(c.tierThreshold) || 0;
-        let comm = 0;
-        for (const s of cSales) {
-          const saleTotal = parseFloat(s.totalPrice);
-          if (saleTotal <= 0) continue;
-          const paidAmount = Math.min(parseFloat(s.amountPaid) || 0, saleTotal);
-          if (paidAmount <= 0) continue;
-          const r = (threshold > 0 && tierRate > 0 && saleTotal > threshold) ? tierRate : rate;
-          comm += paidAmount * r / 100;
-        }
-        return Math.round(comm * 100) / 100;
-      }
-      const b = parseFloat(c.commissionRate); const t = parseFloat(c.tierRate); const th = parseInt(c.tierThreshold) || 50;
-      let n = 0;
-      for (const s of cSales) {
-        const saleTotal = parseFloat(s.totalPrice);
-        if (saleTotal <= 0) continue;
-        const units = s.items.reduce((q, i) => q + i.qty, 0);
-        const paidFraction = Math.min(1, (parseFloat(s.amountPaid) || 0) / saleTotal);
-        n += units * paidFraction;
-      }
-      const comm = n <= th ? n * b : (th * b) + ((n - th) * t);
-      return Math.round(comm * 100) / 100;
-    };
+    const calcComm = (c, cSales) => calcCommission(c.payType, c.commissionRate, c.tierThreshold, c.tierRate, cSales);
     const consultants2 = await prisma.consultant.findMany({ where: { companyId, isStockLocation: false } });
     let consultantImpact = null;
     if (consultants2.length > 0) {

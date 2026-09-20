@@ -2,44 +2,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 const { getConsultantPayPeriod, payPeriodFromLabel, getEffectivePeriod } = require('../utils/payPeriod');
-
-// Commission is earned only on money actually collected: an unpaid sale contributes nothing,
-// and a partially paid sale contributes only the fraction of it that's been paid so far. Since
-// commission is always computed live from current Sale state (never persisted per-sale), this
-// applies retroactively to every past cycle as soon as amountPaid/paymentStatus reflect reality,
-// not just to new sales.
-function calcCommission(payType, commissionRate, tierThreshold, tierRate, sales) {
-  const rate = parseFloat(commissionRate);
-  const tRate = parseFloat(tierRate);
-  const threshold = parseFloat(tierThreshold) || 0;
-
-  if (payType === 'revenue_pct') {
-    let comm = 0;
-    for (const sale of sales) {
-      const saleTotal = parseFloat(sale.totalPrice);
-      if (saleTotal <= 0) continue;
-      const paidAmount = Math.min(parseFloat(sale.amountPaid) || 0, saleTotal);
-      if (paidAmount <= 0) continue;
-      const r = (threshold > 0 && tRate > 0 && saleTotal > threshold) ? tRate : rate;
-      comm += paidAmount * r / 100;
-    }
-    return Math.round(comm * 100) / 100;
-  }
-
-  // per_unit: tiered by cumulative units — first N at base rate, rest at tier rate.
-  // Each sale's units are prorated by how much of that sale has actually been paid.
-  const th = parseInt(tierThreshold) || 50;
-  let effectiveUnits = 0;
-  for (const sale of sales) {
-    const saleTotal = parseFloat(sale.totalPrice);
-    if (saleTotal <= 0) continue;
-    const units = sale.items.reduce((q, i) => q + i.qty, 0);
-    const paidFraction = Math.min(1, (parseFloat(sale.amountPaid) || 0) / saleTotal);
-    effectiveUnits += units * paidFraction;
-  }
-  const comm = effectiveUnits <= th ? effectiveUnits * rate : (th * rate) + ((effectiveUnits - th) * tRate);
-  return Math.round(comm * 100) / 100;
-}
+const { calcCommission } = require('../utils/commission');
 
 async function getCompanyPayDay(prisma, companyId) {
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } });
