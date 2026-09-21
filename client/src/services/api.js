@@ -168,4 +168,19 @@ export const resetAdminPassword = (userId, data) => api.post(`/superadmin/users/
 export const getSettings = () => api.get('/settings');
 export const updateSettings = (data) => api.put('/settings', data);
 
+// Deliveries & riders
+export const getRiders = (params) => api.get('/deliveries/riders', { params });
+export const createRider = (data) => api.post('/deliveries/riders', data);
+export const updateRider = (id, data) => api.put(`/deliveries/riders/${id}`, data);
+export const createRiderLogin = (id, data) => api.post(`/deliveries/riders/${id}/login`, data);
+export const getMyRuns = () => api.get('/deliveries/my/runs');
+export const getUnassignedOrders = (params) => api.get('/deliveries/unassigned', { params });
+export const getDeliveries = (params) => api.get('/deliveries', { params });
+export const assignDeliveries = (data) => api.post('/deliveries', data);
+export const updateDeliveryStatus = (id, data) => api.put(`/deliveries/${id}/status`, data);
+export const reassignDelivery = (id, riderId) => api.put(`/deliveries/${id}/rider`, { riderId });
+export const remitDeliveryCash = (id, cashRemitted) => api.put(`/deliveries/${id}/remit`, { cashRemitted });
+export const deleteDelivery = (id) => api.delete(`/deliveries/${id}`);
+export const getDeliveryPerformance = (params) => api.get('/deliveries/performance', { params });
+
 export default api;

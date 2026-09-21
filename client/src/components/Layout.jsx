@@ -19,6 +19,7 @@ const adminNavItems = [
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
   { path: '/consultants', icon: FiUserCheck, label: 'Consultants' },
+  { path: '/deliveries', icon: FiTruck, label: 'Deliveries' },
   { path: '/customers', icon: FiUsers, label: 'Customers' },
   { path: '/shipping', icon: FiTruck, label: 'Shipping' },
   { path: '/reports', icon: FiBarChart2, label: 'Reports' },
@@ -40,6 +41,10 @@ const consultantNavItems = [
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
 ];
 
+const riderNavItems = [
+  { path: '/', icon: FiTruck, label: 'My Runs' },
+];
+
 const inventoryNavItems = [
   { path: '/warehouse', icon: FiPackage, label: 'Warehouse' },
 ];
@@ -55,7 +60,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dark, toggleDark] = useDarkMode();
   const { count: newOrderCount, acknowledge: acknowledgeNewOrders } = useNewOrderNotifications(user?.role === 'admin');
-  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
+  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'rider' ? riderNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
 
   return (
     <div className="flex h-screen bg-gray-50">

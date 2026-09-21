@@ -37,6 +37,8 @@ model Company {
   productGroups      ProductGroup[]
   quotes             Quote[]
   paymentNotes       PaymentNote[]
+  riders             Rider[]
+  deliveries         Delivery[]
 }
 
 model User {
@@ -141,6 +143,7 @@ model Sale {
   debtReminders   DebtReminder[]
   paymentNotes    PaymentNote[]
   quote           Quote?
+  delivery        Delivery?
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -418,4 +421,56 @@ model SalesTarget {
   updatedAt     DateTime @updatedAt
 
   @@index([companyId, periodStart, periodEnd])
+}
+
+// A delivery rider. Mirrors the Consultant shape: an optional linked User gives them a login
+// that scopes every query to their own runs.
+model Rider {
+  id         String     @id @default(cuid())
+  name       String
+  phone      String?
+  nrc        String?
+  licenceNo  String?
+  isActive   Boolean    @default(true)
+  startDate  DateTime?
+  notes      String?
+  userId     String?    @unique
+  companyId  String
+  company    Company    @relation(fields: [companyId], references: [id])
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  deliveries Delivery[]
+
+  @@index([companyId])
+}
+
+// One delivery run for one order. Kept apart from Sale because a delivery can be attempted,
+// fail and be reassigned without that history touching the order itself.
+// status: Assigned -> PickedUp -> Delivered, or Failed at any point.
+model Delivery {
+  id            String    @id @default(cuid())
+  saleId        String    @unique
+  sale          Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  riderId       String?
+  rider         Rider?    @relation(fields: [riderId], references: [id])
+  status        String    @default("Assigned")
+  assignedAt    DateTime  @default(now())
+  pickedUpAt    DateTime?
+  deliveredAt   DateTime?
+  failedAt      DateTime?
+  failureReason String?
+  recipientName String?
+  attempts      Int       @default(1)
+  notes         String?
+  // Money the rider took at the door, and the confirmation that it reached the company.
+  cashCollected Decimal   @db.Decimal(10, 2) @default(0)
+  cashRemitted  Boolean   @default(false)
+  cashRemittedAt DateTime?
+  companyId     String
+  company       Company   @relation(fields: [companyId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([companyId, status])
+  @@index([riderId, assignedAt])
 }

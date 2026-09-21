@@ -18,6 +18,14 @@ async function authenticate(req, res, next) {
       if (!consultant.isActive) return res.status(403).json({ error: 'Your consultant account is inactive' });
       req.user.consultantId = consultant.id;
     }
+    // Same for riders: resolve Rider.id so every delivery query can be scoped to their own runs
+    if (decoded.role === 'rider') {
+      const prisma = req.app.locals.prisma;
+      const rider = await prisma.rider.findFirst({ where: { userId: decoded.id, companyId: decoded.companyId }, select: { id: true, isActive: true } });
+      if (!rider) return res.status(403).json({ error: 'No rider profile linked to this account' });
+      if (!rider.isActive) return res.status(403).json({ error: 'Your rider account is inactive' });
+      req.user.riderId = rider.id;
+    }
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid token' });

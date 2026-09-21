@@ -10,13 +10,13 @@ datasource db {
 }
 
 model Company {
-  id                 String   @id @default(cuid())
-  name               String
-  slug               String   @unique
-  isActive           Boolean  @default(true)
-  consultantPayDay   Int      @default(11)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id               String   @id @default(cuid())
+  name             String
+  slug             String   @unique
+  isActive         Boolean  @default(true)
+  consultantPayDay Int      @default(11)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   users              User[]
   products           Product[]
@@ -37,6 +37,8 @@ model Company {
   productGroups      ProductGroup[]
   quotes             Quote[]
   paymentNotes       PaymentNote[]
+  riders             Rider[]
+  deliveries         Delivery[]
 }
 
 model User {
@@ -46,36 +48,36 @@ model User {
   name      String
   role      String   @default("admin")
   companyId String?
-  company   Company?  @relation(fields: [companyId], references: [id])
+  company   Company? @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
 }
 
 model Product {
-  id           String     @id @default(cuid())
-  name         String
-  sku          String
-  description  String?
-  category     String?
-  costPrice    Decimal    @db.Decimal(10, 2)
-  sellingPrice Decimal    @db.Decimal(10, 2)
-  originalPrice Decimal?  @db.Decimal(10, 2)
-  stock        Int        @default(0)
-  reorderLevel Int        @default(5)
-  supplier     String?
-  imageUrl     String?
-  isActive     Boolean    @default(true)
-  groupId      String?
-  variantLabel String?
-  companyId    String
-  company      Company    @relation(fields: [companyId], references: [id])
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id              String            @id @default(cuid())
+  name            String
+  sku             String
+  description     String?
+  category        String?
+  costPrice       Decimal           @db.Decimal(10, 2)
+  sellingPrice    Decimal           @db.Decimal(10, 2)
+  originalPrice   Decimal?          @db.Decimal(10, 2)
+  stock           Int               @default(0)
+  reorderLevel    Int               @default(5)
+  supplier        String?
+  imageUrl        String?
+  isActive        Boolean           @default(true)
+  groupId         String?
+  variantLabel    String?
+  companyId       String
+  company         Company           @relation(fields: [companyId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   saleItems       SaleItem[]
   stockLogs       StockLog[]
   consultantStock ConsultantStock[]
   stockTransfers  StockTransfer[]
   quoteItems      QuoteItem[]
-  group           ProductGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  group           ProductGroup?     @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@unique([companyId, sku])
   @@index([companyId, groupId])
@@ -111,9 +113,9 @@ model Sale {
   orderNumber     String
   date            DateTime         @default(now())
   totalPrice      Decimal          @db.Decimal(10, 2)
-  shippingCost    Decimal          @db.Decimal(10, 2) @default(0)
-  shippingCharge  Decimal          @db.Decimal(10, 2) @default(0)
-  discount        Decimal          @db.Decimal(10, 2) @default(0)
+  shippingCost    Decimal          @default(0) @db.Decimal(10, 2)
+  shippingCharge  Decimal          @default(0) @db.Decimal(10, 2)
+  discount        Decimal          @default(0) @db.Decimal(10, 2)
   status          String           @default("Pending")
   paymentStatus   String           @default("Unpaid")
   paymentMethod   String?
@@ -130,7 +132,7 @@ model Sale {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   paymentType     String           @default("Cash")
-  amountPaid      Decimal          @db.Decimal(10, 2) @default(0)
+  amountPaid      Decimal          @default(0) @db.Decimal(10, 2)
   creditDueDate   DateTime?
   creditNotes     String?
   consultantId    String?
@@ -141,6 +143,7 @@ model Sale {
   debtReminders   DebtReminder[]
   paymentNotes    PaymentNote[]
   quote           Quote?
+  delivery        Delivery?
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -148,16 +151,16 @@ model Sale {
 }
 
 model SaleItem {
-  id           String  @id @default(cuid())
-  saleId       String
-  sale         Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  productId    String
-  product      Product @relation(fields: [productId], references: [id])
-  qty          Int
-  unitPrice    Decimal @db.Decimal(10, 2)
-  costPrice    Decimal @db.Decimal(10, 2)
-  totalPrice   Decimal @db.Decimal(10, 2)
-  serialNumber String?
+  id                      String      @id @default(cuid())
+  saleId                  String
+  sale                    Sale        @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId               String
+  product                 Product     @relation(fields: [productId], references: [id])
+  qty                     Int
+  unitPrice               Decimal     @db.Decimal(10, 2)
+  costPrice               Decimal     @db.Decimal(10, 2)
+  totalPrice              Decimal     @db.Decimal(10, 2)
+  serialNumber            String?
   stockSourceConsultantId String?
   stockSourceConsultant   Consultant? @relation("StockSource", fields: [stockSourceConsultantId], references: [id])
 
@@ -210,8 +213,8 @@ model Quote {
   customerName    String?
   customerPhone   String?
   customerCity    String?
-  shippingCharge  Decimal     @db.Decimal(10, 2) @default(0)
-  discount        Decimal     @db.Decimal(10, 2) @default(0)
+  shippingCharge  Decimal     @default(0) @db.Decimal(10, 2)
+  discount        Decimal     @default(0) @db.Decimal(10, 2)
   totalPrice      Decimal     @db.Decimal(10, 2)
   notes           String?
   consultantId    String?
@@ -327,24 +330,24 @@ model PaymentNote {
 }
 
 model Consultant {
-  id               String             @id @default(cuid())
-  name             String
-  phone            String?
-  whatsapp         String?
-  payType          String             @default("per_unit")
-  commissionRate   Decimal            @db.Decimal(10, 2) @default(50)
-  tierThreshold    Int                @default(50)
-  tierRate         Decimal            @db.Decimal(10, 2) @default(30)
-  monthlyAllowance Decimal            @db.Decimal(10, 2) @default(400)
-  isActive         Boolean            @default(true)
-  isStockLocation  Boolean            @default(false)
-  startDate        DateTime?
-  notes            String?
-  userId           String?            @unique
-  companyId        String
-  company          Company            @relation(fields: [companyId], references: [id])
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  id                 String              @id @default(cuid())
+  name               String
+  phone              String?
+  whatsapp           String?
+  payType            String              @default("per_unit")
+  commissionRate     Decimal             @default(50) @db.Decimal(10, 2)
+  tierThreshold      Int                 @default(50)
+  tierRate           Decimal             @default(30) @db.Decimal(10, 2)
+  monthlyAllowance   Decimal             @default(400) @db.Decimal(10, 2)
+  isActive           Boolean             @default(true)
+  isStockLocation    Boolean             @default(false)
+  startDate          DateTime?
+  notes              String?
+  userId             String?             @unique
+  companyId          String
+  company            Company             @relation(fields: [companyId], references: [id])
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
   sales              Sale[]
   commissionPayments CommissionPayment[]
   stock              ConsultantStock[]
@@ -373,32 +376,32 @@ model CommissionPayment {
 }
 
 model ConsultantStock {
-  id            String     @id @default(cuid())
-  consultantId  String
-  consultant    Consultant @relation(fields: [consultantId], references: [id])
-  productId     String
-  product       Product    @relation(fields: [productId], references: [id])
-  qty           Int        @default(0)
-  companyId     String
-  company       Company    @relation(fields: [companyId], references: [id])
-  updatedAt     DateTime   @updatedAt
+  id           String     @id @default(cuid())
+  consultantId String
+  consultant   Consultant @relation(fields: [consultantId], references: [id])
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id])
+  qty          Int        @default(0)
+  companyId    String
+  company      Company    @relation(fields: [companyId], references: [id])
+  updatedAt    DateTime   @updatedAt
 
   @@unique([consultantId, productId])
   @@index([companyId])
 }
 
 model StockTransfer {
-  id            String     @id @default(cuid())
-  consultantId  String
-  consultant    Consultant @relation(fields: [consultantId], references: [id])
-  productId     String
-  product       Product    @relation(fields: [productId], references: [id])
-  qty           Int
-  direction     String     @default("to_consultant")
-  notes         String?
-  companyId     String
-  company       Company    @relation(fields: [companyId], references: [id])
-  createdAt     DateTime   @default(now())
+  id           String     @id @default(cuid())
+  consultantId String
+  consultant   Consultant @relation(fields: [consultantId], references: [id])
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id])
+  qty          Int
+  direction    String     @default("to_consultant")
+  notes        String?
+  companyId    String
+  company      Company    @relation(fields: [companyId], references: [id])
+  createdAt    DateTime   @default(now())
 
   @@index([consultantId])
   @@index([companyId])
@@ -418,4 +421,56 @@ model SalesTarget {
   updatedAt     DateTime @updatedAt
 
   @@index([companyId, periodStart, periodEnd])
+}
+
+// A delivery rider. Mirrors the Consultant shape: an optional linked User gives them a login
+// that scopes every query to their own runs.
+model Rider {
+  id         String     @id @default(cuid())
+  name       String
+  phone      String?
+  nrc        String?
+  licenceNo  String?
+  isActive   Boolean    @default(true)
+  startDate  DateTime?
+  notes      String?
+  userId     String?    @unique
+  companyId  String
+  company    Company    @relation(fields: [companyId], references: [id])
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  deliveries Delivery[]
+
+  @@index([companyId])
+}
+
+// One delivery run for one order. Kept apart from Sale because a delivery can be attempted,
+// fail and be reassigned without that history touching the order itself.
+// status: Assigned -> PickedUp -> Delivered, or Failed at any point.
+model Delivery {
+  id             String    @id @default(cuid())
+  saleId         String    @unique
+  sale           Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  riderId        String?
+  rider          Rider?    @relation(fields: [riderId], references: [id])
+  status         String    @default("Assigned")
+  assignedAt     DateTime  @default(now())
+  pickedUpAt     DateTime?
+  deliveredAt    DateTime?
+  failedAt       DateTime?
+  failureReason  String?
+  recipientName  String?
+  attempts       Int       @default(1)
+  notes          String?
+  // Money the rider took at the door, and the confirmation that it reached the company.
+  cashCollected  Decimal   @default(0) @db.Decimal(10, 2)
+  cashRemitted   Boolean   @default(false)
+  cashRemittedAt DateTime?
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([companyId, status])
+  @@index([riderId, assignedAt])
 }

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { getDashboard } from '../services/api';
+import { getDashboard, getDeliveryPerformance } from '../services/api';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import DateRangePicker from '../components/DateRangePicker';
-import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave, FiUserCheck, FiClock } from 'react-icons/fi';
+import { FiDollarSign, FiShoppingCart, FiTrendingUp, FiAlertTriangle, FiTarget, FiZap, FiSave, FiUserCheck, FiClock, FiTruck } from 'react-icons/fi';
 import { Link } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -17,6 +17,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [range, setRange] = useState({ from: '', to: '' });
+  // Delivery economics load separately — a slow or failed call here must not take the
+  // whole dashboard down with it.
+  const [delivery, setDelivery] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -27,6 +30,12 @@ export default function Dashboard() {
         setError(err.response?.data?.error || err.message);
       })
       .finally(() => setLoading(false));
+  }, [range.from, range.to]);
+
+  useEffect(() => {
+    getDeliveryPerformance({ from: range.from || undefined, to: range.to || undefined })
+      .then(res => setDelivery(res.data))
+      .catch(() => setDelivery(null));
   }, [range.from, range.to]);
 
   if (loading && !data) return <LoadingSpinner />;
@@ -328,6 +337,42 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Own-delivery economics — is the bike beating what couriers charged? */}
+      {delivery && delivery.overall.assigned > 0 && (
+        <Link to="/deliveries" className="block bg-white rounded-xl p-4 shadow-sm border border-gray-100 hover:shadow-md hover:border-blue-200 transition-shadow">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2"><FiTruck size={15} /> Own deliveries</h3>
+            <span className="text-xs text-gray-400">{delivery.activeDays} day{delivery.activeDays === 1 ? '' : 's'}</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div>
+              <div className="text-gray-500">Delivered</div>
+              <div className="text-lg font-bold text-gray-800">{delivery.overall.delivered}</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Per day</div>
+              <div className={`text-lg font-bold ${delivery.breakEvenPerDay && delivery.perDay >= delivery.breakEvenPerDay ? 'text-green-600' : 'text-red-600'}`}>
+                {delivery.perDay.toFixed(1)}
+              </div>
+              {delivery.breakEvenPerDay && <div className="text-gray-400">break-even {delivery.breakEvenPerDay.toFixed(1)}</div>}
+            </div>
+            <div>
+              <div className="text-gray-500">Cost per delivery</div>
+              <div className={`text-lg font-bold ${delivery.costPerDelivery != null && delivery.costPerDelivery <= delivery.basis.feeCharged ? 'text-green-600' : 'text-red-600'}`}>
+                {delivery.costPerDelivery != null ? formatMoney(delivery.costPerDelivery) : '-'}
+              </div>
+              <div className="text-gray-400">vs {formatMoney(delivery.basis.feeCharged)} courier</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Cash not handed in</div>
+              <div className={`text-lg font-bold ${delivery.overall.cashOutstanding > 0 ? 'text-amber-600' : 'text-gray-800'}`}>
+                {formatMoney(delivery.overall.cashOutstanding)}
+              </div>
+            </div>
+          </div>
+        </Link>
       )}
 
       {/* Stats cards */}

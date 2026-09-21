@@ -25,6 +25,8 @@ import Targets from './pages/Targets';
 import MoneySplits from './pages/MoneySplits';
 import Warehouse from './pages/Warehouse';
 import StockAllocations from './pages/StockAllocations';
+import Deliveries from './pages/Deliveries';
+import RiderDashboard from './pages/RiderDashboard';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -42,12 +44,13 @@ function DashboardRouter() {
   if (user?.role === 'consultant') return <ConsultantDashboard />;
   if (user?.role === 'inventory') return <Navigate to="/warehouse" />;
   if (user?.role === 'purchasing') return <Navigate to="/expenses" />;
+  if (user?.role === 'rider') return <RiderDashboard />;
   return <Dashboard />;
 }
 
 function AdminOnly({ children }) {
   const { user } = useAuth();
-  if (user?.role === 'consultant' || user?.role === 'inventory' || user?.role === 'purchasing') return <Navigate to="/" />;
+  if (user?.role === 'consultant' || user?.role === 'inventory' || user?.role === 'purchasing' || user?.role === 'rider') return <Navigate to="/" />;
   return children;
 }
 
@@ -57,11 +60,13 @@ function NotInventory({ children }) {
   const { user } = useAuth();
   if (user?.role === 'inventory') return <Navigate to="/warehouse" />;
   if (user?.role === 'purchasing') return <Navigate to="/expenses" />;
+  if (user?.role === 'rider') return <Navigate to="/" />;
   return children;
 }
 
 function WarehouseRoute({ children }) {
   const { user } = useAuth();
+  if (user?.role === 'rider') return <Navigate to="/" />;
   if (user?.role === 'consultant' || user?.role === 'purchasing') return <Navigate to="/" />;
   return children;
 }
@@ -69,6 +74,7 @@ function WarehouseRoute({ children }) {
 // Purchasing role records stock purchases and running costs; admins keep full access.
 function ExpensesRoute({ children }) {
   const { user } = useAuth();
+  if (user?.role === 'rider') return <Navigate to="/" />;
   if (user?.role === 'consultant' || user?.role === 'inventory') return <Navigate to="/" />;
   return children;
 }
@@ -104,6 +110,7 @@ function AppRoutes() {
         <Route path="inventory" element={<AdminOnly><Inventory /></AdminOnly>} />
         <Route path="stock-allocations" element={<AdminOnly><StockAllocations /></AdminOnly>} />
         <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
+        <Route path="deliveries" element={<AdminOnly><Deliveries /></AdminOnly>} />
         <Route path="my-stock" element={<NotInventory><ConsultantStock /></NotInventory>} />
         <Route path="warehouse" element={<WarehouseRoute><Warehouse /></WarehouseRoute>} />
         <Route path="reports" element={<AdminOnly><Reports /></AdminOnly>} />
