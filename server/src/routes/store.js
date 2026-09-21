@@ -59,6 +59,42 @@ router.get('/product-image/:id', async (req, res) => {
   } catch { res.status(500).end(); }
 });
 
+// Group storefront tiles into the sections the store renders as headed rows.
+// Categories are keyed on a normalised label so a stray "fridges" or "Fridge " can't split a
+// section in two — scripts/merge-product-categories.js fixes the stored spellings, this is the
+// safety net for whatever gets typed next. A category holding a single product would be a
+// heading with one tile under it, so those fall through into "More" at the end.
+// (mirrored in api/index.js)
+function buildStoreSections(tiles) {
+  const norm = c => (c || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const byCat = new Map();
+  const loose = [];
+  for (const t of tiles) {
+    const key = norm(t.category);
+    if (!key) { loose.push(t); continue; }
+    if (!byCat.has(key)) byCat.set(key, { labels: new Map(), tiles: [] });
+    const entry = byCat.get(key);
+    const label = t.category.trim();
+    entry.labels.set(label, (entry.labels.get(label) || 0) + 1);
+    entry.tiles.push(t);
+  }
+  const sections = [];
+  for (const entry of byCat.values()) {
+    if (entry.tiles.length < 2) { loose.push(...entry.tiles); continue; }
+    const title = [...entry.labels.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    sections.push({ title, tiles: entry.tiles });
+  }
+  // Biggest categories first — that puts the ranges people actually shop for at the top and
+  // keeps working as the catalogue changes, unlike a hand-maintained order.
+  sections.sort((a, b) => b.tiles.length - a.tiles.length || a.title.localeCompare(b.title));
+  if (loose.length) sections.push({ title: 'More', tiles: loose });
+  return sections.map(s => ({
+    title: s.title,
+    // Cheapest first, so a range reads 43" -> 85" instead of jumbling model names.
+    productIds: s.tiles.slice().sort((a, b) => parseFloat(a.sellingPrice) - parseFloat(b.sellingPrice)).map(t => t.id),
+  }));
+}
+
 // Get active products
 router.get('/:slug/products', async (req, res) => {
   try {
@@ -80,7 +116,7 @@ router.get('/:slug/products', async (req, res) => {
     const velocityRows = products.length
       ? await prisma.saleItem.groupBy({
           by: ['productId'],
-          where: { productId: { in: products.map(p => p.id) }, sale: { companyId: company.id, date: { gte: since } } },
+          where: { productId: { in: products.map(p => p.id) }, sale: { companyId: company.id, date: { gte: since }, status: { not: 'Cancelled' } } },
           _sum: { qty: true },
         })
       : [];
@@ -121,17 +157,28 @@ router.get('/:slug/products', async (req, res) => {
       variants: [toVariant(p)], _onSale: p._onSale, _velocity: p._velocity,
     }));
 
-    const productsWithUrls = [...ungroupedTiles, ...groupedTiles]
-      .filter(t => t.stock > 0)
+    const inStock = [...ungroupedTiles, ...groupedTiles].filter(t => t.stock > 0);
+
+    // Sections are the default view; a filtered or searched request is a flat result list, so
+    // there is nothing to section and the client falls back to its plain grid.
+    const sections = (category || search) ? [] : buildStoreSections(inStock);
+    const popularIds = inStock
+      .filter(t => t._velocity > 0)
+      .sort((a, b) => b._velocity - a._velocity)
+      .slice(0, 8)
+      .map(t => t.id);
+
+    const productsWithUrls = inStock
       .sort((a, b) => {
         if (a._onSale !== b._onSale) return a._onSale ? -1 : 1;
         if (a._velocity !== b._velocity) return b._velocity - a._velocity;
         return a.name.localeCompare(b.name);
       })
       .map(({ _onSale, _velocity, ...rest }) => rest);
-    const allProducts = await prisma.product.findMany({ where: { companyId: company.id, isActive: true, stock: { gt: 0 } }, select: { category: true }, distinct: ['category'] });
-    const categories = allProducts.map(p => p.category).filter(Boolean).sort();
-    res.json({ products: productsWithUrls, categories });
+    // Pills come from the sections themselves so a pill can never point at a heading that
+    // isn't on the page.
+    const categories = sections.filter(s => s.title !== 'More').map(s => s.title);
+    res.json({ products: productsWithUrls, categories, sections, popularIds });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
