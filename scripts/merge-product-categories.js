@@ -6,9 +6,13 @@
 // Safe by default: prints the plan and changes nothing without --apply. Every run that applies
 // writes a rollback file first, so the previous labels can be restored exactly.
 //
+// This database is multi-tenant — several companies keep products side by side — so --company
+// is required and every query is scoped to it. Without that, one store's cleanup silently
+// rewrites another store's categories.
+//
 // Usage:
-//   node scripts/merge-product-categories.js --env=<dotenv path>            # dry run
-//   node scripts/merge-product-categories.js --env=<path> --apply
+//   node scripts/merge-product-categories.js --env=<path> --company=privtech-solutions
+//   node scripts/merge-product-categories.js --env=<path> --company=<slug> --apply
 //   node scripts/merge-product-categories.js --env=<path> --rollback=<file>
 //
 // Products whose category isn't in the map below are left alone and listed at the end, so a new
@@ -87,7 +91,20 @@ async function rollback(file) {
 async function main() {
   if (args.rollback) return rollback(args.rollback);
 
+  if (!args.company || args.company === true) {
+    const companies = await prisma.company.findMany({ select: { slug: true, name: true }, orderBy: { name: 'asc' } });
+    console.error('--company=<slug> is required — this database holds several stores.\n');
+    console.error('Available:');
+    for (const c of companies) console.error(`  ${c.slug.padEnd(28)}${c.name}`);
+    process.exitCode = 1;
+    return;
+  }
+  const company = await prisma.company.findUnique({ where: { slug: args.company }, select: { id: true, name: true } });
+  if (!company) { console.error(`No company with slug "${args.company}".`); process.exitCode = 1; return; }
+  console.log(`Company: ${company.name} (${args.company})\n`);
+
   const products = await prisma.product.findMany({
+    where: { companyId: company.id },
     select: { id: true, name: true, category: true, isActive: true, stock: true },
     orderBy: { name: 'asc' },
   });
