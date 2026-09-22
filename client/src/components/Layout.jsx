@@ -20,6 +20,7 @@ const adminNavItems = [
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
   { path: '/consultants', icon: FiUserCheck, label: 'Consultants' },
   { path: '/deliveries', icon: FiTruck, label: 'Deliveries' },
+  { path: '/payroll', icon: FiUsers, label: 'Payroll' },
   { path: '/customers', icon: FiUsers, label: 'Customers' },
   { path: '/shipping', icon: FiTruck, label: 'Shipping' },
   { path: '/reports', icon: FiBarChart2, label: 'Reports' },

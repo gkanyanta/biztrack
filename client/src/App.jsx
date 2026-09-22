@@ -26,6 +26,7 @@ import MoneySplits from './pages/MoneySplits';
 import Warehouse from './pages/Warehouse';
 import StockAllocations from './pages/StockAllocations';
 import Deliveries from './pages/Deliveries';
+import Payroll from './pages/Payroll';
 import RiderDashboard from './pages/RiderDashboard';
 
 // Store domains — serve store directly, no admin
@@ -111,6 +112,7 @@ function AppRoutes() {
         <Route path="stock-allocations" element={<AdminOnly><StockAllocations /></AdminOnly>} />
         <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
         <Route path="deliveries" element={<AdminOnly><Deliveries /></AdminOnly>} />
+        <Route path="payroll" element={<AdminOnly><Payroll /></AdminOnly>} />
         <Route path="my-stock" element={<NotInventory><ConsultantStock /></NotInventory>} />
         <Route path="warehouse" element={<WarehouseRoute><Warehouse /></WarehouseRoute>} />
         <Route path="reports" element={<AdminOnly><Reports /></AdminOnly>} />

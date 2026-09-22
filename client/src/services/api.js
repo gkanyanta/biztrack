@@ -183,4 +183,14 @@ export const remitDeliveryCash = (id, cashRemitted) => api.put(`/deliveries/${id
 export const deleteDelivery = (id) => api.delete(`/deliveries/${id}`);
 export const getDeliveryPerformance = (params) => api.get('/deliveries/performance', { params });
 
+// Payroll — salaried staff and consultants in one view
+export const getPayrollSummary = (params) => api.get('/payroll/summary', { params });
+export const getStaffMembers = (params) => api.get('/payroll/staff', { params });
+export const createStaffMember = (data) => api.post('/payroll/staff', data);
+export const updateStaffMember = (id, data) => api.put(`/payroll/staff/${id}`, data);
+export const deleteStaffMember = (id) => api.delete(`/payroll/staff/${id}`);
+export const getStaffPayments = (id) => api.get(`/payroll/staff/${id}/payments`);
+export const payStaffMember = (id, data) => api.post(`/payroll/staff/${id}/payments`, data);
+export const deleteStaffPayment = (id) => api.delete(`/payroll/payments/${id}`);
+
 export default api;

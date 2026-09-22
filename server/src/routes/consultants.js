@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 const { getConsultantPayPeriod, payPeriodFromLabel, getEffectivePeriod } = require('../utils/payPeriod');
 const { calcCommission } = require('../utils/commission');
+const { payrollInternals } = require('./payroll');
 
 async function getCompanyPayDay(prisma, companyId) {
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } });
@@ -466,7 +467,10 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       return res.json({ message: 'Consultant deactivated (has existing sales)' });
     }
 
+    const doomed = await prisma.commissionPayment.findMany({ where: { consultantId: req.params.id }, select: { expenseId: true } });
     await prisma.commissionPayment.deleteMany({ where: { consultantId: req.params.id } });
+    const expenseIds = doomed.map(p => p.expenseId).filter(Boolean);
+    if (expenseIds.length) await prisma.expense.deleteMany({ where: { id: { in: expenseIds }, companyId: req.user.companyId } });
     await prisma.consultant.delete({ where: { id: req.params.id } });
     res.json({ message: 'Consultant deleted' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -514,18 +518,28 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
       }
     }
 
-    const payment = await prisma.commissionPayment.create({
-      data: {
-        consultantId: consultant.id,
-        amount: parseFloat(amount),
-        type: type || 'commission',
-        periodFrom, periodTo,
-        paymentMethod: paymentMethod || null,
-        reference: reference || null,
-        notes: notes || null,
-        companyId
-      }
-    });
+    // Commission and allowance are wages, so each raises a Salaries & Wages expense and the
+    // payment owns it — deleting the payment takes the cost back out. An advance raises none:
+    // it is a loan against pay not yet earned. (see payroll.js)
+    const payment = await prisma.$transaction(async (tx) => {
+      const expenseId = await payrollInternals.payroll_raiseExpense(tx, {
+        name: consultant.name, type: type || 'commission', amount: parseFloat(amount),
+        periodFrom, periodTo, paymentMethod, notes, companyId,
+      });
+      return tx.commissionPayment.create({
+        data: {
+          consultantId: consultant.id,
+          amount: parseFloat(amount),
+          type: type || 'commission',
+          periodFrom, periodTo,
+          paymentMethod: paymentMethod || null,
+          reference: reference || null,
+          notes: notes || null,
+          expenseId,
+          companyId
+        }
+      });
+    }, { timeout: 20000 });
     res.status(201).json(payment);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });

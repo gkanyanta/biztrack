@@ -60,6 +60,7 @@ export const EXPENSE_CATEGORIES = [
   'Storage',
   'Supplier Payments',
   'Stock Purchase',
+  'Salaries & Wages',
   'Owner Draw',
   'Tax Reserve',
   'Other'
