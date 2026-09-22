@@ -44,6 +44,7 @@ export default function Deliveries() {
   const [unassigned, setUnassigned] = useState([]);
   const [active, setActive] = useState([]);
   const [cashRows, setCashRows] = useState([]);
+  const [remittedRows, setRemittedRows] = useState([]);
   const [perf, setPerf] = useState(null);
   const [selected, setSelected] = useState([]);
   const [assignTo, setAssignTo] = useState('');
@@ -61,13 +62,15 @@ export default function Deliveries() {
       getUnassignedOrders({ city: cityFilter || undefined }),
       getDeliveries({ open: 'true' }),
       getDeliveries({ unremitted: 'true' }),
+      getDeliveries({ remitted: 'true' }),
       getDeliveryPerformance(),
     ])
-      .then(([r, u, a, c, p]) => {
+      .then(([r, u, a, c, cr, p]) => {
         setRiders(r.data);
         setUnassigned(u.data);
         setActive(a.data);
         setCashRows(c.data);
+        setRemittedRows(cr.data);
         setPerf(p.data);
         if (!assignTo) {
           const firstActive = r.data.find(x => x.isActive);
@@ -126,11 +129,15 @@ export default function Deliveries() {
   };
 
   const remit = async (d, value) => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await remitDeliveryCash(d.id, value);
-      toast.success(value ? 'Marked as received' : 'Marked as outstanding');
+      toast.success(value ? `${formatMoney(d.cashCollected)} posted to ${d.orderNumber}` : 'Payment reversed — back to outstanding');
       loadAll();
-    } catch { toast.error('Could not update'); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not update');
+    } finally { setSubmitting(false); }
   };
 
   if (loading) return <LoadingSpinner />;
@@ -267,6 +274,9 @@ export default function Deliveries() {
             <div>
               <div className="text-xs text-gray-500">Collected but not yet handed in</div>
               <div className="text-2xl font-bold text-amber-600">{formatMoney(cashTotal)}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                Still counted as owed on the order until you confirm it arrived.
+              </div>
             </div>
             <FiDollarSign className="text-amber-400" size={28} />
           </div>
@@ -282,13 +292,46 @@ export default function Deliveries() {
                   <div className="min-w-0">
                     <div className="text-sm text-gray-800">{d.customerName} <span className="text-xs text-gray-400 ml-1">{d.orderNumber}</span></div>
                     <div className="text-xs text-gray-500">{d.rider?.name || 'Unassigned'} · delivered {formatDate(d.deliveredAt)}</div>
+                    {/* The rider can hand over more than the order was short of — the excess is his to explain. */}
+                    {parseFloat(d.cashCollected) > d.amountToCollect && d.amountToCollect > 0 && (
+                      <div className="text-xs text-amber-600 mt-0.5">
+                        {formatMoney(parseFloat(d.cashCollected) - d.amountToCollect)} more than the {formatMoney(d.amountToCollect)} outstanding
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="font-semibold text-gray-800">{formatMoney(d.cashCollected)}</span>
-                    <button onClick={() => remit(d, true)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Received</button>
+                    <button onClick={() => remit(d, true)} disabled={submitting}
+                      title="Records this as a cash payment against the order"
+                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium disabled:opacity-50">Received</button>
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {remittedRows.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Confirmed received</h3>
+              <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
+                {remittedRows.slice(0, 15).map(d => (
+                  <div key={d.id} className="flex items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <div className="text-sm text-gray-800">{d.customerName} <span className="text-xs text-gray-400 ml-1">{d.orderNumber}</span></div>
+                      <div className="text-xs text-gray-500">
+                        {d.rider?.name || 'Unassigned'} · confirmed {formatDate(d.cashRemittedAt)}
+                        {d.cashPosted > 0 && <span className="text-emerald-600"> · {formatMoney(d.cashPosted)} posted to the order</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="font-semibold text-gray-800">{formatMoney(d.cashCollected)}</span>
+                      <button onClick={() => remit(d, false)} disabled={submitting}
+                        title="Takes the payment back off the order"
+                        className="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 disabled:opacity-50">Undo</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

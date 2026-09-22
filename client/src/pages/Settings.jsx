@@ -256,6 +256,46 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Delivery Costs — what the bike and rider cost, and what a courier charged */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2"><FiTruck size={16} /> Delivery Costs</h3>
+        <p className="text-xs text-gray-400 mb-4">
+          What running your own bike costs, and what you were paying a courier before. The Deliveries
+          page uses these to work out the break-even — how many drops a day the bike has to make to be
+          worth keeping — so change them here when the hire or the wage changes.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Bike hire (per week)</label>
+            <input type="number" min="0" step="0.01" value={settings.delivery_bike_weekly ?? ''}
+              onChange={e => setSettings({...settings, delivery_bike_weekly: e.target.value})}
+              placeholder="1200"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Rider wage (per month)</label>
+            <input type="number" min="0" step="0.01" value={settings.delivery_rider_monthly ?? ''}
+              onChange={e => setSettings({...settings, delivery_rider_monthly: e.target.value})}
+              placeholder="3000"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Courier fee per drop</label>
+            <input type="number" min="0" step="0.01" value={settings.delivery_fee_charged ?? ''}
+              onChange={e => setSettings({...settings, delivery_fee_charged: e.target.value})}
+              placeholder="50"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          Left blank, these fall back to K1,200 a week, K3,000 a month and K50 a drop.
+        </p>
+        <button onClick={handleSave}
+          className="mt-4 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          Save Settings
+        </button>
+      </div>
+
       {/* Car Stock Tracking */}
       <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
         <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2"><FiTruck size={16} /> Car Stock Tracking</h3>

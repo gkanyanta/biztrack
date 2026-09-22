@@ -39,6 +39,7 @@ const deliveryInclude = {
       items: { select: { qty: true, product: { select: { name: true } } } },
     },
   },
+  remitPayment: { select: { id: true, amount: true } },
 };
 
 function shapeDelivery(d) {
@@ -54,11 +55,66 @@ function shapeDelivery(d) {
     customerName: d.sale?.customerName, customerPhone: d.sale?.customerPhone,
     customerCity: d.sale?.customerCity, deliveryAddress: d.sale?.deliveryAddress,
     orderTotal: d.sale?.totalPrice, paymentStatus: d.sale?.paymentStatus, paymentType: d.sale?.paymentType,
+    orderStatus: d.sale?.status,
     // What the rider should be collecting at the door — nothing if the order is already paid.
     amountToCollect: d.sale?.paymentStatus === 'Paid' ? 0 : Math.max(0, balance),
+    // Whether the collected cash has actually reached the order's ledger.
+    cashPosted: d.remitPayment ? parseFloat(d.remitPayment.amount) : 0,
     items: (d.sale?.items || []).map(i => ({ name: i.product?.name || 'Product', qty: i.qty })),
   };
 }
+
+// ---- CASH AND THE LEDGER ----
+// The rider records what he took at the door, and nothing reaches the books until the office
+// confirms the money arrived. That confirmation posts a CreditPayment against the order, so
+// cash still sitting in a rider's pocket keeps reading as owed — which is the whole point of
+// splitting the two steps. (mirrored in api/index.js)
+async function postRemittance(tx, delivery, companyId, riderName) {
+  const collected = parseFloat(delivery.cashCollected);
+  if (!(collected > 0)) return null;
+  const sale = await tx.sale.findUnique({ where: { id: delivery.saleId }, select: { id: true, totalPrice: true, amountPaid: true } });
+  if (!sale) return null;
+
+  const balance = parseFloat(sale.totalPrice) - parseFloat(sale.amountPaid);
+  // Never push an order past its own total. If the rider brought back more than was owed, post
+  // what the order can absorb and keep the figure he actually handed over in the note.
+  const amount = Math.min(collected, Math.max(0, balance));
+  if (!(amount > 0)) return null;
+
+  const payment = await tx.creditPayment.create({
+    data: {
+      saleId: sale.id, amount, paymentMethod: 'Cash',
+      reference: riderName ? `Delivery — ${riderName}` : 'Delivery',
+      notes: amount < collected
+        ? `Rider handed over ${collected.toFixed(2)} against a balance of ${balance.toFixed(2)}`
+        : 'Cash collected on delivery',
+      deliveryId: delivery.id, companyId,
+    },
+  });
+  const newAmountPaid = parseFloat(sale.amountPaid) + amount;
+  const paymentStatus = newAmountPaid >= parseFloat(sale.totalPrice) ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
+  await tx.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus } });
+  return payment;
+}
+
+// Undoing a remittance takes exactly the same money back out, so a mis-tick is correctable.
+async function reverseRemittance(tx, deliveryId, companyId) {
+  const payment = await tx.creditPayment.findFirst({ where: { deliveryId, companyId } });
+  if (!payment) return null;
+  const sale = await tx.sale.findUnique({ where: { id: payment.saleId }, select: { id: true, totalPrice: true, amountPaid: true } });
+  await tx.creditPayment.delete({ where: { id: payment.id } });
+  if (sale) {
+    const newAmountPaid = Math.max(0, parseFloat(sale.amountPaid) - parseFloat(payment.amount));
+    const paymentStatus = newAmountPaid >= parseFloat(sale.totalPrice) ? 'Paid' : newAmountPaid > 0 ? 'Partial' : 'Unpaid';
+    await tx.sale.update({ where: { id: sale.id }, data: { amountPaid: newAmountPaid, paymentStatus } });
+  }
+  return payment;
+}
+
+// An order that has been dropped off is delivered, and one that comes back off the bike is not.
+// Only ever moved between statuses whose stock has already been taken out, so this never
+// silently moves stock: an order still sitting in Pending is left for someone to confirm.
+const SALE_DELIVERABLE_FROM = ['Confirmed', 'Shipped'];
 
 router.use(authenticate);
 
@@ -212,6 +268,8 @@ router.get('/', async (req, res) => {
     if (req.query.status) where.status = req.query.status;
     if (req.query.open === 'true') where.status = { in: ['Assigned', 'PickedUp'] };
     if (req.query.unremitted === 'true') { where.status = 'Delivered'; where.cashRemitted = false; where.cashCollected = { gt: 0 }; }
+    // The other half of the cash screen: what has been confirmed, so a mis-tick can be undone.
+    if (req.query.remitted === 'true') { where.status = 'Delivered'; where.cashRemitted = true; where.cashCollected = { gt: 0 }; }
     if (req.query.from || req.query.to) {
       where.assignedAt = {};
       if (req.query.from) where.assignedAt.gte = new Date(req.query.from + 'T00:00:00.000Z');
@@ -258,7 +316,7 @@ router.put('/:id/status', async (req, res) => {
 
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
-    const delivery = await prisma.delivery.findFirst({ where, include: { sale: { select: { totalPrice: true, amountPaid: true, paymentStatus: true } } } });
+    const delivery = await prisma.delivery.findFirst({ where, include: { sale: { select: { id: true, status: true, totalPrice: true, amountPaid: true, paymentStatus: true } } } });
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
     if (delivery.status === 'Delivered' && req.user.role === 'rider') {
       return res.status(400).json({ error: 'This delivery is already completed — ask an admin to correct it' });
@@ -289,7 +347,29 @@ router.put('/:id/status', async (req, res) => {
     // Re-sending a rider after a failure is a second attempt, not a new delivery.
     if (delivery.status === 'Failed' && status === 'Assigned') data.attempts = delivery.attempts + 1;
 
-    const updated = await prisma.delivery.update({ where: { id: delivery.id }, data, include: deliveryInclude });
+    const leavingDelivered = delivery.status === 'Delivered' && status !== 'Delivered';
+    // Correcting a completed run back off Delivered takes its cash back out of the books too,
+    // otherwise the order keeps a payment for a delivery that never happened.
+    if (leavingDelivered) {
+      data.cashRemitted = false;
+      data.cashRemittedAt = null;
+      data.deliveredAt = null;
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (status === 'Delivered' && SALE_DELIVERABLE_FROM.includes(delivery.sale?.status)) {
+        await tx.sale.update({ where: { id: delivery.saleId }, data: { status: 'Delivered' } });
+        await tx.orderStatusLog.create({ data: { saleId: delivery.saleId, fromStatus: delivery.sale.status, toStatus: 'Delivered', companyId } });
+      }
+      if (leavingDelivered) {
+        if (delivery.cashRemitted) await reverseRemittance(tx, delivery.id, companyId);
+        if (delivery.sale?.status === 'Delivered') {
+          await tx.sale.update({ where: { id: delivery.saleId }, data: { status: 'Shipped' } });
+          await tx.orderStatusLog.create({ data: { saleId: delivery.saleId, fromStatus: 'Delivered', toStatus: 'Shipped', companyId } });
+        }
+      }
+      return tx.delivery.update({ where: { id: delivery.id }, data, include: deliveryInclude });
+    }, { timeout: 20000 });
     res.json(shapeDelivery(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -313,17 +393,31 @@ router.put('/:id/rider', requireAdmin, async (req, res) => {
 
 // Admin confirms the money reached the company. Deliberately admin-only: the rider records
 // what they took, the company records what it received, and the gap is the thing worth seeing.
+// Confirming is also the moment the cash becomes a payment against the order.
 router.put('/:id/remit', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
-    const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId: req.user.companyId } });
+    const companyId = req.user.companyId;
+    const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId }, include: { rider: { select: { name: true } } } });
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
     const remitted = req.body.cashRemitted !== false;
-    const updated = await prisma.delivery.update({
-      where: { id: delivery.id },
-      data: { cashRemitted: remitted, cashRemittedAt: remitted ? new Date() : null },
-      include: deliveryInclude,
-    });
+    if (remitted && delivery.status !== 'Delivered') {
+      return res.status(400).json({ error: 'Only a completed delivery can have its cash confirmed' });
+    }
+    if (remitted === delivery.cashRemitted) {
+      const unchanged = await prisma.delivery.findUnique({ where: { id: delivery.id }, include: deliveryInclude });
+      return res.json(shapeDelivery(unchanged));
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (remitted) await postRemittance(tx, delivery, companyId, delivery.rider?.name);
+      else await reverseRemittance(tx, delivery.id, companyId);
+      return tx.delivery.update({
+        where: { id: delivery.id },
+        data: { cashRemitted: remitted, cashRemittedAt: remitted ? new Date() : null },
+        include: deliveryInclude,
+      });
+    }, { timeout: 20000 });
     res.json(shapeDelivery(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -331,9 +425,15 @@ router.put('/:id/remit', requireAdmin, async (req, res) => {
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
-    const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId: req.user.companyId } });
+    const companyId = req.user.companyId;
+    const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId } });
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-    await prisma.delivery.delete({ where: { id: delivery.id } });
+    await prisma.$transaction(async (tx) => {
+      // Reverse before deleting: the payment's link would otherwise be nulled and leave a
+      // delivery payment on an order with no delivery behind it.
+      await reverseRemittance(tx, delivery.id, companyId);
+      await tx.delivery.delete({ where: { id: delivery.id } });
+    }, { timeout: 20000 });
     res.json({ success: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });

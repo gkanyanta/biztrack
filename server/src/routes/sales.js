@@ -5,7 +5,9 @@ const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
 router.use(authenticate);
 
-const saleInclude = { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true };
+const saleInclude = { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true,
+  // Where the order physically is, so the office can answer "where is it" from the sales list.
+  delivery: { select: { id: true, status: true, cashCollected: true, cashRemitted: true, rider: { select: { name: true } } } } };
 const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerName', totalPrice: 'totalPrice', status: 'status', paymentStatus: 'paymentStatus', date: 'date' };
 
 function calcSaleProfit(s) {
@@ -256,7 +258,7 @@ router.get('/:id', async (req, res) => {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
-    const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } }, paymentNotes: { orderBy: { createdAt: 'desc' } } } });
+    const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } }, paymentNotes: { orderBy: { createdAt: 'desc' } }, delivery: { include: { rider: { select: { name: true, phone: true } } } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     // Strip cost-exposing fields for consultants
     if (req.user.role === 'consultant') {

@@ -13,9 +13,33 @@ import OrderTimeline from '../components/OrderTimeline';
 import PaymentStatusModal from '../components/PaymentStatusModal';
 import useServerTable from '../hooks/useServerTable';
 import toast from 'react-hot-toast';
-import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera, FiTruck } from 'react-icons/fi';
 import BarcodeScanner from '../components/BarcodeScanner';
 import { useAuth } from '../hooks/useAuth';
+
+// Where the order physically is, in the words the office uses rather than the rider's status name.
+const DELIVERY_LABELS = { Assigned: 'With rider', PickedUp: 'On the way', Delivered: 'Dropped off', Failed: 'Delivery failed' };
+const DELIVERY_STYLES = {
+  Assigned: 'bg-slate-100 text-slate-600',
+  PickedUp: 'bg-blue-100 text-blue-700',
+  Delivered: 'bg-emerald-100 text-emerald-700',
+  Failed: 'bg-red-100 text-red-700',
+};
+
+function DeliveryTag({ delivery }) {
+  if (!delivery) return null;
+  const owed = parseFloat(delivery.cashCollected) > 0 && !delivery.cashRemitted;
+  return (
+    <div className="mt-1 flex flex-col items-center gap-0.5">
+      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${DELIVERY_STYLES[delivery.status] || 'bg-gray-100 text-gray-600'}`}>
+        <FiTruck size={10} /> {DELIVERY_LABELS[delivery.status] || delivery.status}
+      </span>
+      {delivery.rider?.name && <span className="text-[10px] text-gray-400">{delivery.rider.name}</span>}
+      {/* Cash the rider has taken but the office has not confirmed — still owed on this order. */}
+      {owed && <span className="text-[10px] text-amber-600">cash not handed in</span>}
+    </div>
+  );
+}
 
 export default function Sales() {
   const { user } = useAuth();
@@ -345,6 +369,7 @@ export default function Sales() {
                         className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none">
                         {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                       </select>
+                      <DeliveryTag delivery={s.delivery} />
                     </td>
                     <td className="p-3 text-center hidden sm:table-cell">
                       <button onClick={() => setPaymentModalSale(s)} className="hover:opacity-75" title="Click to update payment status">
@@ -655,6 +680,32 @@ export default function Sales() {
               </div>
               <ReceiptButton saleId={showDetail.id} size={20} className="ml-3 p-2 bg-blue-50 rounded-lg hover:bg-blue-100" />
             </div>
+
+            {/* The delivery run behind this order, so "where is it" is answerable from here. */}
+            {showDetail.delivery && (
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 mb-2 flex items-center gap-2"><FiTruck size={14} /> Delivery</h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-slate-500">State:</span> <span className="font-medium">{DELIVERY_LABELS[showDetail.delivery.status] || showDetail.delivery.status}</span></div>
+                  <div><span className="text-slate-500">Rider:</span> {showDetail.delivery.rider?.name || 'Unassigned'}</div>
+                  <div><span className="text-slate-500">Assigned:</span> {formatDate(showDetail.delivery.assignedAt)}</div>
+                  {showDetail.delivery.deliveredAt && <div><span className="text-slate-500">Delivered:</span> {formatDateTime(showDetail.delivery.deliveredAt)}</div>}
+                  {showDetail.delivery.recipientName && <div><span className="text-slate-500">Received by:</span> {showDetail.delivery.recipientName}</div>}
+                  {showDetail.delivery.attempts > 1 && <div><span className="text-slate-500">Attempts:</span> {showDetail.delivery.attempts}</div>}
+                  {parseFloat(showDetail.delivery.cashCollected) > 0 && (
+                    <div className="col-span-2">
+                      <span className="text-slate-500">Cash collected:</span> <span className="font-medium">{formatMoney(showDetail.delivery.cashCollected)}</span>
+                      {showDetail.delivery.cashRemitted
+                        ? <span className="text-emerald-600 ml-1">· confirmed received, posted to this order</span>
+                        : <span className="text-amber-600 ml-1">· not yet handed in, so still counted as owed</span>}
+                    </div>
+                  )}
+                  {showDetail.delivery.failureReason && (
+                    <div className="col-span-2"><span className="text-slate-500">Failed because:</span> <span className="text-red-600">{showDetail.delivery.failureReason}</span></div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {showDetail.paymentType === 'Credit' && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">

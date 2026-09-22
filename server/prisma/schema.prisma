@@ -292,6 +292,10 @@ model CreditPayment {
   paymentMethod String?
   reference     String?
   notes         String?
+  // Set when this payment is the cash a rider collected at the door, posted on remittance.
+  // Unique because a delivery remits once; un-ticking the remit deletes this row again.
+  deliveryId    String?   @unique
+  delivery      Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
   companyId     String
   company       Company  @relation(fields: [companyId], references: [id])
   createdAt     DateTime @default(now())
@@ -470,6 +474,9 @@ model Delivery {
   company       Company   @relation(fields: [companyId], references: [id])
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // The ledger entry created when the office confirmed this cash arrived.
+  remitPayment   CreditPayment?
 
   @@index([companyId, status])
   @@index([riderId, assignedAt])
