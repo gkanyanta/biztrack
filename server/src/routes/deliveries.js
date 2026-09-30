@@ -239,6 +239,8 @@ router.get('/unassigned', requireAdminOrInventory, async (req, res) => {
       companyId: req.user.companyId,
       status: { notIn: ['Cancelled', 'Delivered'] },
       delivery: { is: null },
+      // Collections are carried away by the customer, so they are nobody's run.
+      fulfilment: 'delivery',
     };
     if (req.query.city) where.customerCity = { contains: req.query.city, mode: 'insensitive' };
     const sales = await prisma.sale.findMany({

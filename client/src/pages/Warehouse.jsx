@@ -4,6 +4,7 @@ import { FiPackage, FiTruck, FiPlus, FiSearch, FiCheckCircle, FiX } from 'react-
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { formatDate } from '../utils/format';
+import CounterSale from '../components/CounterSale';
 
 // Searchable product picker — filters by name/SKU as you type instead of scrolling a long <select>.
 function ProductSearchPicker({ products, value, onChange, placeholder = 'Search product by name or SKU...' }) {
@@ -172,6 +173,8 @@ export default function Warehouse() {
         </div>
 
       </div>
+
+      <CounterSale onRecorded={() => { loadProducts(); loadAllProducts(); }} />
 
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">

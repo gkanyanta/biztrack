@@ -121,6 +121,9 @@ model Sale {
   shippingCharge  Decimal          @default(0) @db.Decimal(10, 2)
   discount        Decimal          @default(0) @db.Decimal(10, 2)
   status          String           @default("Pending")
+  // How the goods reach the customer. A collection is handed over at the counter, so it
+  // never needs a delivery and is genuinely complete the moment it is recorded.
+  fulfilment      String           @default("delivery")
   paymentStatus   String           @default("Unpaid")
   paymentMethod   String?
   source          String?

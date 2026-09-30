@@ -54,6 +54,21 @@ router.get('/me/transfers', async (req, res) => {
 // machinery but earn no commission and are excluded from commission/pay-statement calculations.
 // Scoped separately from the main roster so the inventory role never sees the sales-consultant
 // list or commission data, only the stock pools it's allowed to dispatch into.
+// Just enough to attribute a sale: who the seller could be, by name. Deliberately not the
+// full consultant record, which carries commission rates and pay terms the warehouse has no
+// business seeing. (mirrored in api/index.js)
+router.get('/names', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const consultants = await prisma.consultant.findMany({
+      where: { companyId: req.user.companyId, isActive: true, isStockLocation: false },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(consultants);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 router.get('/stock-locations', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;

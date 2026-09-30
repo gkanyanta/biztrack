@@ -71,7 +71,7 @@ export default function Sales() {
     shippingCost: '', shippingCharge: '', discount: '0', paymentMethod: '',
     paymentStatus: 'Unpaid', source: '', notes: '', date: '',
     paymentType: 'Cash', amountPaid: '', creditDueDate: '', creditNotes: '',
-    consultantId: '', status: 'Confirmed'
+    consultantId: '', status: 'Confirmed', fulfilment: 'delivery'
   };
   const [form, setForm] = useState(emptyForm);
   const [creditPaymentForm, setCreditPaymentForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
@@ -243,7 +243,9 @@ export default function Sales() {
   // Mirrors the server rule in POST /sales: an order with anything coming from the warehouse
   // cannot be created as Shipped or Delivered, because nobody has picked it yet.
   const needsWarehouse = orderItems.some(i => !i.stockSourceConsultantId);
-  const creatableStatuses = needsWarehouse
+  // A collection is handed over at the counter, so it never has to travel and any status is fair.
+  const isCollection = form.fulfilment === 'collection';
+  const creatableStatuses = needsWarehouse && !isCollection
     ? ORDER_STATUSES.filter(s => !['Shipped', 'Delivered'].includes(s))
     : ORDER_STATUSES;
   // Switching an item to warehouse stock after picking Delivered must not leave the form holding
@@ -555,6 +557,12 @@ export default function Sales() {
             </div>
             {!editing && (
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">How is it reaching them?</label>
+                <select value={form.fulfilment} onChange={e => setForm({...form, fulfilment: e.target.value})}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 mb-3">
+                  <option value="delivery">Delivery — a rider or courier takes it</option>
+                  <option value="collection">Collected — they took it with them</option>
+                </select>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Order Status</label>
                 <select value={effectiveStatus} onChange={e => setForm({...form, status: e.target.value})}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">

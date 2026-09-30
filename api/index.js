@@ -901,7 +901,10 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
     // reason 279 of last month's orders never reached the person meant to prepare them.
     // Items sold from a consultant's own carried stock are exempt: the seller already has them.
     const requestedStatus = data.status || 'Pending';
-    if (['Shipped', 'Delivered'].includes(requestedStatus) && saleItems.some(i => !i.stockSourceConsultantId)) {
+    const fulfilment = data.fulfilment === 'collection' ? 'collection' : 'delivery';
+    // A collection is carried away from the counter, so it is genuinely finished on the spot and
+    // the rule below does not apply to it. Only something that still has to travel does.
+    if (fulfilment === 'delivery' && ['Shipped', 'Delivered'].includes(requestedStatus) && saleItems.some(i => !i.stockSourceConsultantId)) {
       return res.status(400).json({
         error: `This order has items coming from the warehouse, so it cannot be recorded as ${requestedStatus} straight away. `
              + 'Save it as Confirmed — the warehouse marks it packed, and it becomes Delivered when the rider drops it off.',
@@ -948,7 +951,7 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
           data: {
             orderNumber, date: data.date ? new Date(data.date) : new Date(), totalPrice,
             shippingCost, shippingCharge, discount,
-            status: requestedStatus, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
+            status: requestedStatus, fulfilment, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
             paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
             consultantId: data.consultantId || null,
             customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
@@ -2702,6 +2705,20 @@ app.get('/api/v1/consultants/me/transfers', authenticate, async (req, res) => {
 
 // Stock locations (e.g. "My Car") — Consultant rows flagged isStockLocation=true. Reuse the
 // mini-stock/transfer machinery but earn no commission and are excluded from commission calcs.
+// Just enough to attribute a sale: who the seller could be, by name. Deliberately not the
+// full consultant record, which carries commission rates and pay terms the warehouse has no
+// business seeing. (mirrored in server/src/routes/consultants.js)
+app.get('/api/v1/consultants/names', authenticate, requireAdminOrInventory, async (req, res) => {
+  try {
+    const consultants = await prisma.consultant.findMany({
+      where: { companyId: req.user.companyId, isActive: true, isStockLocation: false },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(consultants);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/consultants/stock-locations', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
@@ -4029,6 +4046,8 @@ app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, 
       companyId: req.user.companyId,
       status: { notIn: ['Cancelled', 'Delivered'] },
       delivery: { is: null },
+      // Collections are carried away by the customer, so they are nobody's run.
+      fulfilment: 'delivery',
     };
     if (req.query.city) where.customerCity = { contains: req.query.city, mode: 'insensitive' };
     const sales = await prisma.sale.findMany({

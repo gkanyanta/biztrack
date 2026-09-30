@@ -327,7 +327,10 @@ router.post('/', validateSale, async (req, res) => {
     // reason 279 of last month's orders never reached the person meant to prepare them.
     // Items sold from a consultant's own carried stock are exempt: the seller already has them.
     const requestedStatus = data.status || 'Pending';
-    if (['Shipped', 'Delivered'].includes(requestedStatus) && saleItems.some(i => !i.stockSourceConsultantId)) {
+    const fulfilment = data.fulfilment === 'collection' ? 'collection' : 'delivery';
+    // A collection is carried away from the counter, so it is genuinely finished on the spot and
+    // the rule below does not apply to it. Only something that still has to travel does.
+    if (fulfilment === 'delivery' && ['Shipped', 'Delivered'].includes(requestedStatus) && saleItems.some(i => !i.stockSourceConsultantId)) {
       return res.status(400).json({
         error: `This order has items coming from the warehouse, so it cannot be recorded as ${requestedStatus} straight away. `
              + 'Save it as Confirmed — the warehouse marks it packed, and it becomes Delivered when the rider drops it off.',
@@ -356,7 +359,7 @@ router.post('/', validateSale, async (req, res) => {
           data: {
             orderNumber, date: data.date ? new Date(data.date) : new Date(),
             totalPrice, shippingCost, shippingCharge, discount,
-            status: requestedStatus, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
+            status: requestedStatus, fulfilment, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
             paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
             consultantId: data.consultantId || null,
             customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null,
