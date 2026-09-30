@@ -41,7 +41,9 @@ app.use(rateLimit({
 // Stricter rate limit for auth routes
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,
+  // Deliberately low in production. A test run authenticates as several people per suite,
+  // so it raises this rather than contorting the tests around it.
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX, 10) || 15,
   message: { error: 'Too many login attempts, please try again later' }
 });
 
