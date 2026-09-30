@@ -214,8 +214,8 @@ export default function Deliveries() {
                         onChange={e => setSelected(e.target.checked ? unassigned.map(s => s.id) : [])} />
                     </th>
                     <th className="text-left p-3">Order</th>
-                    <th className="text-left p-3 hidden sm:table-cell">Customer</th>
-                    <th className="text-left p-3 hidden lg:table-cell">Address</th>
+                    <th className="text-left p-3">Customer &amp; where</th>
+                    <th className="text-left p-3">What is going</th>
                     <th className="text-right p-3">To collect</th>
                   </tr>
                 </thead>
@@ -223,15 +223,31 @@ export default function Deliveries() {
                   {unassigned.map(s => (
                     <tr key={s.id} className={`hover:bg-gray-50 ${selected.includes(s.id) ? 'bg-slate-50' : ''}`}>
                       <td className="p-3"><input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} /></td>
-                      <td className="p-3">
+                      <td className="p-3 align-top">
                         <div className="font-medium text-gray-700">{s.orderNumber}</div>
                         <div className="text-xs text-gray-400">{formatDate(s.date)}</div>
+                        {/* Packed by the warehouse, so this is the one actually waiting to go. */}
+                        {s.isReady && (
+                          <span className="inline-block mt-1 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">READY</span>
+                        )}
                       </td>
-                      <td className="p-3 hidden sm:table-cell">
-                        <div className="text-gray-700">{s.customerName || '-'}</div>
-                        <div className="text-xs text-gray-400">{s.customerPhone || ''}</div>
+                      <td className="p-3 align-top">
+                        <div className="text-gray-700">{s.customerName || 'Walk-in'}</div>
+                        {s.customerPhone && <div className="text-xs text-gray-500">{s.customerPhone}</div>}
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {s.deliveryAddress || <span className="text-amber-600">no address given</span>}
+                          {s.customerCity ? `${s.deliveryAddress ? ', ' : ''}${s.customerCity}` : ''}
+                        </div>
                       </td>
-                      <td className="p-3 hidden lg:table-cell text-gray-600 text-xs">{s.deliveryAddress || '—'}{s.customerCity ? `, ${s.customerCity}` : ''}</td>
+                      <td className="p-3 align-top text-xs text-gray-600">
+                        {(s.items || []).length === 0 ? <span className="text-gray-400">—</span> : (
+                          <div className="space-y-0.5">
+                            {s.items.map((i, n) => (
+                              <div key={n}>{i.qty > 1 && <span className="text-gray-400">{i.qty}× </span>}{i.name}</div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="p-3 text-right font-medium">{s.amountToCollect > 0 ? formatMoney(s.amountToCollect) : <span className="text-emerald-600 text-xs">Paid</span>}</td>
                     </tr>
                   ))}

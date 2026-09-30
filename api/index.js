@@ -4026,10 +4026,17 @@ app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, 
         items: { select: { qty: true, product: { select: { name: true } } } },
       },
       orderBy: { date: 'desc' },
-      take: 200,
+      // Generous, because the ordering below matters more than the cut-off: an order somebody has
+      // physically packed must not fall off the end of the list behind months of older ones.
+      take: 500,
     });
-    res.json(sales.map(s => ({
+    // Shipped means the warehouse has picked and packed it, so it is the one genuinely ready to
+    // go on the bike. Those come first; everything else keeps newest-first.
+    const ready = (s) => (s.status === 'Shipped' ? 0 : 1);
+    const ordered = sales.slice().sort((a, b) => ready(a) - ready(b) || new Date(b.date) - new Date(a.date));
+    res.json(ordered.map(s => ({
       ...s,
+      isReady: s.status === 'Shipped',
       amountToCollect: s.paymentStatus === 'Paid' ? 0 : Math.max(0, parseFloat(s.totalPrice) - parseFloat(s.amountPaid)),
       items: s.items.map(i => ({ name: i.product?.name || 'Product', qty: i.qty })),
     })));

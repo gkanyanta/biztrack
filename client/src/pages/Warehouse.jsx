@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getProducts, bulkRestock, getStockLocations, transferStockToConsultant, getSales, updateSaleStatus } from '../services/api';
+import { getProducts, bulkRestock, getSales, updateSaleStatus } from '../services/api';
 import { FiPackage, FiTruck, FiPlus, FiSearch, FiCheckCircle, FiX } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -67,18 +67,16 @@ export default function Warehouse() {
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(true);
-  // Unfiltered catalog for the Stock In / Dispatch pickers, kept separate from the "Warehouse
-  // Stock" table's search below so typing in one doesn't limit what the other can pick from.
+  // Unfiltered catalog for the Stock In picker, kept separate from the "Warehouse Stock"
+  // table's search below so typing in one doesn't limit what the other can pick from.
   const [allProducts, setAllProducts] = useState([]);
-  const [locations, setLocations] = useState([]);
-  const [locationId, setLocationId] = useState('');
   const [orders, setOrders] = useState([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderAge, setOrderAge] = useState('14');
 
   const [stockInForm, setStockInForm] = useState({ productId: '', quantity: '' });
-  const [dispatchForm, setDispatchForm] = useState({ productId: '', qty: '', notes: '' });
   const [stockInSubmitting, setStockInSubmitting] = useState(false);
-  const [dispatchSubmitting, setDispatchSubmitting] = useState(false);
   const [dispatchingOrderId, setDispatchingOrderId] = useState(null);
 
   const loadProducts = () => {
@@ -93,16 +91,9 @@ export default function Warehouse() {
   useEffect(() => { loadProducts(); }, [search]);
   useEffect(() => { loadAllProducts(); }, []);
 
-  useEffect(() => {
-    getStockLocations().then(res => {
-      setLocations(res.data);
-      if (res.data.length === 1) setLocationId(res.data[0].id);
-    }).catch(() => {});
-  }, []);
-
   const loadOrders = () => {
     setLoadingOrders(true);
-    getSales({ status: 'Confirmed', page: 1, pageSize: 50 })
+    getSales({ status: 'Confirmed', page: 1, pageSize: 300 })
       // Only orders with at least one warehouse-sourced item need dispatching from here;
       // orders fulfilled entirely from a consultant's own stock are already with the seller.
       .then(res => setOrders(res.data.data.filter(o => (o.items || []).some(i => !i.stockSourceConsultantId))))
@@ -110,6 +101,21 @@ export default function Warehouse() {
   };
 
   useEffect(() => { loadOrders(); }, []);
+
+  // Orders have been accumulating in Confirmed since July, so the queue defaults to recent work
+  // and the search covers the three things she actually looks for: the order, who it is for, and
+  // what is in it.
+  const orderCutoff = orderAge === 'all' ? null : new Date(Date.now() - parseInt(orderAge, 10) * 86400000);
+  const orderQuery = orderSearch.trim().toLowerCase();
+  const filteredOrders = orders.filter(o => {
+    if (orderCutoff && new Date(o.date) < orderCutoff) return false;
+    if (!orderQuery) return true;
+    const haystack = [
+      o.orderNumber, o.customerName, o.customerPhone, o.customerCity, o.deliveryAddress,
+      ...(o.items || []).map(i => i.product?.name),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(orderQuery);
+  });
 
   const handleStockIn = async (e) => {
     e.preventDefault();
@@ -131,33 +137,14 @@ export default function Warehouse() {
     }
   };
 
-  const handleDispatchToCar = async (e) => {
-    e.preventDefault();
-    if (dispatchSubmitting) return;
-    if (!locationId) return toast.error('No car stock location set up — ask an admin to set one up in Settings');
-    if (!dispatchForm.productId || !dispatchForm.qty || parseInt(dispatchForm.qty) <= 0) {
-      return toast.error('Select a product and enter a quantity');
-    }
-    setDispatchSubmitting(true);
-    try {
-      await transferStockToConsultant(locationId, { productId: dispatchForm.productId, qty: parseInt(dispatchForm.qty), notes: dispatchForm.notes || undefined });
-      toast.success('Dispatched to car stock');
-      setDispatchForm({ productId: '', qty: '', notes: '' });
-      loadProducts();
-      loadAllProducts();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Error dispatching stock');
-    } finally {
-      setDispatchSubmitting(false);
-    }
-  };
-
-  const handleMarkDispatched = async (order) => {
+  // Marking an order packed moves it to Shipped, which is what makes it show as READY on the
+  // Deliveries assign tab. No stock moves — that happened when the order was confirmed.
+  const handleMarkPacked = async (order) => {
     if (dispatchingOrderId) return;
     setDispatchingOrderId(order.id);
     try {
       await updateSaleStatus(order.id, 'Shipped');
-      toast.success(`Order ${order.orderNumber} marked dispatched`);
+      toast.success(`${order.orderNumber} is packed and ready for the rider`);
       loadOrders();
       loadProducts();
       loadAllProducts();
@@ -184,45 +171,57 @@ export default function Warehouse() {
           </form>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><FiTruck /> Dispatch to Car</h2>
-          {locations.length === 0 ? (
-            <p className="text-sm text-gray-500">No car stock location set up yet — ask an admin to set one up in Settings.</p>
-          ) : (
-            <form onSubmit={handleDispatchToCar} className="space-y-3">
-              {locations.length > 1 && (
-                <select value={locationId} onChange={e => setLocationId(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none">
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-              )}
-              <ProductSearchPicker products={allProducts} value={dispatchForm.productId} onChange={id => setDispatchForm(f => ({ ...f, productId: id }))} />
-              <input type="number" min="1" placeholder="Quantity" value={dispatchForm.qty}
-                onChange={e => setDispatchForm(f => ({ ...f, qty: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              <input type="text" placeholder="Notes (optional)" value={dispatchForm.notes}
-                onChange={e => setDispatchForm(f => ({ ...f, notes: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              <button type="submit" disabled={dispatchSubmitting} className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">{dispatchSubmitting ? 'Dispatching...' : 'Dispatch'}</button>
-            </form>
-          )}
-        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">Orders Ready to Dispatch</h2>
-        {loadingOrders ? <LoadingSpinner /> : orders.length === 0 ? (
-          <p className="text-sm text-gray-500 text-center py-6">No confirmed orders waiting to be dispatched.</p>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <h2 className="text-sm font-semibold text-gray-700">Orders to prepare</h2>
+          <span className="text-xs text-gray-400">{filteredOrders.length} of {orders.length}</span>
+        </div>
+        <p className="text-xs text-gray-400 mb-3">
+          Pick and pack each one, then mark it packed — it then shows as ready on the Deliveries
+          screen for whoever puts it on the bike.
+        </p>
+        <div className="flex gap-2 mb-3 flex-wrap">
+          <div className="relative flex-1 min-w-[180px]">
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+            <input value={orderSearch} onChange={e => setOrderSearch(e.target.value)}
+              placeholder="Order number, customer or product"
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          {/* Orders have sat in here since July, so the default is the recent ones. */}
+          <select value={orderAge} onChange={e => setOrderAge(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none">
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="all">Everything</option>
+          </select>
+        </div>
+        {loadingOrders ? <LoadingSpinner /> : filteredOrders.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-6">
+            {orders.length === 0 ? 'Nothing waiting to be prepared.' : 'Nothing matches — widen the date range or clear the search.'}
+          </p>
         ) : (
           <div className="space-y-2">
-            {orders.map(o => (
+            {filteredOrders.map(o => (
               <div key={o.id} className="flex items-center justify-between border border-gray-100 rounded-lg p-3">
-                <div>
-                  <div className="font-medium text-gray-800">{o.orderNumber}</div>
-                  <div className="text-xs text-gray-500">{o.customerName || 'Walk-in'} · {formatDate(o.date)}</div>
-                  <div className="text-xs text-gray-400">{(o.items || []).map(i => `${i.product?.name || 'Item'} x${i.qty}`).join(', ')}</div>
+                <div className="min-w-0">
+                  <div className="font-medium text-gray-800">
+                    {o.orderNumber}
+                    {o.consultant?.name && <span className="text-xs text-gray-400 font-normal ml-2">via {o.consultant.name}</span>}
+                  </div>
+                  <div className="text-xs text-gray-500">{o.customerName || 'Walk-in'}{o.customerPhone ? ` · ${o.customerPhone}` : ''} · {formatDate(o.date)}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {o.deliveryAddress || <span className="text-amber-600">no address given</span>}
+                    {o.customerCity ? `${o.deliveryAddress ? ', ' : ''}${o.customerCity}` : ''}
+                  </div>
+                  <div className="text-xs text-gray-700 mt-1">
+                    {(o.items || []).map(i => `${i.qty > 1 ? i.qty + '× ' : ''}${i.product?.name || 'Item'}`).join(', ')}
+                  </div>
                 </div>
-                <button onClick={() => handleMarkDispatched(o)} disabled={dispatchingOrderId === o.id} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <FiCheckCircle size={14} /> {dispatchingOrderId === o.id ? 'Dispatching...' : 'Mark Dispatched'}
+                <button onClick={() => handleMarkPacked(o)} disabled={dispatchingOrderId === o.id} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">
+                  <FiCheckCircle size={14} /> {dispatchingOrderId === o.id ? 'Saving...' : 'Mark packed'}
                 </button>
               </div>
             ))}
