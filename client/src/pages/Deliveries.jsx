@@ -26,6 +26,8 @@ const TABS = [
   { key: 'riders', label: 'Riders', money: true },
 ];
 
+const COURIER_LABELS = { rider: 'Our rider', yango: 'Yango', other: 'Hired courier' };
+
 const STATUS_STYLES = {
   Assigned: 'bg-slate-100 text-slate-700',
   PickedUp: 'bg-blue-100 text-blue-700',
@@ -57,7 +59,9 @@ export default function Deliveries() {
   const [remittedRows, setRemittedRows] = useState([]);
   const [perf, setPerf] = useState(null);
   const [selected, setSelected] = useState([]);
-  const [assignTo, setAssignTo] = useState('');
+  // 'rider:<id>' for one of ours, 'hire:yango' or 'hire:other' for a car booked for the trip.
+  const [carrier, setCarrier] = useState('');
+  const [fareForm, setFareForm] = useState({ cost: '', ref: '' });
   const [cityFilter, setCityFilter] = useState('Lusaka');
   const [submitting, setSubmitting] = useState(false);
   const [showRiderForm, setShowRiderForm] = useState(false);
@@ -84,9 +88,9 @@ export default function Deliveries() {
         setCashRows(c.data);
         setRemittedRows(cr.data);
         setPerf(p.data);
-        if (!assignTo) {
+        if (!carrier) {
           const firstActive = r.data.find(x => x.isActive);
-          if (firstActive) setAssignTo(firstActive.id);
+          if (firstActive) setCarrier(`rider:${firstActive.id}`);
         }
       })
       .catch(() => toast.error('Could not load deliveries'))
@@ -101,9 +105,15 @@ export default function Deliveries() {
     if (submitting || !selected.length) return;
     setSubmitting(true);
     try {
-      await assignDeliveries({ riderId: assignTo || null, saleIds: selected });
+      await assignDeliveries({
+        saleIds: selected,
+        ...(hiring
+          ? { courier: carrier.slice('hire:'.length), courierCost: fareForm.cost || undefined, courierRef: fareForm.ref || undefined }
+          : { riderId: carrier.startsWith('rider:') ? carrier.slice('rider:'.length) : null }),
+      });
       toast.success(`${selected.length} order${selected.length === 1 ? '' : 's'} assigned`);
       setSelected([]);
+      setFareForm({ cost: '', ref: '' });
       loadAll();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Could not assign');
@@ -152,6 +162,8 @@ export default function Deliveries() {
     } finally { setSubmitting(false); }
   };
 
+  const hiring = carrier.startsWith('hire:');
+
   if (loading) return <LoadingSpinner />;
 
   const cashTotal = cashRows.reduce((s, d) => s + parseFloat(d.cashCollected), 0);
@@ -186,17 +198,42 @@ export default function Deliveries() {
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Assign to</label>
-              <select value={assignTo} onChange={e => setAssignTo(e.target.value)}
+              <label className="block text-xs font-medium text-gray-600 mb-1">Who is taking it</label>
+              <select value={carrier} onChange={e => setCarrier(e.target.value)}
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800">
-                <option value="">Unassigned</option>
-                {riders.filter(r => r.isActive).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                <option value="">Our rider — unassigned for now</option>
+                {riders.filter(r => r.isActive).map(r => <option key={r.id} value={`rider:${r.id}`}>{r.name}</option>)}
+                <option value="hire:yango">Yango</option>
+                <option value="hire:other">Another courier</option>
               </select>
             </div>
+            {hiring && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Fare per order</label>
+                  <input type="number" min="0" step="0.01" value={fareForm.cost}
+                    onChange={e => setFareForm({ ...fareForm, cost: e.target.value })}
+                    placeholder="0.00"
+                    className="w-28 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
+                  <input value={fareForm.ref} onChange={e => setFareForm({ ...fareForm, ref: e.target.value })}
+                    placeholder="Driver, plate, trip"
+                    className="w-40 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+                </div>
+              </>
+            )}
             <button onClick={handleAssign} disabled={!selected.length || submitting}
               className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-40">
               {submitting ? 'Assigning…' : `Assign ${selected.length || ''}`.trim()}
             </button>
+            {hiring && (
+              <p className="text-xs text-gray-400 w-full">
+                The fare is recorded against each order as its delivery cost, so a hired trip can be
+                compared with what the bike costs. Bill the customer on the order's delivery charge.
+              </p>
+            )}
           </div>
 
           {unassigned.length === 0 ? (
@@ -274,6 +311,17 @@ export default function Deliveries() {
                     <div className="font-medium text-gray-800">{d.customerName || 'Customer'} <span className="text-xs text-gray-400 ml-1">{d.orderNumber}</span></div>
                     <div className="text-xs text-gray-500 mt-0.5">{d.deliveryAddress || 'No address'}{d.customerCity ? `, ${d.customerCity}` : ''}</div>
                     <div className="text-xs text-gray-400 mt-1 flex items-center gap-1"><FiClock size={11} /> assigned {formatDate(d.assignedAt)}{d.attempts > 1 ? ` · attempt ${d.attempts}` : ''}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {/* Who is carrying it, what the trip cost if we hired one, and whether the
+                          warehouse ever touched it. */}
+                      {d.courier === 'rider'
+                        ? (d.rider?.name || 'no rider yet')
+                        : `${COURIER_LABELS[d.courier] || d.courier}${d.courierRef ? ` · ${d.courierRef}` : ''}`}
+                      {d.courier !== 'rider' && d.courierCost > 0 && (
+                        <span className="text-gray-400"> · fare {formatMoney(d.courierCost)}</span>
+                      )}
+                      <span className="text-gray-400"> · from {d.dispatchedFrom}</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${STATUS_STYLES[d.status]}`}>{d.status === 'PickedUp' ? 'On the way' : d.status}</span>

@@ -117,6 +117,66 @@ export default function DeliveryFinances() {
             </span>
           </div>
 
+          {/* The question the warehouse asks whenever the rider is swamped: send him, or hire a
+              car? Our bike is a fixed monthly cost however many drops it does; a hired trip is a
+              fare. Only a per-drop figure makes them comparable. */}
+          {(cost.courierSplit?.own.drops > 0 || cost.courierSplit?.hired.drops > 0) && (
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Our bike, or a hired car?</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-gray-500">
+                    <tr>
+                      <th className="text-left pb-2">Carried by</th>
+                      <th className="text-right pb-2">Drops</th>
+                      <th className="text-right pb-2">Cost</th>
+                      <th className="text-right pb-2">Cost a drop</th>
+                      <th className="text-right pb-2">Fees billed</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    <tr>
+                      <td className="py-2">Our rider<div className="text-xs text-gray-400">wage and bike hire</div></td>
+                      <td className="py-2 text-right">{cost.courierSplit.own.drops}</td>
+                      <td className="py-2 text-right">{formatMoney(cost.courierSplit.own.cost)}</td>
+                      <td className="py-2 text-right font-semibold">
+                        {cost.courierSplit.own.costPerDrop != null ? formatMoney(cost.courierSplit.own.costPerDrop) : '—'}
+                      </td>
+                      <td className="py-2 text-right text-gray-500">{formatMoney(cost.courierSplit.own.feesBilled)}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2">Hired<div className="text-xs text-gray-400">Yango and the rest, per trip</div></td>
+                      <td className="py-2 text-right">{cost.courierSplit.hired.drops}</td>
+                      <td className="py-2 text-right">{formatMoney(cost.courierSplit.hired.cost)}</td>
+                      <td className="py-2 text-right font-semibold">
+                        {cost.courierSplit.hired.costPerDrop != null ? formatMoney(cost.courierSplit.hired.costPerDrop) : '—'}
+                      </td>
+                      <td className="py-2 text-right text-gray-500">{formatMoney(cost.courierSplit.hired.feesBilled)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              {cost.courierSplit.own.costPerDrop != null && cost.courierSplit.hired.costPerDrop != null && (
+                <p className={`text-xs mt-2 ${cost.courierSplit.own.costPerDrop <= cost.courierSplit.hired.costPerDrop ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {cost.courierSplit.own.costPerDrop <= cost.courierSplit.hired.costPerDrop
+                    ? `Our own bike is cheaper per drop by ${formatMoney(cost.courierSplit.hired.costPerDrop - cost.courierSplit.own.costPerDrop)} at this volume.`
+                    : `Hiring is cheaper per drop by ${formatMoney(cost.courierSplit.own.costPerDrop - cost.courierSplit.hired.costPerDrop)} at this volume — the bike's fixed cost is spread over too few drops.`}
+                </p>
+              )}
+              {data.dispatchedFrom?.length > 1 && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <p className="text-xs font-medium text-gray-500 mb-1">Where the goods left from</p>
+                  {data.dispatchedFrom.map(o => (
+                    <div key={o.where} className="flex justify-between text-xs text-gray-600 py-0.5">
+                      <span>{o.where === 'warehouse' ? 'The warehouse' : o.where}</span>
+                      <span>{o.drops} {o.drops === 1 ? 'drop' : 'drops'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               <h4 className="text-sm font-semibold text-gray-700 mb-2">What it cost</h4>
@@ -128,6 +188,9 @@ export default function DeliveryFinances() {
                 <Row label="Rider laid out" value={formatMoney(cost.laidOutByRider)} indent />
                 <Row label="Recovered from customers" value={'-' + formatMoney(cost.recoveredFromCustomers)} indent tone="green" />
                 <Row label="Carried by the company" value={formatMoney(cost.borneByCompany)} indent tone={cost.borneByCompany > 0 ? 'amber' : undefined} />
+                {cost.hiredCourierFares > 0 && (
+                  <Row label="Hired courier fares" value={formatMoney(cost.hiredCourierFares)} indent tone="amber" />
+                )}
                 <div className="pt-1.5 mt-1 border-t border-gray-200">
                   <Row label="Total cost" value={formatMoney(cost.total)} />
                 </div>

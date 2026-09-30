@@ -29,6 +29,24 @@ async function getDeliveryCostBasis(prisma, companyId) {
   return { bikeWeekly, riderMonthly, feeCharged, monthlyFixed, breakEvenPerMonth: feeCharged > 0 ? monthlyFixed / feeCharged : null };
 }
 
+// ---- WHO CARRIES IT, AND WHERE IT LEFT FROM ----
+
+// Our own rider costs a fixed wage and bike hire whatever he does. Everyone else is hired for
+// the trip, and that fare is a per-order cost, so the two can only be compared by keeping them
+// apart. (mirrored in api/index.js)
+const DELIVERY_COURIERS = ['rider', 'yango', 'other'];
+const isHiredCourier = (courier) => courier !== 'rider';
+
+// Where the goods physically left from. If every line on the order comes out of one consultant's
+// own stock then that consultant dispatched it and nobody at the warehouse touched it; anything
+// drawn from main stock means it left the warehouse.
+function dispatchOriginFor(items) {
+  const sources = (items || []).map(i => i.stockSourceConsultantId || null);
+  if (!sources.length || sources.some(s => s === null)) return null;
+  const first = sources[0];
+  return sources.every(s => s === first) ? first : null;
+}
+
 const deliveryInclude = {
   rider: { select: { id: true, name: true, phone: true } },
   sale: {
@@ -36,9 +54,12 @@ const deliveryInclude = {
       id: true, orderNumber: true, date: true, customerName: true, customerPhone: true,
       customerCity: true, deliveryAddress: true, totalPrice: true, amountPaid: true,
       paymentStatus: true, paymentType: true, status: true,
+      // What this drop costs us and what the customer is billed for it.
+      shippingCost: true, shippingCharge: true,
       items: { select: { qty: true, product: { select: { name: true } } } },
     },
   },
+  dispatchedFromConsultant: { select: { id: true, name: true } },
   remitPayment: { select: { id: true, amount: true } },
 };
 
@@ -50,6 +71,13 @@ function shapeDelivery(d) {
     failureReason: d.failureReason, recipientName: d.recipientName, notes: d.notes,
     cashCollected: d.cashCollected, cashRemitted: d.cashRemitted, cashRemittedAt: d.cashRemittedAt,
     rider: d.rider,
+    courier: d.courier,
+    courierRef: d.courierRef,
+    // A hired courier is paid per trip; the fare rides on the order like any delivery cost.
+    courierCost: d.sale ? parseFloat(d.sale.shippingCost || 0) : 0,
+    feeBilled: d.sale ? parseFloat(d.sale.shippingCharge || 0) : 0,
+    dispatchedFrom: d.dispatchedFromConsultant ? d.dispatchedFromConsultant.name : 'Warehouse',
+    dispatchedFromConsultant: d.dispatchedFromConsultant || null,
     saleId: d.saleId,
     orderNumber: d.sale?.orderNumber, orderDate: d.sale?.date,
     customerName: d.sale?.customerName, customerPhone: d.sale?.customerPhone,
@@ -294,22 +322,46 @@ router.post('/', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { riderId, saleIds, notes } = req.body;
+    const { riderId, saleIds, notes, courierRef } = req.body;
+    const courier = DELIVERY_COURIERS.includes(req.body.courier) ? req.body.courier : 'rider';
     const ids = Array.isArray(saleIds) ? saleIds : (req.body.saleId ? [req.body.saleId] : []);
     if (!ids.length) return res.status(400).json({ error: 'Select at least one order' });
+    // A hired courier is not one of our riders, so the two cannot both be set.
+    if (isHiredCourier(courier) && riderId) {
+      return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
+    }
+    let fare = null;
+    if (isHiredCourier(courier) && req.body.courierCost !== undefined && req.body.courierCost !== '') {
+      fare = parseFloat(req.body.courierCost);
+      if (!Number.isFinite(fare) || fare < 0) return res.status(400).json({ error: 'The fare must be zero or more' });
+    }
     if (riderId) {
       const rider = await prisma.rider.findFirst({ where: { id: riderId, companyId } });
       if (!rider) return res.status(404).json({ error: 'Rider not found' });
       if (!rider.isActive) return res.status(400).json({ error: 'That rider is inactive' });
     }
-    const sales = await prisma.sale.findMany({ where: { id: { in: ids }, companyId }, select: { id: true } });
+    const sales = await prisma.sale.findMany({
+      where: { id: { in: ids }, companyId },
+      select: { id: true, items: { select: { stockSourceConsultantId: true } } },
+    });
     if (sales.length !== ids.length) return res.status(400).json({ error: 'One or more orders were not found' });
     const already = await prisma.delivery.findMany({ where: { saleId: { in: ids } }, select: { saleId: true } });
     if (already.length) return res.status(400).json({ error: `${already.length} of those orders already have a delivery` });
 
+    const originBySale = {};
+    for (const sale of sales) originBySale[sale.id] = dispatchOriginFor(sale.items);
+
     await prisma.delivery.createMany({
-      data: ids.map(saleId => ({ saleId, riderId: riderId || null, notes: notes || null, companyId })),
+      data: ids.map(saleId => ({
+        saleId, riderId: riderId || null, courier, courierRef: courierRef || null,
+        dispatchedFromConsultantId: originBySale[saleId] || null,
+        notes: notes || null, companyId,
+      })),
     });
+    // The fare is what this trip cost us, and a delivery cost belongs on the order it delivered.
+    if (fare !== null) {
+      await prisma.sale.updateMany({ where: { id: { in: ids }, companyId }, data: { shippingCost: fare } });
+    }
     const created = await prisma.delivery.findMany({ where: { saleId: { in: ids } }, include: deliveryInclude });
     res.status(201).json(created.map(shapeDelivery));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -390,12 +442,22 @@ router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
     const companyId = req.user.companyId;
     const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId } });
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-    const { riderId } = req.body;
+    const { riderId, courierRef } = req.body;
+    const courier = req.body.courier === undefined
+      ? delivery.courier
+      : (DELIVERY_COURIERS.includes(req.body.courier) ? req.body.courier : delivery.courier);
+    if (isHiredCourier(courier) && riderId) {
+      return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
+    }
     if (riderId) {
       const rider = await prisma.rider.findFirst({ where: { id: riderId, companyId } });
       if (!rider) return res.status(404).json({ error: 'Rider not found' });
     }
-    const updated = await prisma.delivery.update({ where: { id: delivery.id }, data: { riderId: riderId || null }, include: deliveryInclude });
+    const updated = await prisma.delivery.update({ where: { id: delivery.id }, data: {
+      riderId: isHiredCourier(courier) ? null : (riderId || null),
+      courier,
+      ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
+    }, include: deliveryInclude });
     res.json(shapeDelivery(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -898,10 +960,40 @@ router.get('/finances', requireAdmin, async (req, res) => {
 
     const delivered = await prisma.delivery.findMany({
       where: { companyId, status: 'Delivered', deliveredAt: { gte: from, lte: to } },
-      select: { cashCollected: true, riderId: true, sale: { select: { shippingCharge: true, shippingCost: true } } },
+      select: {
+        cashCollected: true, riderId: true, courier: true,
+        dispatchedFromConsultantId: true,
+        dispatchedFromConsultant: { select: { name: true } },
+        sale: { select: { shippingCharge: true, shippingCost: true } },
+      },
     });
     const feesBilled = round2(delivered.reduce((s, d) => s + parseFloat(d.sale?.shippingCharge || 0), 0));
     const collected = round2(delivered.reduce((s, d) => s + parseFloat(d.cashCollected), 0));
+
+    // Our own bike and a hired car are priced completely differently — one is a fixed monthly
+    // cost whatever it does, the other a fare per trip — so the only honest comparison is to
+    // keep them apart and work out what each drop cost under each arrangement.
+    const ownDrops = delivered.filter(d => d.courier === 'rider');
+    const hiredDrops = delivered.filter(d => d.courier !== 'rider');
+    const sumFares = (rows) => round2(rows.reduce((s, d) => s + parseFloat(d.sale?.shippingCost || 0), 0));
+    const sumFees = (rows) => round2(rows.reduce((s, d) => s + parseFloat(d.sale?.shippingCharge || 0), 0));
+    const hiredFares = sumFares(hiredDrops);
+
+    const byCourier = {};
+    for (const d of delivered) {
+      const key = d.courier || 'rider';
+      byCourier[key] = byCourier[key] || { courier: key, drops: 0, fares: 0, feesBilled: 0 };
+      byCourier[key].drops += 1;
+      byCourier[key].fares = round2(byCourier[key].fares + parseFloat(d.sale?.shippingCost || 0));
+      byCourier[key].feesBilled = round2(byCourier[key].feesBilled + parseFloat(d.sale?.shippingCharge || 0));
+    }
+
+    // Where the goods left from, which says how much of this the warehouse actually handled.
+    const byOrigin = { warehouse: 0 };
+    for (const d of delivered) {
+      const key = d.dispatchedFromConsultant?.name || 'warehouse';
+      byOrigin[key] = (byOrigin[key] || 0) + 1;
+    }
 
     const expenses = await prisma.riderExpense.findMany({
       where: { companyId, date: { gte: from, lte: to } },
@@ -913,7 +1005,9 @@ router.get('/finances', requireAdmin, async (req, res) => {
     const byCategory = {};
     for (const e of expenses) byCategory[e.category] = round2((byCategory[e.category] || 0) + parseFloat(e.amount));
 
-    const totalCost = round2(fixedInWindow + borne);
+    // Hired fares are as real a delivery cost as the bike, and their fees are already counted
+    // as income, so leaving them out would show a margin nobody earned.
+    const totalCost = round2(fixedInWindow + borne + hiredFares);
     const count = delivered.length;
 
     // Where the rider stands right now, which is a balance and not a window figure.
@@ -934,9 +1028,28 @@ router.get('/finances', requireAdmin, async (req, res) => {
         riderMonthly, bikeMonthly, fixedMonthly, fixedInWindow,
         riderPaidFromPayroll: staff.length > 0,
         laidOutByRider: laidOut, recoveredFromCustomers: recovered, borneByCompany: borne,
+        hiredCourierFares: hiredFares,
         total: totalCost,
         perDelivery: count ? round2(totalCost / count) : null,
         byCategory: Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([category, amount]) => ({ category, amount })),
+        // The question the warehouse asks every time the rider is swamped: send him, or book a car?
+          courierSplit: {
+          own: {
+            drops: ownDrops.length,
+              // The fixed cost is the bike and the wage, and it is carried whether he does one drop
+              // or twenty, so it all lands on the drops he actually made.
+            cost: round2(fixedInWindow + borne),
+            costPerDrop: ownDrops.length ? round2((fixedInWindow + borne) / ownDrops.length) : null,
+            feesBilled: sumFees(ownDrops),
+          },
+          hired: {
+            drops: hiredDrops.length,
+            cost: hiredFares,
+            costPerDrop: hiredDrops.length ? round2(hiredFares / hiredDrops.length) : null,
+            feesBilled: sumFees(hiredDrops),
+          },
+          byCourier: Object.values(byCourier).sort((a, b) => b.drops - a.drops),
+        },
       },
       income: {
         feesBilled,
@@ -944,6 +1057,10 @@ router.get('/finances', requireAdmin, async (req, res) => {
         cashCollectedAtDoors: collected,
       },
       net: round2(feesBilled - totalCost),
+      dispatchedFrom: Object.entries(byOrigin)
+        .filter(([, n]) => n > 0)
+        .map(([where, drops]) => ({ where, drops }))
+        .sort((a, b) => b.drops - a.drops),
       // The benchmark that started all this: what a courier charged per drop.
       courierFee: basis.feeCharged,
       breakEvenPerDay: basis.feeCharged > 0 ? round2(fixedMonthly / basis.feeCharged / 30.44) : null,

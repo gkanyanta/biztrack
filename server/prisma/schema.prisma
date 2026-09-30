@@ -347,30 +347,31 @@ model PaymentNote {
 }
 
 model Consultant {
-  id                 String              @id @default(cuid())
-  name               String
-  phone              String?
-  whatsapp           String?
-  payType            String              @default("per_unit")
-  commissionRate     Decimal             @default(50) @db.Decimal(10, 2)
-  tierThreshold      Int                 @default(50)
-  tierRate           Decimal             @default(30) @db.Decimal(10, 2)
-  monthlyAllowance   Decimal             @default(400) @db.Decimal(10, 2)
-  isActive           Boolean             @default(true)
-  isStockLocation    Boolean             @default(false)
-  startDate          DateTime?
-  notes              String?
-  userId             String?             @unique
-  companyId          String
-  company            Company             @relation(fields: [companyId], references: [id])
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  sales              Sale[]
-  commissionPayments CommissionPayment[]
-  stock              ConsultantStock[]
-  stockTransfers     StockTransfer[]
-  saleItemSources    SaleItem[]          @relation("StockSource")
-  quotes             Quote[]
+  id                   String              @id @default(cuid())
+  name                 String
+  phone                String?
+  whatsapp             String?
+  payType              String              @default("per_unit")
+  commissionRate       Decimal             @default(50) @db.Decimal(10, 2)
+  tierThreshold        Int                 @default(50)
+  tierRate             Decimal             @default(30) @db.Decimal(10, 2)
+  monthlyAllowance     Decimal             @default(400) @db.Decimal(10, 2)
+  isActive             Boolean             @default(true)
+  isStockLocation      Boolean             @default(false)
+  startDate            DateTime?
+  notes                String?
+  userId               String?             @unique
+  companyId            String
+  company              Company             @relation(fields: [companyId], references: [id])
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  sales                Sale[]
+  commissionPayments   CommissionPayment[]
+  stock                ConsultantStock[]
+  stockTransfers       StockTransfer[]
+  saleItemSources      SaleItem[]          @relation("StockSource")
+  quotes               Quote[]
+  dispatchedDeliveries Delivery[]          @relation("DispatchedDeliveries")
 }
 
 model CommissionPayment {
@@ -585,32 +586,44 @@ model RiderDailyReport {
 }
 
 model Delivery {
-  id             String    @id @default(cuid())
-  saleId         String    @unique
-  sale           Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  riderId        String?
-  rider          Rider?    @relation(fields: [riderId], references: [id])
-  status         String    @default("Assigned")
-  assignedAt     DateTime  @default(now())
-  pickedUpAt     DateTime?
-  deliveredAt    DateTime?
-  failedAt       DateTime?
-  failureReason  String?
-  recipientName  String?
-  attempts       Int       @default(1)
-  notes          String?
+  id                         String      @id @default(cuid())
+  saleId                     String      @unique
+  sale                       Sale        @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  // Who actually carried it. A rider is ours and costs a fixed wage and bike hire whatever he
+  // does; Yango and the like are hired per trip, and that fare sits on the order's shippingCost
+  // like any other delivery cost. A hired courier has no riderId.
+  courier                    String      @default("rider")
+  // Whatever identifies the trip — a Yango reference, a driver, a plate.
+  courierRef                 String?
+  // Where the goods physically left from. Null means the warehouse; set means that consultant
+  // handed them over out of their own stock, which is a dispatch nobody at the warehouse saw.
+  dispatchedFromConsultantId String?
+  dispatchedFromConsultant   Consultant? @relation("DispatchedDeliveries", fields: [dispatchedFromConsultantId], references: [id])
+  riderId                    String?
+  rider                      Rider?      @relation(fields: [riderId], references: [id])
+  status                     String      @default("Assigned")
+  assignedAt                 DateTime    @default(now())
+  pickedUpAt                 DateTime?
+  deliveredAt                DateTime?
+  failedAt                   DateTime?
+  failureReason              String?
+  recipientName              String?
+  attempts                   Int         @default(1)
+  notes                      String?
   // Money the rider took at the door, and the confirmation that it reached the company.
-  cashCollected  Decimal   @default(0) @db.Decimal(10, 2)
-  cashRemitted   Boolean   @default(false)
-  cashRemittedAt DateTime?
-  companyId      String
-  company        Company   @relation(fields: [companyId], references: [id])
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  cashCollected              Decimal     @default(0) @db.Decimal(10, 2)
+  cashRemitted               Boolean     @default(false)
+  cashRemittedAt             DateTime?
+  companyId                  String
+  company                    Company     @relation(fields: [companyId], references: [id])
+  createdAt                  DateTime    @default(now())
+  updatedAt                  DateTime    @updatedAt
 
   // The ledger entry created when the office confirmed this cash arrived.
   remitPayment CreditPayment?
 
   @@index([companyId, status])
   @@index([riderId, assignedAt])
+  @@index([companyId, courier])
+  @@index([dispatchedFromConsultantId])
 }
