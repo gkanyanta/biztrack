@@ -4,6 +4,16 @@ import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
 import { FiPhone, FiMapPin, FiPackage, FiCheck, FiX, FiTruck, FiDollarSign, FiNavigation } from 'react-icons/fi';
+import RiderExpenses from '../components/RiderExpenses';
+import RiderDayReport from '../components/RiderDayReport';
+
+// Three screens rather than a nav: the runs he is on, the money passing through his hands, and
+// his account of the day. Still one page, still big targets.
+const RIDER_TABS = [
+  { key: 'runs', label: 'Runs' },
+  { key: 'money', label: 'Money' },
+  { key: 'report', label: 'My day' },
+];
 
 // The rider's whole app. Built for one hand on a phone: big targets, no tables, no nav
 // beyond this page. Everything he needs for a drop is on the card — who, where, what,
@@ -38,6 +48,7 @@ export default function RiderDashboard() {
   const [busyId, setBusyId] = useState(null);
   const [completing, setCompleting] = useState(null);
   const [failing, setFailing] = useState(null);
+  const [tab, setTab] = useState('runs');
   const [form, setForm] = useState({ recipientName: '', cashCollected: '' });
   const [failForm, setFailForm] = useState({ failureReason: FAILURE_REASONS[0], notes: '' });
 
@@ -79,6 +90,19 @@ export default function RiderDashboard() {
         </p>
       </div>
 
+      <div className="grid grid-cols-3 gap-2">
+        {RIDER_TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`py-2.5 rounded-xl text-sm font-semibold transition-colors ${tab === t.key ? 'bg-slate-800 text-white' : 'bg-white text-gray-600 border border-gray-200'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'money' && <RiderExpenses />}
+      {tab === 'report' && <RiderDayReport />}
+
+      {tab === 'runs' && (<>
       <div className="grid grid-cols-4 gap-2">
         <Stat label="Delivered" value={today.delivered} tone="green" />
         <Stat label="Still out" value={today.outstanding} />
@@ -259,6 +283,7 @@ export default function RiderDashboard() {
           </div>
         </div>
       )}
+      </>)}
     </div>
   );
 }

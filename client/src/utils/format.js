@@ -61,6 +61,7 @@ export const EXPENSE_CATEGORIES = [
   'Supplier Payments',
   'Stock Purchase',
   'Salaries & Wages',
+  'Delivery Costs',
   'Owner Draw',
   'Tax Reserve',
   'Other'

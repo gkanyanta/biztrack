@@ -6,6 +6,14 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
+import DeliveryFinances from '../components/DeliveryFinances';
+
+// Rates and the pricing calculator answer "what should we charge". The finances tab answers the
+// separate question of whether running our own bike to deliver is worth what it costs.
+const TABS = [
+  { key: 'rates', label: 'Rates & pricing' },
+  { key: 'finances', label: 'Delivery finances' },
+];
 
 export default function Shipping() {
   const [rates, setRates] = useState([]);
@@ -13,6 +21,7 @@ export default function Shipping() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [tab, setTab] = useState('rates');
   const [form, setForm] = useState({ city: '', region: '', rate: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -65,6 +74,19 @@ export default function Shipping() {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      <div className="flex gap-2 overflow-x-auto">
+        {TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`px-4 py-2 rounded-full text-sm whitespace-nowrap font-medium transition-colors ${tab === t.key ? 'bg-slate-800 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'finances' && <DeliveryFinances />}
+
+      {tab === 'rates' && (
+      <>
       {/* Pricing Calculator */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Pricing Calculator</h3>
@@ -193,6 +215,8 @@ export default function Shipping() {
 
       <ConfirmDialog isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete}
         title="Delete Rate" message={`Delete shipping rate for "${deleteConfirm?.city}"?`} />
+      </>
+      )}
     </div>
   );
 }

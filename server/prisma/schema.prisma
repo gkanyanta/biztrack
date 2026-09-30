@@ -41,6 +41,8 @@ model Company {
   deliveries         Delivery[]
   staff              Staff[]
   staffPayments      StaffPayment[]
+  riderExpenses      RiderExpense[]
+  riderDailyReports  RiderDailyReport[]
 }
 
 model User {
@@ -146,6 +148,7 @@ model Sale {
   paymentNotes    PaymentNote[]
   quote           Quote?
   delivery        Delivery?
+  riderExpenses   RiderExpense[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -265,6 +268,7 @@ model Expense {
   // Set when this expense was raised by paying someone, so the pay record owns it.
   staffPayment      StaffPayment?
   commissionPayment CommissionPayment?
+  riderExpense      RiderExpense?
 
   @@index([companyId, date])
 }
@@ -491,20 +495,22 @@ model SalesTarget {
 // A delivery rider. Mirrors the Consultant shape: an optional linked User gives them a login
 // that scopes every query to their own runs.
 model Rider {
-  id         String     @id @default(cuid())
-  name       String
-  phone      String?
-  nrc        String?
-  licenceNo  String?
-  isActive   Boolean    @default(true)
-  startDate  DateTime?
-  notes      String?
-  userId     String?    @unique
-  companyId  String
-  company    Company    @relation(fields: [companyId], references: [id])
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
-  deliveries Delivery[]
+  id           String             @id @default(cuid())
+  name         String
+  phone        String?
+  nrc          String?
+  licenceNo    String?
+  isActive     Boolean            @default(true)
+  startDate    DateTime?
+  notes        String?
+  userId       String?            @unique
+  companyId    String
+  company      Company            @relation(fields: [companyId], references: [id])
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  deliveries   Delivery[]
+  expenses     RiderExpense[]
+  dailyReports RiderDailyReport[]
 
   @@index([companyId])
 }
@@ -512,6 +518,69 @@ model Rider {
 // One delivery run for one order. Kept apart from Sale because a delivery can be attempted,
 // fail and be reassigned without that history touching the order itself.
 // status: Assigned -> PickedUp -> Delivered, or Failed at any point.
+// What the rider spent out of his own pocket on the company's behalf — a Platinum courier fee,
+// fuel, airtime. Settlement is net: he hands over collections minus these, so an unsettled
+// expense reduces what he owes rather than triggering a separate reimbursement.
+model RiderExpense {
+  id              String            @id @default(cuid())
+  riderId         String
+  rider           Rider             @relation(fields: [riderId], references: [id])
+  date            DateTime          @default(now())
+  category        String
+  amount          Decimal           @db.Decimal(10, 2)
+  description     String?
+  // Some of these get billed on to the customer. Kept deliberately manual: the amount billed
+  // is a judgement call and is sometimes waived, so nothing is charged without someone saying so.
+  rechargeable    Boolean           @default(false)
+  saleId          String?
+  sale            Sale?             @relation(fields: [saleId], references: [id])
+  rechargedAt     DateTime?
+  rechargedAmount Decimal?          @db.Decimal(10, 2)
+  // Set once the office has accounted for the money, which under net settlement means it has
+  // been offset against cash he handed over.
+  settledAt       DateTime?
+  // The company expense this raised. Only once it is a real cost — money still expected back
+  // from a customer is not one.
+  expenseId       String?           @unique
+  expense         Expense?          @relation(fields: [expenseId], references: [id])
+  reportId        String?
+  report          RiderDailyReport? @relation(fields: [reportId], references: [id])
+  companyId       String
+  company         Company           @relation(fields: [companyId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([riderId, date])
+  @@index([companyId, settledAt])
+}
+
+// The rider's own account of a day, submitted from his phone. Every figure here is what he
+// says happened; the screen puts the system's own count beside it, because the gap between the
+// two is the thing worth looking at.
+model RiderDailyReport {
+  id                  String         @id @default(cuid())
+  riderId             String
+  rider               Rider          @relation(fields: [riderId], references: [id])
+  date                DateTime       @db.Date
+  deliveriesCompleted Int            @default(0)
+  deliveriesFailed    Int            @default(0)
+  cashCollected       Decimal        @default(0) @db.Decimal(10, 2)
+  expensesPaid        Decimal        @default(0) @db.Decimal(10, 2)
+  cashHandedOver      Decimal        @default(0) @db.Decimal(10, 2)
+  // What he still has in his pocket, so tomorrow opens from a known figure.
+  closingFloat        Decimal        @default(0) @db.Decimal(10, 2)
+  submittedAt         DateTime       @default(now())
+  acknowledgedAt      DateTime?
+  companyId           String
+  company             Company        @relation(fields: [companyId], references: [id])
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  expenses            RiderExpense[]
+
+  @@unique([riderId, date])
+  @@index([companyId, date])
+}
+
 model Delivery {
   id             String    @id @default(cuid())
   saleId         String    @unique

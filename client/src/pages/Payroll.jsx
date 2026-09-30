@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   getPayrollSummary, createStaffMember, updateStaffMember, deleteStaffMember,
-  getStaffPayments, payStaffMember, deleteStaffPayment,
+  getStaffPayments, payStaffMember, deleteStaffPayment, getRiders,
 } from '../services/api';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -55,7 +55,8 @@ export default function Payroll() {
 
   const [showStaffForm, setShowStaffForm] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
-  const emptyStaff = { name: '', phone: '', jobTitle: '', monthlySalary: '', monthlyAllowance: '100', startDate: '' };
+  const [riders, setRiders] = useState([]);
+  const emptyStaff = { name: '', phone: '', jobTitle: '', monthlySalary: '', monthlyAllowance: '100', startDate: '', riderId: '' };
   const [staffForm, setStaffForm] = useState(emptyStaff);
 
   const [payFor, setPayFor] = useState(null);
@@ -74,6 +75,9 @@ export default function Payroll() {
   };
 
   useEffect(() => { load(); }, [period]);
+  // Linking a staff record to a rider profile is what lets the delivery finances read the wage
+  // actually being paid rather than the fallback figure in Settings.
+  useEffect(() => { getRiders().then(res => setRiders(res.data)).catch(() => setRiders([])); }, []);
 
   const openStaffForm = (s) => {
     if (s) {
@@ -82,6 +86,7 @@ export default function Payroll() {
         name: s.name, phone: s.phone || '', jobTitle: s.jobTitle || '',
         monthlySalary: String(s.monthlySalary ?? ''), monthlyAllowance: String(s.monthlyAllowance ?? ''),
         startDate: s.startDate ? new Date(s.startDate).toISOString().slice(0, 10) : '',
+        riderId: s.riderId || '',
       });
     } else {
       setEditingStaff(null);
@@ -360,6 +365,20 @@ export default function Payroll() {
               <p className="text-xs text-gray-400 mt-1">Capped per cycle, prorated if they joined mid-cycle.</p>
             </div>
           </div>
+          {riders.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Also a rider?</label>
+              <select value={staffForm.riderId} onChange={e => setStaffForm({ ...staffForm, riderId: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">Not a rider</option>
+                {riders.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Links this pay record to their rider profile, so Shipping &rarr; Delivery finances costs
+                the bike against the wage you actually pay.
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Start date</label>
             <input type="date" value={staffForm.startDate} onChange={e => setStaffForm({ ...staffForm, startDate: e.target.value })}

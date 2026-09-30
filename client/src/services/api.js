@@ -193,4 +193,20 @@ export const getStaffPayments = (id) => api.get(`/payroll/staff/${id}/payments`)
 export const payStaffMember = (id, data) => api.post(`/payroll/staff/${id}/payments`, data);
 export const deleteStaffPayment = (id) => api.delete(`/payroll/payments/${id}`);
 
+// The rider's own money — what he collects, what he lays out, and his daily account
+export const getMyRiderAccount = () => api.get('/deliveries/my/account');
+export const getMyRiderExpenses = () => api.get('/deliveries/my/expenses');
+export const logMyRiderExpense = (data) => api.post('/deliveries/my/expenses', data);
+export const deleteMyRiderExpense = (id) => api.delete(`/deliveries/my/expenses/${id}`);
+export const getMyDailyReport = (date) => api.get('/deliveries/my/report', { params: { date } });
+export const submitMyDailyReport = (data) => api.post('/deliveries/my/report', data);
+export const getMyDailyReports = () => api.get('/deliveries/my/reports');
+
+// Admin review of the above, plus the delivery finances dashboard
+export const getRiderExpenses = (params) => api.get('/deliveries/expenses', { params });
+export const updateRiderExpense = (id, data) => api.put(`/deliveries/expenses/${id}`, data);
+export const getRiderReports = (params) => api.get('/deliveries/reports', { params });
+export const acknowledgeRiderReport = (id, acknowledged) => api.put(`/deliveries/reports/${id}/acknowledge`, { acknowledged });
+export const getDeliveryFinances = (params) => api.get('/deliveries/finances', { params });
+
 export default api;

@@ -4167,6 +4167,420 @@ app.delete('/api/v1/deliveries/:id', authenticate, requireAdmin, async (req, res
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- RIDER FINANCES ----
+// Mirrored from server/src/routes/deliveries.js by a transform — see that file for the
+// reasoning. Generated rather than hand-copied so the two copies cannot drift.
+// ---- THE RIDER'S OWN MONEY ----
+//
+// The rider both collects and spends. He takes cash at doors, and he lays out his own money for
+// things like a Platinum courier fee on an out-of-town parcel. Settlement is net: at the end of a
+// run he hands over what he collected minus what he laid out, so one balance describes the whole
+// relationship —
+//
+//   holding    = cash collected on deliveries the office has not yet confirmed
+//   owedToRider = expenses he has paid that have not yet been accounted for
+//   netDue     = holding - owedToRider, which is what should physically change hands
+//
+// A negative netDue means the company owes him. (mirrored in api/index.js)
+
+const RIDER_EXPENSE_CATEGORIES = ['Platinum courier', 'Other courier', 'Fuel', 'Airtime', 'Bike repair', 'Parking', 'Other'];
+const DELIVERY_COST_CATEGORY = 'Delivery Costs';
+
+async function riderAccount(prisma, riderId, companyId) {
+  const [held, owed] = await Promise.all([
+    prisma.delivery.aggregate({
+      where: { riderId, companyId, status: 'Delivered', cashRemitted: false },
+      _sum: { cashCollected: true },
+    }),
+    prisma.riderExpense.aggregate({
+      where: { riderId, companyId, settledAt: null },
+      _sum: { amount: true },
+    }),
+  ]);
+  const holding = round2(parseFloat(held._sum.cashCollected || 0));
+  const owedToRider = round2(parseFloat(owed._sum.amount || 0));
+  return { holding, owedToRider, netDue: round2(holding - owedToRider) };
+}
+
+// What the records say about one rider's day, to sit beside what he says about it.
+async function riderDayActuals(prisma, riderId, companyId, dayStart, dayEnd) {
+  const [done, failed] = await Promise.all([
+    prisma.delivery.findMany({
+      where: { riderId, companyId, status: 'Delivered', deliveredAt: { gte: dayStart, lt: dayEnd } },
+      select: { cashCollected: true },
+    }),
+    prisma.delivery.findMany({
+      where: { riderId, companyId, status: 'Failed', failedAt: { gte: dayStart, lt: dayEnd } },
+      select: { failureReason: true },
+    }),
+  ]);
+  const expenses = await prisma.riderExpense.findMany({
+    where: { riderId, companyId, date: { gte: dayStart, lt: dayEnd } },
+    select: { amount: true, category: true },
+  });
+  const reasons = {};
+  for (const f of failed) { const r = f.failureReason || 'Not given'; reasons[r] = (reasons[r] || 0) + 1; }
+  return {
+    deliveriesCompleted: done.length,
+    deliveriesFailed: failed.length,
+    cashCollected: round2(done.reduce((s, d) => s + parseFloat(d.cashCollected), 0)),
+    expensesPaid: round2(expenses.reduce((s, e) => s + parseFloat(e.amount), 0)),
+    failureReasons: Object.entries(reasons).sort((a, b) => b[1] - a[1]).map(([reason, count]) => ({ reason, count })),
+  };
+}
+
+// A calendar day in Lusaka, expressed as the UTC instants that bound it.
+function riderDayBounds(dateStr) {
+  const base = dateStr ? new Date(dateStr + 'T00:00:00+02:00') : new Date();
+  const local = new Date(base.getTime() + 2 * 3600 * 1000);
+  const y = local.getUTCFullYear(), m = local.getUTCMonth(), d = local.getUTCDate();
+  const start = new Date(Date.UTC(y, m, d) - 2 * 3600 * 1000);
+  return { start, end: new Date(start.getTime() + 86400000), dateOnly: new Date(Date.UTC(y, m, d)) };
+}
+
+function requireRider(req, res) {
+  if (req.user.role !== 'rider') { res.status(403).json({ error: 'Rider access required' }); return false; }
+  return true;
+}
+
+// ---- RIDER-FACING ----
+
+app.get('/api/v1/deliveries/my/account', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    res.json(await riderAccount(prisma, req.user.riderId, req.user.companyId));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/deliveries/my/expenses', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    const expenses = await prisma.riderExpense.findMany({
+      where: { riderId: req.user.riderId, companyId: req.user.companyId },
+      include: { sale: { select: { orderNumber: true, customerName: true } } },
+      orderBy: { date: 'desc' }, take: 100,
+    });
+    res.json(expenses);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/deliveries/my/expenses', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    const companyId = req.user.companyId;
+    const { category, description, saleId, rechargeable } = req.body;
+    if (!RIDER_EXPENSE_CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: `Category must be one of ${RIDER_EXPENSE_CATEGORIES.join(', ')}` });
+    }
+    const amount = parseFloat(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Amount must be more than zero' });
+    if (saleId) {
+      const owned = await prisma.sale.findFirst({ where: { id: saleId, companyId }, select: { id: true } });
+      if (!owned) return res.status(400).json({ error: 'That order was not found' });
+    }
+    const expense = await prisma.riderExpense.create({
+      data: {
+        riderId: req.user.riderId, category, amount, description: description || null,
+        saleId: saleId || null, rechargeable: !!rechargeable, companyId,
+      },
+    });
+    res.status(201).json(expense);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// He can take back his own mistake, but only while the office has not yet accounted for it.
+app.delete('/api/v1/deliveries/my/expenses/:id', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    const expense = await prisma.riderExpense.findFirst({
+      where: { id: req.params.id, riderId: req.user.riderId, companyId: req.user.companyId },
+    });
+    if (!expense) return res.status(404).json({ error: 'Not found' });
+    if (expense.settledAt) return res.status(400).json({ error: 'This has already been settled — ask an admin to correct it' });
+    await prisma.riderExpense.delete({ where: { id: expense.id } });
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Today's figures, pre-filled from the records so he only has to correct what differs.
+app.get('/api/v1/deliveries/my/report', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    const { start, end, dateOnly } = riderDayBounds(req.query.date);
+    const actuals = await riderDayActuals(prisma, req.user.riderId, req.user.companyId, start, end);
+    const existing = await prisma.riderDailyReport.findUnique({
+      where: { riderId_date: { riderId: req.user.riderId, date: dateOnly } },
+    });
+    res.json({ date: dateOnly, actuals, report: existing, account: await riderAccount(prisma, req.user.riderId, req.user.companyId) });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/deliveries/my/report', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    const companyId = req.user.companyId;
+    const { dateOnly, start, end } = riderDayBounds(req.body.date);
+    const num = (v, fallback = 0) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+    const actuals = await riderDayActuals(prisma, req.user.riderId, companyId, start, end);
+    const data = {
+      deliveriesCompleted: parseInt(req.body.deliveriesCompleted, 10) >= 0 ? parseInt(req.body.deliveriesCompleted, 10) : actuals.deliveriesCompleted,
+      deliveriesFailed: parseInt(req.body.deliveriesFailed, 10) >= 0 ? parseInt(req.body.deliveriesFailed, 10) : actuals.deliveriesFailed,
+      cashCollected: num(req.body.cashCollected, actuals.cashCollected),
+      expensesPaid: num(req.body.expensesPaid, actuals.expensesPaid),
+      cashHandedOver: num(req.body.cashHandedOver),
+      closingFloat: num(req.body.closingFloat),
+    };
+    // Re-submitting the same day corrects it rather than making a second report.
+    const report = await prisma.riderDailyReport.upsert({
+      where: { riderId_date: { riderId: req.user.riderId, date: dateOnly } },
+      update: { ...data, submittedAt: new Date(), acknowledgedAt: null },
+      create: { ...data, riderId: req.user.riderId, date: dateOnly, companyId },
+    });
+    res.status(201).json(report);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/deliveries/my/reports', authenticate,  async (req, res) => {
+  try {
+    if (!requireRider(req, res)) return;
+    const reports = await prisma.riderDailyReport.findMany({
+      where: { riderId: req.user.riderId, companyId: req.user.companyId },
+      orderBy: { date: 'desc' }, take: 30,
+    });
+    res.json(reports);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- ADMIN REVIEW ----
+
+app.get('/api/v1/deliveries/expenses', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const where = { companyId: req.user.companyId };
+    if (req.query.riderId) where.riderId = req.query.riderId;
+    if (req.query.unsettled === 'true') where.settledAt = null;
+    if (req.query.awaitingRecharge === 'true') { where.rechargeable = true; where.rechargedAt = null; }
+    if (req.query.from || req.query.to) {
+      where.date = {};
+      if (req.query.from) where.date.gte = new Date(req.query.from + 'T00:00:00.000Z');
+      if (req.query.to) where.date.lte = new Date(req.query.to + 'T23:59:59.999Z');
+    }
+    const expenses = await prisma.riderExpense.findMany({
+      where,
+      include: { rider: { select: { id: true, name: true } }, sale: { select: { id: true, orderNumber: true, customerName: true } } },
+      orderBy: { date: 'desc' }, take: 300,
+    });
+    res.json(expenses);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Settling says what the money was. Either the company carried it, in which case it becomes a
+// real expense, or it went on to a customer, in which case it does not — billing it twice is
+// exactly what a single explicit choice here prevents. A partial recharge splits the difference.
+app.put('/api/v1/deliveries/expenses/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const expense = await prisma.riderExpense.findFirst({
+      where: { id: req.params.id, companyId },
+      include: { rider: { select: { name: true } }, sale: { select: { orderNumber: true } } },
+    });
+    if (!expense) return res.status(404).json({ error: 'Not found' });
+
+    const raw = req.body;
+    if (raw.unsettle === true) {
+      const updated = await prisma.$transaction(async (tx) => {
+        if (expense.expenseId) await tx.expense.deleteMany({ where: { id: expense.expenseId, companyId } });
+        return tx.riderExpense.update({
+          where: { id: expense.id },
+          data: { settledAt: null, rechargedAt: null, rechargedAmount: null, expenseId: null },
+        });
+      }, { timeout: 20000 });
+      return res.json(updated);
+    }
+
+    const data = {
+      ...(raw.category !== undefined && RIDER_EXPENSE_CATEGORIES.includes(raw.category) && { category: raw.category }),
+      ...(raw.description !== undefined && { description: raw.description || null }),
+      ...(raw.rechargeable !== undefined && { rechargeable: !!raw.rechargeable }),
+      ...(raw.saleId !== undefined && { saleId: raw.saleId || null }),
+    };
+    if (raw.amount !== undefined) {
+      const v = parseFloat(raw.amount);
+      if (!Number.isFinite(v) || v <= 0) return res.status(400).json({ error: 'Amount must be more than zero' });
+      data.amount = v;
+    }
+
+    if (raw.settle === true) {
+      if (expense.settledAt) return res.status(400).json({ error: 'Already settled' });
+      const outcome = raw.outcome === 'recharged' ? 'recharged' : 'company_cost';
+      const amount = data.amount !== undefined ? data.amount : parseFloat(expense.amount);
+      let recharged = 0;
+      if (outcome === 'recharged') {
+        recharged = raw.rechargedAmount === undefined ? amount : parseFloat(raw.rechargedAmount);
+        if (!Number.isFinite(recharged) || recharged < 0) return res.status(400).json({ error: 'Recharged amount must be zero or more' });
+        data.rechargedAt = new Date();
+        data.rechargedAmount = recharged;
+      }
+      // Only the part the customer is not paying for is a cost to the business.
+      const borne = round2(amount - recharged);
+      const updated = await prisma.$transaction(async (tx) => {
+        let expenseId = null;
+        if (borne > 0) {
+          const created = await tx.expense.create({
+            data: {
+              description: `Delivery cost: ${expense.category}${expense.rider?.name ? ` — ${expense.rider.name}` : ''}` +
+                           (expense.sale?.orderNumber ? ` (${expense.sale.orderNumber})` : ''),
+              amount: borne, category: DELIVERY_COST_CATEGORY,
+              notes: recharged > 0 ? `${amount.toFixed(2)} paid, ${recharged.toFixed(2)} recharged to the customer` : (expense.description || null),
+              companyId,
+            },
+          });
+          expenseId = created.id;
+        }
+        return tx.riderExpense.update({ where: { id: expense.id }, data: { ...data, settledAt: new Date(), expenseId } });
+      }, { timeout: 20000 });
+      return res.json(updated);
+    }
+
+    res.json(await prisma.riderExpense.update({ where: { id: expense.id }, data }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/deliveries/reports', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const where = { companyId };
+    if (req.query.riderId) where.riderId = req.query.riderId;
+    if (req.query.unacknowledged === 'true') where.acknowledgedAt = null;
+    const reports = await prisma.riderDailyReport.findMany({
+      where, include: { rider: { select: { id: true, name: true } } },
+      orderBy: { date: 'desc' }, take: 60,
+    });
+    // Every report carries the system's own version of the same day beside it.
+    const withActuals = [];
+    for (const r of reports) {
+      const iso = r.date.toISOString().slice(0, 10);
+      const { start, end } = riderDayBounds(iso);
+      const actuals = await riderDayActuals(prisma, r.riderId, companyId, start, end);
+      withActuals.push({
+        ...r,
+        actuals,
+        variance: {
+          deliveriesCompleted: r.deliveriesCompleted - actuals.deliveriesCompleted,
+          cashCollected: round2(parseFloat(r.cashCollected) - actuals.cashCollected),
+          expensesPaid: round2(parseFloat(r.expensesPaid) - actuals.expensesPaid),
+          // What he says he handed over against what he says he took, less what he says he spent.
+          unaccounted: round2(parseFloat(r.cashCollected) - parseFloat(r.expensesPaid) - parseFloat(r.cashHandedOver) - parseFloat(r.closingFloat)),
+        },
+      });
+    }
+    res.json(withActuals);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.put('/api/v1/deliveries/reports/:id/acknowledge', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const report = await prisma.riderDailyReport.findFirst({ where: { id: req.params.id, companyId: req.user.companyId } });
+    if (!report) return res.status(404).json({ error: 'Not found' });
+    const ack = req.body.acknowledged !== false;
+    res.json(await prisma.riderDailyReport.update({
+      where: { id: report.id }, data: { acknowledgedAt: ack ? new Date() : null },
+    }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- DELIVERY FINANCES (the Shipping page dashboard) ----
+
+// Does running our own bike pay? Fixed cost is the rider's wage plus the bike hire, prorated to
+// the window asked for; against it sits the delivery fees actually billed on orders that went
+// out on the bike, less what the rider laid out that the company ended up carrying.
+app.get('/api/v1/deliveries/finances', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const to = req.query.to ? new Date(req.query.to + 'T23:59:59.999Z') : new Date();
+    const from = req.query.from ? new Date(req.query.from + 'T00:00:00.000Z')
+                                : new Date(to.getTime() - 29 * 86400000);
+    const days = Math.max(1, Math.round((to - from) / 86400000) + 1);
+
+    const basis = await delivery_getDeliveryCostBasis(companyId);
+    // The rider's wage is whatever payroll says it is; the setting is only a fallback for a
+    // company that has not put its rider on payroll yet.
+    const riders = await prisma.rider.findMany({ where: { companyId }, select: { id: true, name: true, isActive: true } });
+    const staff = await prisma.staff.findMany({
+      where: { companyId, riderId: { in: riders.map(r => r.id) } },
+      select: { riderId: true, monthlySalary: true, monthlyAllowance: true, name: true },
+    });
+    const payrollMonthly = round2(staff.reduce((s, m) => s + parseFloat(m.monthlySalary) + parseFloat(m.monthlyAllowance), 0));
+    const riderMonthly = staff.length ? payrollMonthly : basis.riderMonthly;
+    const bikeMonthly = round2((basis.bikeWeekly * 52) / 12);
+    const fixedMonthly = round2(riderMonthly + bikeMonthly);
+    const fixedInWindow = round2(fixedMonthly * (days / 30.44));
+
+    const delivered = await prisma.delivery.findMany({
+      where: { companyId, status: 'Delivered', deliveredAt: { gte: from, lte: to } },
+      select: { cashCollected: true, riderId: true, sale: { select: { shippingCharge: true, shippingCost: true } } },
+    });
+    const feesBilled = round2(delivered.reduce((s, d) => s + parseFloat(d.sale?.shippingCharge || 0), 0));
+    const collected = round2(delivered.reduce((s, d) => s + parseFloat(d.cashCollected), 0));
+
+    const expenses = await prisma.riderExpense.findMany({
+      where: { companyId, date: { gte: from, lte: to } },
+      select: { amount: true, rechargedAmount: true, settledAt: true, rechargeable: true, rechargedAt: true, category: true },
+    });
+    const laidOut = round2(expenses.reduce((s, e) => s + parseFloat(e.amount), 0));
+    const recovered = round2(expenses.reduce((s, e) => s + parseFloat(e.rechargedAmount || 0), 0));
+    const borne = round2(laidOut - recovered);
+    const byCategory = {};
+    for (const e of expenses) byCategory[e.category] = round2((byCategory[e.category] || 0) + parseFloat(e.amount));
+
+    const totalCost = round2(fixedInWindow + borne);
+    const count = delivered.length;
+
+    // Where the rider stands right now, which is a balance and not a window figure.
+    const accounts = [];
+    for (const r of riders) {
+      if (!r.isActive) continue;
+      accounts.push({ riderId: r.id, name: r.name, ...(await riderAccount(prisma, r.id, companyId)) });
+    }
+    const awaitingRecharge = await prisma.riderExpense.aggregate({
+      where: { companyId, rechargeable: true, rechargedAt: null }, _sum: { amount: true }, _count: true,
+    });
+
+    res.json({
+      from, to, days,
+      deliveries: count,
+      perDay: round2(count / days),
+      cost: {
+        riderMonthly, bikeMonthly, fixedMonthly, fixedInWindow,
+        riderPaidFromPayroll: staff.length > 0,
+        laidOutByRider: laidOut, recoveredFromCustomers: recovered, borneByCompany: borne,
+        total: totalCost,
+        perDelivery: count ? round2(totalCost / count) : null,
+        byCategory: Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([category, amount]) => ({ category, amount })),
+      },
+      income: {
+        feesBilled,
+        perDelivery: count ? round2(feesBilled / count) : null,
+        cashCollectedAtDoors: collected,
+      },
+      net: round2(feesBilled - totalCost),
+      // The benchmark that started all this: what a courier charged per drop.
+      courierFee: basis.feeCharged,
+      breakEvenPerDay: basis.feeCharged > 0 ? round2(fixedMonthly / basis.feeCharged / 30.44) : null,
+      breakEvenPerMonth: basis.feeCharged > 0 ? round2(fixedMonthly / basis.feeCharged) : null,
+      savingVsCourier: round2((basis.feeCharged * count) - totalCost),
+      riderAccounts: accounts,
+      outstanding: {
+        awaitingRechargeCount: awaitingRecharge._count,
+        awaitingRechargeAmount: round2(parseFloat(awaitingRecharge._sum.amount || 0)),
+      },
+      categories: RIDER_EXPENSE_CATEGORIES,
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 // ---- PERFORMANCE ----
 
 // Per-rider performance over a window, plus the one number that says whether running a bike

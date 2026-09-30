@@ -10,12 +10,16 @@ import toast from 'react-hot-toast';
 import {
   FiTruck, FiPlus, FiUser, FiCheck, FiX, FiDollarSign, FiKey, FiTrash2, FiAlertCircle, FiClock,
 } from 'react-icons/fi';
+import RiderExpenseReview from '../components/RiderExpenseReview';
+import RiderReportReview from '../components/RiderReportReview';
 
 const TABS = [
   { key: 'assign', label: 'Assign' },
   { key: 'active', label: 'In progress' },
   { key: 'cash', label: 'Cash' },
   { key: 'performance', label: 'Performance' },
+  { key: 'expenses', label: 'His spending' },
+  { key: 'reports', label: 'Daily reports' },
   { key: 'riders', label: 'Riders' },
 ];
 
@@ -336,6 +340,9 @@ export default function Deliveries() {
           )}
         </div>
       )}
+
+      {tab === 'expenses' && <RiderExpenseReview />}
+      {tab === 'reports' && <RiderReportReview />}
 
       {/* ---- PERFORMANCE ---- */}
       {tab === 'performance' && perf && (
