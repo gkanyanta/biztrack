@@ -32,6 +32,24 @@ async function authenticate(req, res, next) {
   }
 }
 
+// A rider's world is his own runs and his own money, and that is the whole of it. Listing what
+// he may reach — rather than guarding each endpoint he may not — means a new endpoint is closed
+// to him by default instead of exposed until somebody remembers. The rider app only ever calls
+// these paths. (mirrored in api/index.js)
+const RIDER_ALLOWED_PATHS = [
+  /^\/api\/v1\/auth\//,
+  /^\/api\/v1\/deliveries\/my(\/|$)/,
+  // Moving one of his own deliveries along; the handler scopes it to his riderId.
+  /^\/api\/v1\/deliveries\/[^/]+\/status$/,
+];
+
+function enforceRiderScope(req, res, next) {
+  if (req.user?.role !== 'rider') return next();
+  const path = (req.originalUrl || '').split('?')[0];
+  if (RIDER_ALLOWED_PATHS.some(re => re.test(path))) return next();
+  return res.status(403).json({ error: 'Riders can only reach their own runs and their own money' });
+}
+
 function requireSuperadmin(req, res, next) {
   if (req.user.role !== 'superadmin') {
     return res.status(403).json({ error: 'Superadmin access required' });
@@ -60,4 +78,14 @@ function requireAdminOrPurchasing(req, res, next) {
   next();
 }
 
-module.exports = { authenticate, requireSuperadmin, requireAdmin, requireAdminOrInventory, requireAdminOrPurchasing };
+// Wrap authenticate so every authenticated route enforces the rider's boundary, whether or not
+// the route remembered to ask for it.
+function authenticateAndScope(req, res, next) {
+  authenticate(req, res, (err) => {
+    if (err) return next(err);
+    if (res.headersSent) return;
+    enforceRiderScope(req, res, next);
+  });
+}
+
+module.exports = { authenticate: authenticateAndScope, requireSuperadmin, requireAdmin, requireAdminOrInventory, requireAdminOrPurchasing, enforceRiderScope, RIDER_ALLOWED_PATHS };

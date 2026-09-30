@@ -48,6 +48,7 @@ const riderNavItems = [
 
 const inventoryNavItems = [
   { path: '/warehouse', icon: FiPackage, label: 'Warehouse' },
+  { path: '/deliveries', icon: FiTruck, label: 'Deliveries' },
 ];
 
 const purchasingNavItems = [

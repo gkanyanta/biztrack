@@ -65,6 +65,14 @@ function NotInventory({ children }) {
   return children;
 }
 
+// Dispatch belongs to the inventory role as well as an admin; the page itself hides the tabs
+// that move money.
+function DispatchRoute({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'inventory') return children;
+  return <Navigate to="/" />;
+}
+
 function WarehouseRoute({ children }) {
   const { user } = useAuth();
   if (user?.role === 'rider') return <Navigate to="/" />;
@@ -111,7 +119,7 @@ function AppRoutes() {
         <Route path="inventory" element={<AdminOnly><Inventory /></AdminOnly>} />
         <Route path="stock-allocations" element={<AdminOnly><StockAllocations /></AdminOnly>} />
         <Route path="consultants" element={<AdminOnly><Consultants /></AdminOnly>} />
-        <Route path="deliveries" element={<AdminOnly><Deliveries /></AdminOnly>} />
+        <Route path="deliveries" element={<DispatchRoute><Deliveries /></DispatchRoute>} />
         <Route path="payroll" element={<AdminOnly><Payroll /></AdminOnly>} />
         <Route path="my-stock" element={<NotInventory><ConsultantStock /></NotInventory>} />
         <Route path="warehouse" element={<WarehouseRoute><Warehouse /></WarehouseRoute>} />

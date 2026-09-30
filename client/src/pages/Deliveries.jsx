@@ -12,15 +12,18 @@ import {
 } from 'react-icons/fi';
 import RiderExpenseReview from '../components/RiderExpenseReview';
 import RiderReportReview from '../components/RiderReportReview';
+import { useAuth } from '../hooks/useAuth';
 
+// money: true means the tab reads or moves money, which stays with an admin. The inventory
+// role assigns and watches runs; it does not reconcile cash or settle the rider's expenses.
 const TABS = [
   { key: 'assign', label: 'Assign' },
   { key: 'active', label: 'In progress' },
-  { key: 'cash', label: 'Cash' },
-  { key: 'performance', label: 'Performance' },
-  { key: 'expenses', label: 'His spending' },
-  { key: 'reports', label: 'Daily reports' },
-  { key: 'riders', label: 'Riders' },
+  { key: 'cash', label: 'Cash', money: true },
+  { key: 'performance', label: 'Performance', money: true },
+  { key: 'expenses', label: 'His spending', money: true },
+  { key: 'reports', label: 'Daily reports', money: true },
+  { key: 'riders', label: 'Riders', money: true },
 ];
 
 const STATUS_STYLES = {
@@ -42,6 +45,9 @@ function Card({ label, value, sub, tone = 'slate' }) {
 }
 
 export default function Deliveries() {
+  const { user } = useAuth();
+  const canSeeMoney = user?.role === 'admin' || user?.role === 'superadmin';
+  const visibleTabs = TABS.filter(t => canSeeMoney || !t.money);
   const [tab, setTab] = useState('assign');
   const [loading, setLoading] = useState(true);
   const [riders, setRiders] = useState([]);
@@ -61,13 +67,15 @@ export default function Deliveries() {
 
   const loadAll = () => {
     setLoading(true);
+    // Only ask for what this role may have. Requesting the money endpoints as inventory would
+    // 403 and take the whole page down with it.
     Promise.all([
       getRiders(),
       getUnassignedOrders({ city: cityFilter || undefined }),
       getDeliveries({ open: 'true' }),
-      getDeliveries({ unremitted: 'true' }),
-      getDeliveries({ remitted: 'true' }),
-      getDeliveryPerformance(),
+      canSeeMoney ? getDeliveries({ unremitted: 'true' }) : Promise.resolve({ data: [] }),
+      canSeeMoney ? getDeliveries({ remitted: 'true' }) : Promise.resolve({ data: [] }),
+      canSeeMoney ? getDeliveryPerformance() : Promise.resolve({ data: null }),
     ])
       .then(([r, u, a, c, cr, p]) => {
         setRiders(r.data);
@@ -158,7 +166,7 @@ export default function Deliveries() {
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-full text-sm whitespace-nowrap font-medium transition-colors ${tab === t.key ? 'bg-slate-800 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
             {t.label}

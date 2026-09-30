@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 
 // Delivery runs and the riders who make them.
 // A rider only ever sees their own runs — every query in here is scoped by riderId for the
@@ -120,7 +120,7 @@ router.use(authenticate);
 
 // ---- RIDERS ----
 
-router.get('/riders', requireAdmin, async (req, res) => {
+router.get('/riders', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const where = { companyId: req.user.companyId };
@@ -232,7 +232,7 @@ router.get('/my/runs', async (req, res) => {
 // ---- ADMIN LIST / ASSIGNMENT ----
 
 // Orders that need a rider: in a deliverable state, no delivery record yet.
-router.get('/unassigned', requireAdmin, async (req, res) => {
+router.get('/unassigned', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const where = {
@@ -281,7 +281,7 @@ router.get('/', async (req, res) => {
 });
 
 // Assign one or more orders to a rider in a single call — the screen assigns a day's run at once.
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -375,7 +375,7 @@ router.put('/:id/status', async (req, res) => {
 });
 
 // Reassign to a different rider, or park it back in the unassigned pile.
-router.put('/:id/rider', requireAdmin, async (req, res) => {
+router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;

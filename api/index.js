@@ -148,7 +148,7 @@ async function getCompanyPayDay(companyId) {
 }
 
 // Auth middleware
-async function authenticate(req, res, next) {
+async function authenticateRaw(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'No token provided' });
@@ -172,6 +172,33 @@ async function authenticate(req, res, next) {
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
+}
+
+// A rider's world is his own runs and his own money, and that is the whole of it. Listing what
+// he may reach — rather than guarding each endpoint he may not — means a new endpoint is closed
+// to him by default instead of exposed until somebody remembers. The rider app only ever calls
+// these paths. (mirrored in server/src/middleware/auth.js)
+const RIDER_ALLOWED_PATHS = [
+  /^\/api\/v1\/auth\//,
+  /^\/api\/v1\/deliveries\/my(\/|$)/,
+  // Moving one of his own deliveries along; the handler scopes it to his riderId.
+  /^\/api\/v1\/deliveries\/[^/]+\/status$/,
+];
+
+function enforceRiderScope(req, res, next) {
+  if (req.user?.role !== 'rider') return next();
+  const path = (req.originalUrl || '').split('?')[0];
+  if (RIDER_ALLOWED_PATHS.some(re => re.test(path))) return next();
+  return res.status(403).json({ error: 'Riders can only reach their own runs and their own money' });
+}
+
+// Every route in this file authenticates through here, so the boundary cannot be forgotten.
+function authenticate(req, res, next) {
+  authenticateRaw(req, res, (err) => {
+    if (err) return next(err);
+    if (res.headersSent) return;
+    enforceRiderScope(req, res, next);
+  });
 }
 
 function requireSuperadmin(req, res, next) {
@@ -2099,12 +2126,27 @@ app.get('/api/v1/reports/export/csv', authenticate, requireAdmin, async (req, re
 });
 
 // ---- SETTINGS ----
+// Settings are read by every role — a consultant needs the business name and currency for a
+// receipt — but a secret is not part of that. Anything whose key looks like a secret is withheld
+// from everyone but an admin, so the payment gateway key never leaves on a consultant's or a
+// rider's token. lencoPublicKey is deliberately untouched: it is public by design.
+const SETTING_SECRET_PATTERN = /secret/i;
+
+function redactSettingsFor(user, obj) {
+  if (user.role === 'admin' || user.role === 'superadmin') return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!SETTING_SECRET_PATTERN.test(k)) out[k] = v;
+  }
+  return out;
+}
+
 app.get('/api/v1/settings', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const obj = {}; settings.forEach(s => { obj[s.key] = s.value; });
-    res.json(obj);
+    res.json(redactSettingsFor(req.user, obj));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -3861,7 +3903,7 @@ const delivery_SALE_DELIVERABLE_FROM = ['Confirmed', 'Shipped'];
 
 // ---- RIDERS ----
 
-app.get('/api/v1/deliveries/riders', authenticate, requireAdmin, async (req, res) => {
+app.get('/api/v1/deliveries/riders', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const where = { companyId: req.user.companyId };
     if (req.query.active === 'true') where.isActive = true;
@@ -3968,7 +4010,7 @@ app.get('/api/v1/deliveries/my/runs', authenticate, async (req, res) => {
 // ---- ADMIN LIST / ASSIGNMENT ----
 
 // Orders that need a rider: in a deliverable state, no delivery record yet.
-app.get('/api/v1/deliveries/unassigned', authenticate, requireAdmin, async (req, res) => {
+app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const where = {
       companyId: req.user.companyId,
@@ -4015,7 +4057,7 @@ app.get('/api/v1/deliveries', authenticate, async (req, res) => {
 });
 
 // Assign one or more orders to a rider in a single call — the screen assigns a day's run at once.
-app.post('/api/v1/deliveries', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/v1/deliveries', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { riderId, saleIds, notes } = req.body;
@@ -4107,7 +4149,7 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
 });
 
 // Reassign to a different rider, or park it back in the unassigned pile.
-app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdmin, async (req, res) => {
+app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId } });
