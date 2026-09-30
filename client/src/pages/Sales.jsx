@@ -793,8 +793,9 @@ export default function Sales() {
                 )}
               </div>
             )}
-            {showDetail.statusHistory?.length > 0 && (
-              <OrderTimeline statusHistory={showDetail.statusHistory} />
+            {(showDetail.statusHistory?.length > 0 || showDetail.delivery) && (
+              <OrderTimeline statusHistory={showDetail.statusHistory} delivery={showDetail.delivery}
+                fulfilment={showDetail.fulfilment} />
             )}
             {showDetail.notes && <div><span className="text-gray-500">Notes:</span> {showDetail.notes}</div>}
           </div>
