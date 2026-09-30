@@ -171,6 +171,7 @@ export default function Sales() {
     try {
       const data = {
         ...form,
+        ...(editing ? {} : { status: effectiveStatus }),
         items: orderItems.map(i => ({ productId: i.productId, qty: i.qty, unitPrice: i.unitPrice, serialNumber: i.serialNumber || null, stockSourceConsultantId: i.stockSourceConsultantId || null })),
         shippingCost: parseFloat(form.shippingCost) || 0,
         shippingCharge: parseFloat(form.shippingCharge) || 0,
@@ -238,6 +239,16 @@ export default function Sales() {
     try { const { data } = await getSale(sale.id); setShowDetail(data); }
     catch { setShowDetail(sale); }
   };
+
+  // Mirrors the server rule in POST /sales: an order with anything coming from the warehouse
+  // cannot be created as Shipped or Delivered, because nobody has picked it yet.
+  const needsWarehouse = orderItems.some(i => !i.stockSourceConsultantId);
+  const creatableStatuses = needsWarehouse
+    ? ORDER_STATUSES.filter(s => !['Shipped', 'Delivered'].includes(s))
+    : ORDER_STATUSES;
+  // Switching an item to warehouse stock after picking Delivered must not leave the form holding
+  // a status that is no longer offered, so the effective value is always one of the options.
+  const effectiveStatus = creatableStatuses.includes(form.status) ? form.status : 'Confirmed';
 
   const calcProfit = (s) => {
     const cogs = (s.items || []).reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
@@ -545,11 +556,22 @@ export default function Sales() {
             {!editing && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Order Status</label>
-                <select value={form.status} onChange={e => setForm({...form, status: e.target.value})}
+                <select value={effectiveStatus} onChange={e => setForm({...form, status: e.target.value})}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                  {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  {creatableStatuses.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Confirmed orders appear in the warehouse dispatch queue and deduct stock.</p>
+                {needsWarehouse ? (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Something on this order is coming from the warehouse, so it cannot start as Shipped or
+                    Delivered — nobody has picked it yet. Save it as <strong>Confirmed</strong>: it appears
+                    in the warehouse queue to be packed, and becomes Delivered when the rider drops it off.
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Every item is coming from a consultant's own stock, so the seller already has the goods.
+                    Confirmed deducts stock; Delivered is fine if it has already been handed over.
+                  </p>
+                )}
               </div>
             )}
             {form.paymentType === 'Credit' && (

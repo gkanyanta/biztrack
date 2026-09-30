@@ -895,6 +895,19 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
       return res.status(e.status || 400).json({ error: e.message });
     }
 
+    // An order whose goods are still in the warehouse cannot be recorded as already gone: nobody
+    // has picked it yet. It has to pass through Confirmed so the warehouse sees it, packs it, and
+    // a rider takes it out — which is the only way the status history means anything, and the
+    // reason 279 of last month's orders never reached the person meant to prepare them.
+    // Items sold from a consultant's own carried stock are exempt: the seller already has them.
+    const requestedStatus = data.status || 'Pending';
+    if (['Shipped', 'Delivered'].includes(requestedStatus) && saleItems.some(i => !i.stockSourceConsultantId)) {
+      return res.status(400).json({
+        error: `This order has items coming from the warehouse, so it cannot be recorded as ${requestedStatus} straight away. `
+             + 'Save it as Confirmed — the warehouse marks it packed, and it becomes Delivered when the rider drops it off.',
+      });
+    }
+
     const itemsTotal = saleItems.reduce((sum, i) => sum + i.totalPrice, 0);
     const shippingCharge = parseFloat(data.shippingCharge) || 0;
     const discount = parseFloat(data.discount) || 0;
@@ -935,7 +948,7 @@ app.post('/api/v1/sales', authenticate, validateSale, async (req, res) => {
           data: {
             orderNumber, date: data.date ? new Date(data.date) : new Date(), totalPrice,
             shippingCost, shippingCharge, discount,
-            status: data.status || 'Pending', paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
+            status: requestedStatus, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
             paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
             consultantId: data.consultantId || null,
             customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null, deliveryAddress: data.deliveryAddress || null, notes: data.notes || null,
