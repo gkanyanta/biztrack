@@ -533,6 +533,10 @@ model RiderExpense {
   category        String
   amount          Decimal           @db.Decimal(10, 2)
   description     String?
+  // Set when the rider dropped a parcel at a courier and the fee went onto the order's
+  // shippingCost. That figure is already inside gross profit, so settling such an expense must
+  // not raise a second one — the company owes him the money, not the books twice.
+  onSaleShipping  Boolean           @default(false)
   // Some of these get billed on to the customer. Kept deliberately manual: the amount billed
   // is a judgement call and is sometimes waived, so nothing is charged without someone saying so.
   rechargeable    Boolean           @default(false)

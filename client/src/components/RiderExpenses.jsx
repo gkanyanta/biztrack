@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getMyRiderAccount, getMyRiderExpenses, logMyRiderExpense, deleteMyRiderExpense } from '../services/api';
+import { getMyRiderAccount, getMyRiderExpenses, logMyRiderExpense, deleteMyRiderExpense, getMyRuns } from '../services/api';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from './LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -11,18 +11,28 @@ import { FiPlus, FiTrash2, FiLock, FiCheck } from 'react-icons/fi';
 
 const CATEGORIES = ['Platinum courier', 'Other courier', 'Fuel', 'Airtime', 'Bike repair', 'Parking', 'Other'];
 
+// A courier fee belongs to a particular parcel, so these ask which order it was. Fuel and
+// airtime do not belong to any one drop, so they do not.
+const COURIER_CATEGORIES = ['Platinum courier', 'Other courier'];
+
 export default function RiderExpenses() {
   const [account, setAccount] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ category: 'Platinum courier', amount: '', description: '', rechargeable: true });
+  const [runs, setRuns] = useState([]);
+  const [form, setForm] = useState({ category: 'Platinum courier', amount: '', description: '', rechargeable: true, saleId: '' });
 
   const load = () => {
     setLoading(true);
-    Promise.all([getMyRiderAccount(), getMyRiderExpenses()])
-      .then(([a, e]) => { setAccount(a.data); setExpenses(e.data); })
+    Promise.all([getMyRiderAccount(), getMyRiderExpenses(), getMyRuns()])
+      .then(([a, e, r]) => {
+        setAccount(a.data);
+        setExpenses(e.data);
+        // The parcels he is carrying — the ones a courier fee could belong to.
+        setRuns([...(r.data.open || []), ...(r.data.completedToday || [])]);
+      })
       .catch(() => toast.error('Could not load'))
       .finally(() => setLoading(false));
   };
@@ -35,7 +45,7 @@ export default function RiderExpenses() {
     try {
       await logMyRiderExpense({ ...form, amount: parseFloat(form.amount) });
       toast.success('Logged — it comes off what you hand in');
-      setForm({ category: 'Platinum courier', amount: '', description: '', rechargeable: true });
+      setForm({ category: 'Platinum courier', amount: '', description: '', rechargeable: true, saleId: '' });
       setShowForm(false);
       load();
     } catch (err) {
@@ -50,6 +60,8 @@ export default function RiderExpenses() {
       load();
     } catch (err) { toast.error(err.response?.data?.error || 'Could not remove'); }
   };
+
+  const isCourier = COURIER_CATEGORIES.includes(form.category);
 
   if (loading) return <LoadingSpinner />;
 
@@ -97,6 +109,25 @@ export default function RiderExpenses() {
               onChange={e => setForm({ ...form, amount: e.target.value })}
               className="w-full border border-gray-300 rounded-xl px-3 py-3 text-lg outline-none focus:ring-2 focus:ring-slate-800" />
           </div>
+          {isCourier && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Which parcel was it for?</label>
+              <select value={form.saleId} onChange={e => setForm({ ...form, saleId: e.target.value })}
+                className="w-full border border-gray-300 rounded-xl px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-800">
+                <option value="">Not sure / not on my list</option>
+                {runs.map(d => (
+                  <option key={d.id} value={d.saleId}>
+                    {d.orderNumber} — {d.customerName || 'Customer'}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                {form.saleId
+                  ? 'The fee goes on this order as its delivery cost, and the company owes it back to you.'
+                  : 'Pick the order if you can — the fee then lands on it as the delivery cost.'}
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional)</label>
             <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
@@ -138,6 +169,9 @@ export default function RiderExpenses() {
                     {x.sale?.orderNumber ? ` · ${x.sale.orderNumber}` : ''}
                     {x.description ? ` · ${x.description}` : ''}
                   </div>
+                  {x.onSaleShipping && (
+                    <div className="text-xs text-blue-600 mt-0.5">on {x.sale?.orderNumber || 'the order'} as its delivery cost</div>
+                  )}
                   {x.settledAt && (
                     <div className="text-xs text-emerald-600 mt-0.5 flex items-center gap-1"><FiCheck size={11} /> settled by the office</div>
                   )}

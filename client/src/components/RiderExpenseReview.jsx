@@ -109,12 +109,30 @@ export default function RiderExpenseReview() {
                   {x.sale?.orderNumber ? ` · ${x.sale.orderNumber}` : ''}
                   {x.description ? ` · ${x.description}` : ''}
                 </div>
-                {x.settledAt && (
+                {/* A courier drop is already the order's delivery cost, so the only thing left to
+                    read is whether the customer is being billed enough to cover it. */}
+                {x.onSaleShipping && (
+                  <div className="text-xs mt-1 text-blue-700">
+                    on {x.sale?.orderNumber || 'the order'} as its delivery cost
+                    {x.sale && (
+                      <span className="text-gray-500">
+                        {' · '}billed {formatMoney(x.sale.shippingCharge)}
+                        {parseFloat(x.sale.shippingCharge || 0) < parseFloat(x.amount)
+                          ? ` · ${formatMoney(parseFloat(x.amount) - parseFloat(x.sale.shippingCharge || 0))} short`
+                          : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {x.settledAt && !x.onSaleShipping && (
                   <div className="text-xs mt-1">
                     {x.rechargedAt
                       ? <span className="text-emerald-600">charged on at {formatMoney(x.rechargedAmount)}{parseFloat(x.rechargedAmount) < parseFloat(x.amount) ? ` · company carried ${formatMoney(parseFloat(x.amount) - parseFloat(x.rechargedAmount))}` : ''}</span>
                       : <span className="text-gray-500">booked as a delivery cost</span>}
                   </div>
+                )}
+                {x.settledAt && x.onSaleShipping && (
+                  <div className="text-xs mt-0.5 text-emerald-600">paid back to the rider</div>
                 )}
               </div>
               <div className="shrink-0">
@@ -140,6 +158,20 @@ export default function RiderExpenseReview() {
               {settling.sale?.orderNumber && <div className="text-xs text-gray-500 mt-0.5">Order {settling.sale.orderNumber} — {settling.sale.customerName}</div>}
             </div>
 
+            {settling.onSaleShipping ? (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+                This fee is already on {settling.sale?.orderNumber || 'the order'} as its delivery cost,
+                so the books have it. Settling only records that the company has squared up with
+                {' '}{settling.rider?.name || 'the rider'} — it raises no second expense, because that
+                would charge the same money twice.
+                {settling.sale && parseFloat(settling.sale.shippingCharge || 0) < parseFloat(settling.amount) && (
+                  <p className="mt-2 text-amber-800">
+                    The customer is only billed {formatMoney(settling.sale.shippingCharge)} against a
+                    {' '}{formatMoney(settling.amount)} fee. Raise the order's delivery charge if it should cover it.
+                  </p>
+                )}
+              </div>
+            ) : (
             <div className="space-y-2">
               <label className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer ${settleForm.outcome === 'company_cost' ? 'border-slate-800 bg-slate-50' : 'border-gray-200'}`}>
                 <input type="radio" checked={settleForm.outcome === 'company_cost'} onChange={() => setSettleForm({ ...settleForm, outcome: 'company_cost' })} className="mt-0.5" />
@@ -156,8 +188,9 @@ export default function RiderExpenseReview() {
                 </span>
               </label>
             </div>
+            )}
 
-            {settleForm.outcome === 'recharged' && (
+            {!settling.onSaleShipping && settleForm.outcome === 'recharged' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount charged to the customer</label>
                 <input type="number" min="0" step="0.01" value={settleForm.rechargedAmount}

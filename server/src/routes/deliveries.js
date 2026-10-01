@@ -671,6 +671,21 @@ function requireRider(req, res) {
   return true;
 }
 
+// A parcel the rider carries to Platinum is two facts at once: the order now has a delivery cost,
+// and the company owes him what he paid. Recording it on the order's shippingCost covers the
+// first — gross profit already subtracts that — and the expense row covers the second. Settling
+// it therefore raises no further expense; doing so would charge the same kwacha twice.
+const RIDER_COURIER_CATEGORIES = ['Platinum courier', 'Other courier'];
+
+// Nudge an order's delivery cost by what the rider paid, never below zero.
+async function shiftSaleShippingCost(tx, saleId, companyId, delta) {
+  const sale = await tx.sale.findFirst({ where: { id: saleId, companyId }, select: { id: true, shippingCost: true } });
+  if (!sale) return null;
+  const next = Math.max(0, Math.round((parseFloat(sale.shippingCost || 0) + delta) * 100) / 100);
+  await tx.sale.update({ where: { id: sale.id }, data: { shippingCost: next } });
+  return next;
+}
+
 // ---- RIDER-FACING ----
 
 router.get('/my/account', async (req, res) => {
@@ -709,12 +724,19 @@ router.post('/my/expenses', async (req, res) => {
       const owned = await prisma.sale.findFirst({ where: { id: saleId, companyId }, select: { id: true } });
       if (!owned) return res.status(400).json({ error: 'That order was not found' });
     }
-    const expense = await prisma.riderExpense.create({
-      data: {
-        riderId: req.user.riderId, category, amount, description: description || null,
-        saleId: saleId || null, rechargeable: !!rechargeable, companyId,
-      },
-    });
+    // A courier drop-off against a known order is a delivery cost on that order, so it goes
+    // there rather than waiting for somebody to decide what it was.
+    const onSaleShipping = !!saleId && RIDER_COURIER_CATEGORIES.includes(category);
+    const expense = await prisma.$transaction(async (tx) => {
+      const created = await tx.riderExpense.create({
+        data: {
+          riderId: req.user.riderId, category, amount, description: description || null,
+          saleId: saleId || null, rechargeable: !!rechargeable, onSaleShipping, companyId,
+        },
+      });
+      if (onSaleShipping) await shiftSaleShippingCost(tx, saleId, companyId, amount);
+      return created;
+    }, { timeout: 20000 });
     res.status(201).json(expense);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -729,7 +751,14 @@ router.delete('/my/expenses/:id', async (req, res) => {
     });
     if (!expense) return res.status(404).json({ error: 'Not found' });
     if (expense.settledAt) return res.status(400).json({ error: 'This has already been settled — ask an admin to correct it' });
-    await prisma.riderExpense.delete({ where: { id: expense.id } });
+    await prisma.$transaction(async (tx) => {
+      // Taking back the expense has to take its cost off the order too, or the order keeps a
+      // delivery cost nobody paid.
+      if (expense.onSaleShipping && expense.saleId) {
+        await shiftSaleShippingCost(tx, expense.saleId, expense.companyId, -parseFloat(expense.amount));
+      }
+      await tx.riderExpense.delete({ where: { id: expense.id } });
+    }, { timeout: 20000 });
     res.json({ success: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -805,7 +834,12 @@ router.get('/expenses', requireAdmin, async (req, res) => {
     }
     const expenses = await prisma.riderExpense.findMany({
       where,
-      include: { rider: { select: { id: true, name: true } }, sale: { select: { id: true, orderNumber: true, customerName: true } } },
+      include: {
+        rider: { select: { id: true, name: true } },
+        // What the order carries as its delivery cost and what the customer is billed for it,
+        // so a courier drop-off can be read as the margin it actually made.
+        sale: { select: { id: true, orderNumber: true, customerName: true, shippingCost: true, shippingCharge: true } },
+      },
       orderBy: { date: 'desc' }, take: 300,
     });
     res.json(expenses);
@@ -851,6 +885,14 @@ router.put('/expenses/:id', requireAdmin, async (req, res) => {
 
     if (raw.settle === true) {
       if (expense.settledAt) return res.status(400).json({ error: 'Already settled' });
+      // Already on the order as its shipping cost, so the books carry it and settling only
+      // records that the company has accounted for what it owes him.
+      if (expense.onSaleShipping) {
+        const updated = await prisma.riderExpense.update({
+          where: { id: expense.id }, data: { ...data, settledAt: new Date() },
+        });
+        return res.json(updated);
+      }
       const outcome = raw.outcome === 'recharged' ? 'recharged' : 'company_cost';
       const amount = data.amount !== undefined ? data.amount : parseFloat(expense.amount);
       let recharged = 0;
