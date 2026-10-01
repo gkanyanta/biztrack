@@ -359,7 +359,7 @@ router.post('/', validateSale, async (req, res) => {
           data: {
             orderNumber, date: data.date ? new Date(data.date) : new Date(),
             totalPrice, shippingCost, shippingCharge, discount,
-            status: requestedStatus, fulfilment, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
+            status: requestedStatus, fulfilment, recordedById: req.user.id, paymentStatus, paymentMethod: data.paymentMethod || null, source: data.source || null,
             paymentType, amountPaid, creditDueDate: data.creditDueDate ? new Date(data.creditDueDate) : null, creditNotes: data.creditNotes || null,
             consultantId: data.consultantId || null,
             customerId, customerName: data.customerName || null, customerPhone: data.customerPhone || null, customerCity: data.customerCity || null,
@@ -373,7 +373,7 @@ router.post('/', validateSale, async (req, res) => {
             await deductStockForItem(tx, item, created, companyId);
           }
         }
-        await tx.orderStatusLog.create({ data: { saleId: created.id, fromStatus: 'New', toStatus: created.status, companyId } });
+        await tx.orderStatusLog.create({ data: { saleId: created.id, fromStatus: 'New', toStatus: created.status, byUserId: req.user.id, companyId } });
         return created;
       }, { timeout: 20000 });
       res.status(201).json(sale);
@@ -522,7 +522,7 @@ router.put('/:id/status', async (req, res) => {
           }
         }
         const result = await tx.sale.update({ where: { id: req.params.id }, data: { status }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } } } });
-        await tx.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, companyId } });
+        await tx.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, byUserId: req.user.id, companyId } });
         return result;
       }, { timeout: 20000 });
       res.json(updated);

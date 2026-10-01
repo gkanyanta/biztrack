@@ -12,6 +12,7 @@ import {
 } from 'react-icons/fi';
 import RiderExpenseReview from '../components/RiderExpenseReview';
 import RiderReportReview from '../components/RiderReportReview';
+import DispatchActivity from '../components/DispatchActivity';
 import { useAuth } from '../hooks/useAuth';
 
 // money: true means the tab reads or moves money, which stays with an admin. The inventory
@@ -24,6 +25,8 @@ const TABS = [
   { key: 'expenses', label: 'His spending', money: true },
   { key: 'reports', label: 'Daily reports', money: true },
   { key: 'riders', label: 'Riders', money: true },
+  // An oversight view, so it belongs with the admin-only tabs.
+  { key: 'activity', label: 'Who did what', money: true },
 ];
 
 const COURIER_LABELS = { rider: 'Our rider', yango: 'Yango', other: 'Hired courier' };
@@ -438,6 +441,7 @@ export default function Deliveries() {
         </div>
       )}
 
+      {tab === 'activity' && <DispatchActivity />}
       {tab === 'expenses' && <RiderExpenseReview />}
       {tab === 'reports' && <RiderReportReview />}
 

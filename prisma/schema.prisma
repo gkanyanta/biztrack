@@ -54,6 +54,10 @@ model User {
   companyId String?
   company   Company? @relation(fields: [companyId], references: [id])
   createdAt DateTime @default(now())
+
+  statusChanges      OrderStatusLog[] @relation("StatusChanges")
+  deliveriesAssigned Delivery[]       @relation("DeliveriesAssigned")
+  salesRecorded      Sale[]           @relation("SalesRecorded")
 }
 
 model Product {
@@ -142,6 +146,9 @@ model Sale {
   amountPaid      Decimal          @default(0) @db.Decimal(10, 2)
   creditDueDate   DateTime?
   creditNotes     String?
+  // Who keyed it in, which is not the same as whose customer it was.
+  recordedById    String?
+  recordedBy      User?            @relation("SalesRecorded", fields: [recordedById], references: [id])
   consultantId    String?
   consultant      Consultant?      @relation(fields: [consultantId], references: [id])
   items           SaleItem[]
@@ -156,6 +163,7 @@ model Sale {
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
   @@index([consultantId])
+  @@index([recordedById])
 }
 
 model SaleItem {
@@ -182,12 +190,17 @@ model OrderStatusLog {
   sale       Sale     @relation(fields: [saleId], references: [id])
   fromStatus String
   toStatus   String
+  // Who made the change. Null for everything recorded before actions were attributed, and for
+  // the storefront, which has no user behind it.
+  byUserId   String?
+  byUser     User?    @relation("StatusChanges", fields: [byUserId], references: [id])
   companyId  String
   company    Company  @relation(fields: [companyId], references: [id])
   createdAt  DateTime @default(now())
 
   @@index([saleId])
   @@index([companyId])
+  @@index([byUserId])
 }
 
 model Customer {
@@ -606,6 +619,10 @@ model Delivery {
   riderId                    String?
   rider                      Rider?      @relation(fields: [riderId], references: [id])
   status                     String      @default("Assigned")
+  // Who dispatched it. The warehouse and the office both assign runs, and which one did it
+  // is exactly what could not be answered before.
+  assignedById               String?
+  assignedBy                 User?       @relation("DeliveriesAssigned", fields: [assignedById], references: [id])
   assignedAt                 DateTime    @default(now())
   pickedUpAt                 DateTime?
   deliveredAt                DateTime?
@@ -630,4 +647,5 @@ model Delivery {
   @@index([riderId, assignedAt])
   @@index([companyId, courier])
   @@index([dispatchedFromConsultantId])
+  @@index([assignedById])
 }

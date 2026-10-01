@@ -235,7 +235,7 @@ router.post('/:id/convert', async (req, res) => {
           items: { create: saleItems },
         },
       });
-      await tx.orderStatusLog.create({ data: { saleId: created.id, fromStatus: 'New', toStatus: 'Pending', companyId } });
+      await tx.orderStatusLog.create({ data: { saleId: created.id, fromStatus: 'New', toStatus: 'Pending', byUserId: req.user.id, companyId } });
       await tx.quote.update({ where: { id: quote.id }, data: { status: 'Converted', convertedSaleId: created.id } });
       return created;
     }, { timeout: 20000 });

@@ -208,6 +208,7 @@ export const updateRiderExpense = (id, data) => api.put(`/deliveries/expenses/${
 export const getRiderReports = (params) => api.get('/deliveries/reports', { params });
 export const acknowledgeRiderReport = (id, acknowledged) => api.put(`/deliveries/reports/${id}/acknowledge`, { acknowledged });
 export const getDeliveryFinances = (params) => api.get('/deliveries/finances', { params });
+export const getDeliveryActivity = (params) => api.get('/deliveries/activity', { params });
 
 // Name-only consultant list, for attributing a counter sale without exposing pay terms
 export const getConsultantNames = () => api.get('/consultants/names');

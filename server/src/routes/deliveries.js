@@ -355,6 +355,7 @@ router.post('/', requireAdminOrInventory, async (req, res) => {
       data: ids.map(saleId => ({
         saleId, riderId: riderId || null, courier, courierRef: courierRef || null,
         dispatchedFromConsultantId: originBySale[saleId] || null,
+        assignedById: req.user.id,
         notes: notes || null, companyId,
       })),
     });
@@ -420,13 +421,13 @@ router.put('/:id/status', async (req, res) => {
     const updated = await prisma.$transaction(async (tx) => {
       if (status === 'Delivered' && SALE_DELIVERABLE_FROM.includes(delivery.sale?.status)) {
         await tx.sale.update({ where: { id: delivery.saleId }, data: { status: 'Delivered' } });
-        await tx.orderStatusLog.create({ data: { saleId: delivery.saleId, fromStatus: delivery.sale.status, toStatus: 'Delivered', companyId } });
+        await tx.orderStatusLog.create({ data: { saleId: delivery.saleId, fromStatus: delivery.sale.status, toStatus: 'Delivered', byUserId: req.user.id, companyId } });
       }
       if (leavingDelivered) {
         if (delivery.cashRemitted) await reverseRemittance(tx, delivery.id, companyId);
         if (delivery.sale?.status === 'Delivered') {
           await tx.sale.update({ where: { id: delivery.saleId }, data: { status: 'Shipped' } });
-          await tx.orderStatusLog.create({ data: { saleId: delivery.saleId, fromStatus: 'Delivered', toStatus: 'Shipped', companyId } });
+          await tx.orderStatusLog.create({ data: { saleId: delivery.saleId, fromStatus: 'Delivered', toStatus: 'Shipped', byUserId: req.user.id, companyId } });
         }
       }
       return tx.delivery.update({ where: { id: delivery.id }, data, include: deliveryInclude });
@@ -456,6 +457,8 @@ router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
     const updated = await prisma.delivery.update({ where: { id: delivery.id }, data: {
       riderId: isHiredCourier(courier) ? null : (riderId || null),
       courier,
+      // Handing a run to somebody else is a dispatch decision of its own.
+      assignedById: req.user.id,
       ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
     }, include: deliveryInclude });
     res.json(shapeDelivery(updated));
@@ -969,6 +972,104 @@ router.put('/reports/:id/acknowledge', requireAdmin, async (req, res) => {
     res.json(await prisma.riderDailyReport.update({
       where: { id: report.id }, data: { acknowledgedAt: ack ? new Date() : null },
     }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- WHO DID WHAT ----
+
+// One feed of the things people do to orders, so an admin can see the warehouse working without
+// asking. Built from three sources rather than a separate audit table: the status log already
+// records every transition, a delivery already knows when it was assigned, and a sale already
+// knows when it was keyed in — all three now name the person responsible.
+//
+// Rows from before actions were attributed carry no user. They are shown rather than hidden,
+// because a gap in the record is itself worth seeing. (mirrored in api/index.js)
+router.get('/activity', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 7));
+    const since = new Date(Date.now() - days * 86400000);
+    const userId = req.query.userId || null;
+
+    const [assigned, changes, counterSales] = await Promise.all([
+      prisma.delivery.findMany({
+        where: { companyId, assignedAt: { gte: since }, ...(userId && { assignedById: userId }) },
+        select: {
+          id: true, assignedAt: true, courier: true, courierRef: true,
+          assignedBy: { select: { id: true, name: true, username: true, role: true } },
+          rider: { select: { name: true } },
+          sale: { select: { id: true, orderNumber: true, customerName: true } },
+        },
+        orderBy: { assignedAt: 'desc' }, take: 200,
+      }),
+      prisma.orderStatusLog.findMany({
+        where: { companyId, createdAt: { gte: since }, ...(userId && { byUserId: userId }) },
+        select: {
+          id: true, createdAt: true, fromStatus: true, toStatus: true,
+          byUser: { select: { id: true, name: true, username: true, role: true } },
+          sale: { select: { id: true, orderNumber: true, customerName: true } },
+        },
+        orderBy: { createdAt: 'desc' }, take: 300,
+      }),
+      prisma.sale.findMany({
+        where: { companyId, fulfilment: 'collection', createdAt: { gte: since }, ...(userId && { recordedById: userId }) },
+        select: {
+          id: true, createdAt: true, orderNumber: true, customerName: true, totalPrice: true,
+          recordedBy: { select: { id: true, name: true, username: true, role: true } },
+          consultant: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' }, take: 200,
+      }),
+    ]);
+
+    const events = [];
+    for (const d of assigned) {
+      const carrier = d.courier === 'rider' ? (d.rider?.name || 'nobody yet')
+        : (d.courier === 'yango' ? 'Yango' : 'a hired courier');
+      events.push({
+        at: d.assignedAt, kind: 'assigned', who: d.assignedBy,
+        orderNumber: d.sale?.orderNumber, saleId: d.sale?.id, customerName: d.sale?.customerName,
+        summary: `Put on a run with ${carrier}`,
+        detail: d.courierRef || null,
+      });
+    }
+    for (const c of changes) {
+      // The warehouse marking an order packed is the move worth naming plainly.
+      const packed = c.fromStatus === 'Confirmed' && c.toStatus === 'Shipped';
+      events.push({
+        at: c.createdAt, kind: packed ? 'packed' : 'status', who: c.byUser,
+        orderNumber: c.sale?.orderNumber, saleId: c.sale?.id, customerName: c.sale?.customerName,
+        summary: packed ? 'Marked packed and ready'
+          : (c.fromStatus === 'New' ? `Order created as ${c.toStatus}` : `${c.fromStatus} to ${c.toStatus}`),
+        detail: null,
+      });
+    }
+    for (const s of counterSales) {
+      events.push({
+        at: s.createdAt, kind: 'counter-sale', who: s.recordedBy,
+        orderNumber: s.orderNumber, saleId: s.id, customerName: s.customerName,
+        summary: `Counter sale of ${parseFloat(s.totalPrice).toFixed(2)}`,
+        detail: s.consultant?.name ? `credited to ${s.consultant.name}` : 'for the business',
+      });
+    }
+
+    events.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    // Who has been active, so the filter can be built without a second call.
+    const people = {};
+    for (const e of events) {
+      if (!e.who) continue;
+      people[e.who.id] = people[e.who.id] || { ...e.who, actions: 0 };
+      people[e.who.id].actions += 1;
+    }
+
+    res.json({
+      days,
+      events: events.slice(0, 200),
+      people: Object.values(people).sort((a, b) => b.actions - a.actions),
+      unattributed: events.filter(e => !e.who).length,
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

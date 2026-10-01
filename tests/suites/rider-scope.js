@@ -115,5 +115,43 @@ module.exports = {
   eq('nor create a rider', (await bea('POST', '/deliveries/riders', { name: 'Sneaky' })).status, 403);
   eq('nor hand out a rider login', (await bea('POST', `/deliveries/riders/${seed.gregRiderId}/login`, { username: 'x1', password: 'abc123' })).status, 403);
   eq('and still no payment secret for her', (await bea('GET', '/settings')).body.lencoSecretKey, undefined);
+
+  section('an admin can see who has been doing what');
+  // Beatrice's dispatch work had no trace anybody could read: nothing recorded who assigned a
+  // run, who packed an order, or who keyed in a counter sale.
+  const product2 = await prisma.product.findFirst({ where: { companyId: seed.companyId }, select: { id: true } });
+  const toDispatch = await prisma.sale.create({
+    data: {
+      orderNumber: 'ORD-ACT', totalPrice: 300, status: 'Confirmed', paymentType: 'Cash',
+      customerName: 'Watched Customer', companyId: seed.companyId,
+      items: { create: [{ productId: product2.id, qty: 1, unitPrice: 300, costPrice: 100, totalPrice: 300 }] },
+    },
+  });
+
+  const beaRun = await bea('POST', '/deliveries', { saleIds: [toDispatch.id], riderId: seed.gregRiderId });
+  eq('she assigns a run', beaRun.status, 201);
+  const packed = await bea('PUT', `/sales/${toDispatch.id}/status`, { status: 'Shipped' });
+  eq('and marks it packed', packed.status, 200);
+  const counter = await bea('POST', '/sales', {
+    customerName: 'Walk-in', fulfilment: 'collection', status: 'Delivered',
+    items: [{ productId: product2.id, qty: 1, unitPrice: 150 }],
+  });
+  eq('and records a counter sale', counter.status, 201);
+
+  const feed = await admin('GET', '/deliveries/activity');
+  eq('the admin can read the feed', feed.status, 200);
+  const hers = feed.body.events.filter(e => e.who?.username === 'bea_scope');
+  eq('her run assignment is named', hers.some(e => e.kind === 'assigned' && e.orderNumber === 'ORD-ACT'), true);
+  eq('so is the order she packed', hers.some(e => e.kind === 'packed' && e.orderNumber === 'ORD-ACT'), true);
+  eq('and the counter sale she took', hers.some(e => e.kind === 'counter-sale'), true);
+  eq('her role is shown beside her name', hers[0].who.role, 'inventory');
+  eq('she appears in the list of people active', feed.body.people.some(p => p.username === 'bea_scope'), true);
+
+  const filtered = await admin('GET', `/deliveries/activity?userId=${hers[0].who.id}`);
+  eq('the feed can be narrowed to one person', filtered.body.events.every(e => e.who?.username === 'bea_scope'), true);
+
+  section('but the warehouse is not given the watching tool');
+  eq('she cannot read the activity feed', (await bea('GET', '/deliveries/activity')).status, 403);
+  eq('nor can a rider', (await greg('GET', '/deliveries/activity')).status, 403);
   },
 };
