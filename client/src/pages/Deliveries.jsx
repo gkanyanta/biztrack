@@ -28,6 +28,15 @@ const TABS = [
 
 const COURIER_LABELS = { rider: 'Our rider', yango: 'Yango', other: 'Hired courier' };
 
+// Ready-first is the default because a packed order is the one physically waiting to go out.
+// Oldest-first is the one that earns its keep though: the order nobody has sent is the order
+// that has been sitting longest, and newest-first hides exactly that.
+const ASSIGN_SORTS = {
+  ready: { label: 'Ready to go first', compare: (a, b) => (a.isReady ? 0 : 1) - (b.isReady ? 0 : 1) || new Date(b.date) - new Date(a.date) },
+  newest: { label: 'Newest first', compare: (a, b) => new Date(b.date) - new Date(a.date) },
+  oldest: { label: 'Oldest first', compare: (a, b) => new Date(a.date) - new Date(b.date) },
+};
+
 const STATUS_STYLES = {
   Assigned: 'bg-slate-100 text-slate-700',
   PickedUp: 'bg-blue-100 text-blue-700',
@@ -62,6 +71,7 @@ export default function Deliveries() {
   // 'rider:<id>' for one of ours, 'hire:yango' or 'hire:other' for a car booked for the trip.
   const [carrier, setCarrier] = useState('');
   const [fareForm, setFareForm] = useState({ cost: '', ref: '' });
+  const [assignSort, setAssignSort] = useState('ready');
   const [cityFilter, setCityFilter] = useState('Lusaka');
   const [submitting, setSubmitting] = useState(false);
   const [showRiderForm, setShowRiderForm] = useState(false);
@@ -163,6 +173,7 @@ export default function Deliveries() {
   };
 
   const hiring = carrier.startsWith('hire:');
+  const sortedUnassigned = unassigned.slice().sort(ASSIGN_SORTS[assignSort].compare);
 
   if (loading) return <LoadingSpinner />;
 
@@ -196,6 +207,13 @@ export default function Deliveries() {
               <label className="block text-xs font-medium text-gray-600 mb-1">City</label>
               <input value={cityFilter} onChange={e => setCityFilter(e.target.value)} placeholder="All cities"
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Order by</label>
+              <select value={assignSort} onChange={e => setAssignSort(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800">
+                {Object.entries(ASSIGN_SORTS).map(([key, s]) => <option key={key} value={key}>{s.label}</option>)}
+              </select>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Who is taking it</label>
@@ -248,7 +266,7 @@ export default function Deliveries() {
                   <tr>
                     <th className="p-3 w-10">
                       <input type="checkbox" checked={selected.length === unassigned.length && unassigned.length > 0}
-                        onChange={e => setSelected(e.target.checked ? unassigned.map(s => s.id) : [])} />
+                        onChange={e => setSelected(e.target.checked ? sortedUnassigned.map(s => s.id) : [])} />
                     </th>
                     <th className="text-left p-3">Order</th>
                     <th className="text-left p-3">Customer &amp; where</th>
@@ -257,12 +275,19 @@ export default function Deliveries() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {unassigned.map(s => (
+                  {sortedUnassigned.map(s => (
                     <tr key={s.id} className={`hover:bg-gray-50 ${selected.includes(s.id) ? 'bg-slate-50' : ''}`}>
                       <td className="p-3"><input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} /></td>
                       <td className="p-3 align-top">
                         <div className="font-medium text-gray-700">{s.orderNumber}</div>
-                        <div className="text-xs text-gray-400">{formatDate(s.date)}</div>
+                        <div className="text-xs text-gray-400">
+                          {formatDate(s.date)}
+                          {(() => {
+                            const days = Math.floor((Date.now() - new Date(s.date)) / 86400000);
+                            if (days < 2) return null;
+                            return <span className={days >= 7 ? 'text-amber-600 ml-1' : 'ml-1'}>· {days}d waiting</span>;
+                          })()}
+                        </div>
                         {/* Packed by the warehouse, so this is the one actually waiting to go. */}
                         {s.isReady && (
                           <span className="inline-block mt-1 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">READY</span>
