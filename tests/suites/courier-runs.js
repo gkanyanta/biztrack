@@ -139,5 +139,38 @@ module.exports = {
     eq('a rider cannot see the runs', (await greg('GET', '/deliveries/runs')).status, 403);
     eq('nor the awaiting-payment list', (await greg('GET', '/deliveries/awaiting-payment')).status, 403);
     eq('nor confirm a payment', (await greg('PUT', `/deliveries/${solwezi.deliveryId}/payment-received`, {})).status, 403);
+
+    section('which towns we cover is a setting, not a hardcoded Lusaka');
+    const here = await order('ORD-HOME', 'Lusaka', 200);
+    const away = await order('ORD-AWAY', 'Kitwe', 200);
+    const nowhere = await order('ORD-NOTOWN', null, 200);
+
+    const unset = (await bea('GET', '/deliveries/unassigned')).body;
+    const find = (rows, ref) => rows.find(r => r.orderNumber === ref);
+    eq('with nothing set it falls back to Lusaka', find(unset, 'ORD-HOME').isOutOfTown, false);
+    eq('so Kitwe is out of town', find(unset, 'ORD-AWAY').isOutOfTown, true);
+    // A blank town is nobody's decision yet, and treating it as local would put it on the bike.
+    eq('and an order with no town is treated as out of town', find(unset, 'ORD-NOTOWN').isOutOfTown, true);
+
+    await admin('PUT', '/settings', { delivery_local_cities: 'Lusaka, Kitwe' });
+    const two = (await bea('GET', '/deliveries/unassigned')).body;
+    eq('adding Kitwe makes it local', find(two, 'ORD-AWAY').isOutOfTown, false);
+    eq('Lusaka stays local', find(two, 'ORD-HOME').isOutOfTown, false);
+    const runs2 = (await bea('GET', '/deliveries/runs')).body;
+    eq('and the runs screen is told what counts as local', runs2.localCities, ['Lusaka', 'Kitwe']);
+
+    await admin('PUT', '/settings', { delivery_local_cities: 'Ndola' });
+    const moved = (await bea('GET', '/deliveries/unassigned')).body;
+    eq('moving base makes Lusaka out of town', find(moved, 'ORD-HOME').isOutOfTown, true);
+    eq('and the new base local', find(moved, 'ORD-NOTOWN').isOutOfTown, true);
+
+    // Whitespace and case are how a real person types a list.
+    await admin('PUT', '/settings', { delivery_local_cities: '  lusaka ,  KITWE  ' });
+    const messy = (await bea('GET', '/deliveries/unassigned')).body;
+    eq('it copes with spacing and case', [find(messy, 'ORD-HOME').isOutOfTown, find(messy, 'ORD-AWAY').isOutOfTown], [false, false]);
+
+    await admin('PUT', '/settings', { delivery_local_cities: '' });
+    const blank = (await bea('GET', '/deliveries/unassigned')).body;
+    eq('cleared, it falls back to Lusaka again', find(blank, 'ORD-HOME').isOutOfTown, false);
   },
 };

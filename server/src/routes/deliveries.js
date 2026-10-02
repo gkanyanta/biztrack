@@ -47,6 +47,24 @@ function dispatchOriginFor(items) {
   return sources.every(s => s === first) ? first : null;
 }
 
+// Where we deliver ourselves. Anything else has to go by courier, so this one setting decides
+// which flow an order takes — and hardcoding it in the screen meant the answer lived in the
+// wrong place and only the screen knew it. Comma separated, because a second town we cover by
+// bike should not need a code change either. (mirrored in api/index.js)
+async function localDeliveryCities(prisma, companyId) {
+  const row = await prisma.setting.findFirst({ where: { companyId, key: 'delivery_local_cities' } });
+  const raw = (row?.value || '').trim() || 'Lusaka';
+  return raw.split(',').map(c => c.trim()).filter(Boolean);
+}
+
+// A town we do not cover ourselves. No town recorded counts as out of town: somebody has to look
+// at it, and treating a blank as local would quietly put it on the bike.
+function isOutOfTown(city, locals) {
+  const here = (city || '').trim().toLowerCase();
+  if (!here) return true;
+  return !locals.some(l => l.toLowerCase() === here);
+}
+
 const deliveryInclude = {
   rider: { select: { id: true, name: true, phone: true } },
   sale: {
@@ -287,9 +305,12 @@ router.get('/unassigned', requireAdminOrInventory, async (req, res) => {
     // go on the bike. Those come first; everything else keeps newest-first.
     const ready = (s) => (s.status === 'Shipped' ? 0 : 1);
     const ordered = sales.slice().sort((a, b) => ready(a) - ready(b) || new Date(b.date) - new Date(a.date));
+    // Which flow each order takes is decided here rather than in whatever screen is asking.
+    const locals = await localDeliveryCities(prisma, req.user.companyId);
     res.json(ordered.map(s => ({
       ...s,
       isReady: s.status === 'Shipped',
+      isOutOfTown: isOutOfTown(s.customerCity, locals),
       amountToCollect: s.paymentStatus === 'Paid' ? 0 : Math.max(0, parseFloat(s.totalPrice) - parseFloat(s.amountPaid)),
       items: s.items.map(i => ({ name: i.product?.name || 'Product', qty: i.qty })),
     })));
@@ -1103,7 +1124,11 @@ router.get('/runs', requireAdminOrInventory, async (req, res) => {
       };
     });
 
-    res.json({ date, courier, slots: COURIER_SLOTS, sessions, next: nextSlotFrom() });
+    res.json({
+      date, courier, slots: COURIER_SLOTS, sessions, next: nextSlotFrom(),
+      // So the screen can say what it is treating as local rather than assuming.
+      localCities: await localDeliveryCities(prisma, companyId),
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

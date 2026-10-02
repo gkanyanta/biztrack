@@ -290,6 +290,19 @@ export default function Settings() {
         <p className="text-xs text-gray-400 mt-3">
           Left blank, these fall back to K1,200 a week, K3,000 a month and K50 a drop.
         </p>
+
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Towns we deliver ourselves</label>
+          <input type="text" value={settings.delivery_local_cities ?? ''}
+            onChange={e => setSettings({...settings, delivery_local_cities: e.target.value})}
+            placeholder="Lusaka"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+          <p className="text-xs text-gray-400 mt-1">
+            Orders going anywhere else need a courier, and show up on the courier runs instead of
+            the bike. Separate several with commas. Blank falls back to Lusaka, and an order with
+            no town recorded is treated as out of town so somebody has to look at it.
+          </p>
+        </div>
         <button onClick={handleSave}
           className="mt-4 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
           Save Settings

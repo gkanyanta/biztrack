@@ -19,7 +19,7 @@ const STATUS_TONE = {
   Dispatched: 'bg-emerald-100 text-emerald-700',
 };
 
-export default function CourierRuns({ homeCity = 'Lusaka' }) {
+export default function CourierRuns() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -36,8 +36,9 @@ export default function CourierRuns({ homeCity = 'Lusaka' }) {
     Promise.all([getCourierRuns({ date }), getUnassignedOrders(), getRiders()])
       .then(([r, u, rd]) => {
         setData(r.data);
-        // Anything not going to the home city needs a courier rather than the bike.
-        setCandidates(u.data.filter(o => (o.customerCity || '').trim().toLowerCase() !== homeCity.toLowerCase()));
+        // Which orders need a courier is decided by the backend from the towns-we-cover setting,
+        // so the screen reads the flag rather than deciding it a second time and differently.
+        setCandidates(u.data.filter(o => o.isOutOfTown));
         setRiders(rd.data.filter(x => x.isActive));
       })
       .catch(() => toast.error('Could not load the runs'))
@@ -117,6 +118,11 @@ export default function CourierRuns({ homeCity = 'Lusaka' }) {
             {candidates.length} out-of-town order{candidates.length === 1 ? '' : 's'} waiting ·
             {' '}next session {data.next.slot} on {data.next.date}
           </p>
+          {data.localCities?.length > 0 && (
+            <p className="text-xs text-gray-400">
+              Delivering ourselves in {data.localCities.join(', ')} — everywhere else goes by courier.
+            </p>
+          )}
         </div>
         <input type="date" value={date} onChange={e => { setDate(e.target.value); setLoading(true); }}
           className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none" />
