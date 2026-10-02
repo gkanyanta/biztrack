@@ -66,7 +66,7 @@ function isOutOfTown(city, locals) {
 }
 
 const deliveryInclude = {
-  rider: { select: { id: true, name: true, phone: true } },
+  rider: { select: { id: true, name: true, phone: true, vehicle: true } },
   sale: {
     select: {
       id: true, orderNumber: true, date: true, customerName: true, customerPhone: true,
@@ -180,11 +180,12 @@ router.get('/riders', requireAdminOrInventory, async (req, res) => {
 router.post('/riders', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
-    const { name, phone, nrc, licenceNo, startDate, notes } = req.body;
+    const { name, phone, nrc, licenceNo, vehicle, startDate, notes } = req.body;
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'Rider name is required' });
     const rider = await prisma.rider.create({
       data: {
         name: String(name).trim(), phone: phone || null, nrc: nrc || null, licenceNo: licenceNo || null,
+        vehicle: vehicle || null,
         startDate: startDate ? new Date(startDate) : null, notes: notes || null,
         companyId: req.user.companyId,
       },
@@ -204,6 +205,7 @@ router.put('/riders/:id', requireAdmin, async (req, res) => {
       ...(raw.phone !== undefined && { phone: raw.phone || null }),
       ...(raw.nrc !== undefined && { nrc: raw.nrc || null }),
       ...(raw.licenceNo !== undefined && { licenceNo: raw.licenceNo || null }),
+      ...(raw.vehicle !== undefined && { vehicle: raw.vehicle || null }),
       ...(raw.notes !== undefined && { notes: raw.notes || null }),
       ...(raw.isActive !== undefined && { isActive: !!raw.isActive }),
       ...(raw.startDate !== undefined && { startDate: raw.startDate ? new Date(raw.startDate) : null }),
@@ -1039,7 +1041,7 @@ function nextSlotFrom(at = new Date()) {
 }
 
 const runInclude = {
-  rider: { select: { id: true, name: true, phone: true } },
+  rider: { select: { id: true, name: true, phone: true, vehicle: true } },
   dispatchedBy: { select: { id: true, name: true, username: true } },
   deliveries: {
     include: {

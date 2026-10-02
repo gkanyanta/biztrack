@@ -122,7 +122,7 @@ export default function DeliveryFinances() {
               fare. Only a per-drop figure makes them comparable. */}
           {(cost.courierSplit?.own.drops > 0 || cost.courierSplit?.hired.drops > 0) && (
             <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <h4 className="text-sm font-semibold text-gray-700 mb-3">Our bike, or a hired car?</h4>
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Ourselves, or a hired car?</h4>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-xs text-gray-500">
@@ -136,7 +136,7 @@ export default function DeliveryFinances() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     <tr>
-                      <td className="py-2">Our rider<div className="text-xs text-gray-400">wage and bike hire</div></td>
+                      <td className="py-2">Us<div className="text-xs text-gray-400">the rider's wage and the bike hire</div></td>
                       <td className="py-2 text-right">{cost.courierSplit.own.drops}</td>
                       <td className="py-2 text-right">{formatMoney(cost.courierSplit.own.cost)}</td>
                       <td className="py-2 text-right font-semibold">
@@ -159,7 +159,7 @@ export default function DeliveryFinances() {
               {cost.courierSplit.own.costPerDrop != null && cost.courierSplit.hired.costPerDrop != null && (
                 <p className={`text-xs mt-2 ${cost.courierSplit.own.costPerDrop <= cost.courierSplit.hired.costPerDrop ? 'text-emerald-700' : 'text-amber-700'}`}>
                   {cost.courierSplit.own.costPerDrop <= cost.courierSplit.hired.costPerDrop
-                    ? `Our own bike is cheaper per drop by ${formatMoney(cost.courierSplit.hired.costPerDrop - cost.courierSplit.own.costPerDrop)} at this volume.`
+                    ? `Carrying them ourselves is cheaper per drop by ${formatMoney(cost.courierSplit.hired.costPerDrop - cost.courierSplit.own.costPerDrop)} at this volume.`
                     : `Hiring is cheaper per drop by ${formatMoney(cost.courierSplit.own.costPerDrop - cost.courierSplit.hired.costPerDrop)} at this volume — the bike's fixed cost is spread over too few drops.`}
                 </p>
               )}
@@ -216,7 +216,7 @@ export default function DeliveryFinances() {
 
             <div className="space-y-4">
               <div className="bg-white rounded-xl border border-gray-100 p-4">
-                <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><FiUser size={14} /> Where the rider stands</h4>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><FiUser size={14} /> Who is holding our cash</h4>
                 {riderAccounts.length === 0 ? (
                   <p className="text-sm text-gray-500">No active riders.</p>
                 ) : riderAccounts.map(a => (

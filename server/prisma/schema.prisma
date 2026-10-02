@@ -519,6 +519,10 @@ model Rider {
   phone        String?
   nrc          String?
   licenceNo    String?
+  // What they carry deliveries in. The model is named Rider because it was built for a motorbike,
+  // but what it represents is our own delivery capacity — which includes the owner in a car, and
+  // calling him a rider in the screens was simply wrong.
+  vehicle      String?
   isActive     Boolean            @default(true)
   startDate    DateTime?
   notes        String?

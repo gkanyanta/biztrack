@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   getRiders, createRider, updateRider, createRiderLogin,
   getUnassignedOrders, getDeliveries, assignDeliveries, reassignDelivery,
-  remitDeliveryCash, deleteDelivery, getDeliveryPerformance,
+  remitDeliveryCash, deleteDelivery, getDeliveryPerformance, updateDeliveryStatus,
 } from '../services/api';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,6 +16,7 @@ import DispatchActivity from '../components/DispatchActivity';
 import CourierRuns from '../components/CourierRuns';
 import AwaitingPayment from '../components/AwaitingPayment';
 import { useAuth } from '../hooks/useAuth';
+import Modal from '../components/Modal';
 
 // money: true means the tab reads or moves money, which stays with an admin. The inventory
 // role assigns and watches runs; it does not reconcile cash or settle the rider's expenses.
@@ -28,12 +29,23 @@ const TABS = [
   { key: 'performance', label: 'Performance', money: true },
   { key: 'expenses', label: 'His spending', money: true },
   { key: 'reports', label: 'Daily reports', money: true },
-  { key: 'riders', label: 'Riders', money: true },
+  { key: 'riders', label: 'Who delivers', money: true },
   // An oversight view, so it belongs with the admin-only tabs.
   { key: 'activity', label: 'Who did what', money: true },
 ];
 
-const COURIER_LABELS = { rider: 'Our rider', yango: 'Yango', other: 'Hired courier' };
+// 'rider' on a delivery means we carried it ourselves, which includes the owner in a car.
+const COURIER_LABELS = { rider: 'Us', yango: 'Yango', other: 'Hired courier' };
+
+// The office closes a delivery for reasons a rider on a doorstep would not phrase the same way.
+const OFFICE_FAILURE_REASONS = [
+  'Customer not available',
+  'Wrong or incomplete address',
+  'Customer refused the order',
+  'Customer could not pay',
+  'Courier could not deliver',
+  'Other',
+];
 
 // Ready-first is the default because a packed order is the one physically waiting to go out.
 // Oldest-first is the one that earns its keep though: the order nobody has sent is the order
@@ -79,10 +91,14 @@ export default function Deliveries() {
   const [carrier, setCarrier] = useState('');
   const [fareForm, setFareForm] = useState({ cost: '', ref: '' });
   const [assignSort, setAssignSort] = useState('ready');
+  const [closing, setClosing] = useState(null);
+  const [closeForm, setCloseForm] = useState({ recipientName: '', cashCollected: '' });
+  const [failing, setFailing] = useState(null);
+  const [failReason, setFailReason] = useState('');
   const [cityFilter, setCityFilter] = useState('Lusaka');
   const [submitting, setSubmitting] = useState(false);
   const [showRiderForm, setShowRiderForm] = useState(false);
-  const [riderForm, setRiderForm] = useState({ name: '', phone: '', nrc: '', licenceNo: '', startDate: '' });
+  const [riderForm, setRiderForm] = useState({ name: '', phone: '', nrc: '', licenceNo: '', vehicle: '', startDate: '' });
   const [loginFor, setLoginFor] = useState(null);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
 
@@ -167,6 +183,43 @@ export default function Deliveries() {
     } finally { setSubmitting(false); }
   };
 
+  // The same endpoint the rider's phone calls. An admin has always been allowed to use it; there
+  // was simply no way to reach it from here.
+  const openClose = (d) => {
+    setClosing(d);
+    setCloseForm({ recipientName: '', cashCollected: d.amountToCollect > 0 ? String(d.amountToCollect) : '0' });
+  };
+  const submitClose = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await updateDeliveryStatus(closing.id, {
+        status: 'Delivered',
+        recipientName: closeForm.recipientName || null,
+        cashCollected: parseFloat(closeForm.cashCollected) || 0,
+      });
+      toast.success(`${closing.orderNumber} marked delivered`);
+      setClosing(null);
+      loadAll();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not close it');
+    } finally { setSubmitting(false); }
+  };
+
+  const openFail = (d) => { setFailing(d); setFailReason(OFFICE_FAILURE_REASONS[0]); };
+  const submitFail = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await updateDeliveryStatus(failing.id, { status: 'Failed', failureReason: failReason });
+      toast.success(`${failing.orderNumber} marked failed`);
+      setFailing(null);
+      loadAll();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not update it');
+    } finally { setSubmitting(false); }
+  };
+
   const remit = async (d, value) => {
     if (submitting) return;
     setSubmitting(true);
@@ -226,8 +279,10 @@ export default function Deliveries() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Who is taking it</label>
               <select value={carrier} onChange={e => setCarrier(e.target.value)}
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800">
-                <option value="">Our rider — unassigned for now</option>
-                {riders.filter(r => r.isActive).map(r => <option key={r.id} value={`rider:${r.id}`}>{r.name}</option>)}
+                <option value="">One of us — not decided yet</option>
+                {riders.filter(r => r.isActive).map(r => (
+                  <option key={r.id} value={`rider:${r.id}`}>{r.name}{r.vehicle ? ` (${r.vehicle})` : ''}</option>
+                ))}
                 <option value="hire:yango">Yango</option>
                 <option value="hire:other">Another courier</option>
               </select>
@@ -347,7 +402,7 @@ export default function Deliveries() {
                       {/* Who is carrying it, what the trip cost if we hired one, and whether the
                           warehouse ever touched it. */}
                       {d.courier === 'rider'
-                        ? (d.rider?.name || 'no rider yet')
+                        ? (d.rider ? `${d.rider.name}${d.rider.vehicle ? ` · ${d.rider.vehicle}` : ''}` : 'nobody carrying it yet')
                         : `${COURIER_LABELS[d.courier] || d.courier}${d.courierRef ? ` · ${d.courierRef}` : ''}`}
                       {d.courier !== 'rider' && d.courierCost > 0 && (
                         <span className="text-gray-400"> · fare {formatMoney(d.courierCost)}</span>
@@ -355,17 +410,28 @@ export default function Deliveries() {
                       <span className="text-gray-400"> · from {d.dispatchedFrom}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col items-end gap-1">
                     <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${STATUS_STYLES[d.status]}`}>{d.status === 'PickedUp' ? 'On the way' : d.status}</span>
                     {d.amountToCollect > 0 && <span className="text-xs font-medium text-amber-700">{formatMoney(d.amountToCollect)} to collect</span>}
+                    {!d.rider && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">
+                        office closes this
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
                   <select value={d.rider?.id || ''} onChange={async (e) => { await reassignDelivery(d.id, e.target.value || null); toast.success('Reassigned'); loadAll(); }}
                     className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs outline-none">
-                    <option value="">Unassigned</option>
-                    {riders.filter(r => r.isActive).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    <option value="">Nobody</option>
+                    {riders.filter(r => r.isActive).map(r => (
+                      <option key={r.id} value={r.id}>{r.name}{r.vehicle ? ` (${r.vehicle})` : ''}</option>
+                    ))}
                   </select>
+                  <button onClick={() => openClose(d)}
+                    className="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Delivered</button>
+                  <button onClick={() => openFail(d)}
+                    className="px-2.5 py-1.5 border border-red-200 text-red-700 rounded-lg text-xs font-medium">Failed</button>
                   <button onClick={async () => { if (!window.confirm('Remove this delivery? The order goes back to unassigned.')) return; await deleteDelivery(d.id); toast.success('Removed'); loadAll(); }}
                     className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={14} /></button>
                 </div>
@@ -532,7 +598,7 @@ export default function Deliveries() {
         <div className="space-y-4">
           <button onClick={() => setShowRiderForm(!showRiderForm)}
             className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium flex items-center gap-1.5">
-            <FiPlus size={15} /> Add rider
+            <FiPlus size={15} /> Add someone
           </button>
 
           {showRiderForm && (
@@ -543,7 +609,9 @@ export default function Deliveries() {
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
               <input value={riderForm.nrc} onChange={e => setRiderForm({ ...riderForm, nrc: e.target.value })} placeholder="NRC number"
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
-              <input value={riderForm.licenceNo} onChange={e => setRiderForm({ ...riderForm, licenceNo: e.target.value })} placeholder="Rider's licence number"
+              <input value={riderForm.vehicle} onChange={e => setRiderForm({ ...riderForm, vehicle: e.target.value })} placeholder="Vehicle — motorbike, car…"
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+              <input value={riderForm.licenceNo} onChange={e => setRiderForm({ ...riderForm, licenceNo: e.target.value })} placeholder="Licence number"
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
               <input type="date" value={riderForm.startDate} onChange={e => setRiderForm({ ...riderForm, startDate: e.target.value })}
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
@@ -565,7 +633,9 @@ export default function Deliveries() {
                     {r.name}
                     {!r.isActive && <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">inactive</span>}
                   </div>
-                  <div className="text-xs text-gray-500">{r.phone || 'no phone'}{r.licenceNo ? ` · licence ${r.licenceNo}` : ''}</div>
+                  <div className="text-xs text-gray-500">
+                    {r.vehicle || 'vehicle not recorded'}{r.phone ? ` · ${r.phone}` : ''}{r.licenceNo ? ` · licence ${r.licenceNo}` : ''}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {r.hasLogin ? (
@@ -601,6 +671,72 @@ export default function Deliveries() {
           </form>
         </div>
       )}
+
+      <Modal isOpen={!!closing} onClose={() => setClosing(null)} title={closing ? `Close ${closing.orderNumber}` : ''}>
+        {closing && (
+          <div className="space-y-3">
+            <div className="bg-gray-50 rounded-lg p-3 text-sm">
+              <div className="text-gray-800">{closing.customerName || 'Customer'}</div>
+              <div className="text-xs text-gray-500">{closing.deliveryAddress || 'No address'}{closing.customerCity ? `, ${closing.customerCity}` : ''}</div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                carried by {closing.courier === 'rider' ? (closing.rider?.name || 'nobody') : (COURIER_LABELS[closing.courier] || closing.courier)}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Who received it?</label>
+              <input value={closeForm.recipientName} onChange={e => setCloseForm({ ...closeForm, recipientName: e.target.value })}
+                placeholder="Name at the door, if known"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cash collected</label>
+              <input type="number" min="0" step="0.01" value={closeForm.cashCollected}
+                onChange={e => setCloseForm({ ...closeForm, cashCollected: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              <p className="text-xs text-gray-400 mt-1">
+                {closing.amountToCollect > 0
+                  ? `${formatMoney(closing.amountToCollect)} was outstanding on this order.`
+                  : 'This order was already paid, so there should be nothing to collect.'}
+                {closing.rider
+                  ? ` Anything entered counts as cash ${closing.rider.name} is holding until you confirm it arrived.`
+                  : ' A hired courier collects nothing, so leave this at zero unless somebody handed money over.'}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setClosing(null)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+              <button onClick={submitClose} disabled={submitting}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {submitting ? 'Saving…' : 'Mark delivered'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={!!failing} onClose={() => setFailing(null)} title={failing ? `${failing.orderNumber} did not arrive` : ''}>
+        {failing && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">What happened?</label>
+              <select value={failReason} onChange={e => setFailReason(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                {OFFICE_FAILURE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                A fixed list, so failures add up to something readable instead of free text. The
+                order stays where it was and can be sent out again.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setFailing(null)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+              <button onClick={submitFail} disabled={submitting}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {submitting ? 'Saving…' : 'Mark failed'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
