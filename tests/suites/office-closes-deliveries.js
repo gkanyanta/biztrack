@@ -86,5 +86,38 @@ module.exports = {
     const other = await order('ORD-NOT-HIS');
     const theirRun = await admin('POST', '/deliveries', { saleIds: [other.id], riderId: seed.otherRiderId });
     eq('it is invisible to him', (await greg('PUT', `/deliveries/${theirRun.body[0].id}/status`, { status: 'Delivered' })).status, 404);
+
+    section('handing an in-progress delivery to somebody else');
+    // The reassign dropdown used to offer only our own people, so a delivery already on Yango
+    // showed as nobody and touching it would have quietly made it a rider delivery.
+    const movable = await order('ORD-HANDOVER');
+    const onYango = await admin('POST', '/deliveries', { saleIds: [movable.id], courier: 'yango', courierRef: 'ABC 123' });
+    eq('it starts on a hired car', onYango.body[0].courier, 'yango');
+    eq('with no rider', onYango.body[0].rider, null);
+
+    const toGreg = await admin('PUT', `/deliveries/${onYango.body[0].id}/rider`, { courier: 'rider', riderId: seed.gregRiderId });
+    eq('it can be handed to one of ours', toGreg.status, 200);
+    eq('who is now carrying it', toGreg.body.rider?.id, seed.gregRiderId);
+    eq('and the courier reads as us', toGreg.body.courier, 'rider');
+    eq('so it reaches his run sheet',
+       (await greg('GET', '/deliveries/my/runs')).body.open.some(d => d.orderNumber === 'ORD-HANDOVER'), true);
+
+    const backToHired = await admin('PUT', `/deliveries/${onYango.body[0].id}/rider`, { courier: 'other', riderId: null, courierRef: 'Bus to Kabwe' });
+    eq('and handed back out to a hired courier', backToHired.body.courier, 'other');
+    eq('which drops the rider rather than leaving him on it', backToHired.body.rider, null);
+    eq('keeping the new reference', backToHired.body.courierRef, 'Bus to Kabwe');
+    eq('and it leaves his run sheet',
+       (await greg('GET', '/deliveries/my/runs')).body.open.some(d => d.orderNumber === 'ORD-HANDOVER'), false);
+
+    section('everyone who assigns sees the same choices');
+    // The bug was two pickers offering different options. The endpoint has to accept the same
+    // set from whoever is asking, or the screens will disagree again.
+    const hers = await order('ORD-BEA-YANGO');
+    const beaYango = await bea('POST', '/deliveries', { saleIds: [hers.id], courier: 'yango', courierCost: 70 });
+    eq('the warehouse can book a hired car', beaYango.body[0].courier, 'yango');
+    const beaToRider = await bea('PUT', `/deliveries/${beaYango.body[0].id}/rider`, { courier: 'rider', riderId: seed.gregRiderId });
+    eq('and hand it to one of ours', beaToRider.body.rider?.id, seed.gregRiderId);
+    const adminYango = await admin('PUT', `/deliveries/${beaYango.body[0].id}/rider`, { courier: 'yango', riderId: null });
+    eq('and an admin can do exactly the same', adminYango.body.courier, 'yango');
   },
 };

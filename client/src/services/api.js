@@ -178,7 +178,9 @@ export const getUnassignedOrders = (params) => api.get('/deliveries/unassigned',
 export const getDeliveries = (params) => api.get('/deliveries', { params });
 export const assignDeliveries = (data) => api.post('/deliveries', data);
 export const updateDeliveryStatus = (id, data) => api.put(`/deliveries/${id}/status`, data);
-export const reassignDelivery = (id, riderId) => api.put(`/deliveries/${id}/rider`, { riderId });
+// Takes { riderId, courier, courierRef } — choosing who carries a delivery is the same decision
+// whether it is being assigned for the first time or handed to somebody else.
+export const reassignDelivery = (id, data) => api.put(`/deliveries/${id}/rider`, data);
 export const remitDeliveryCash = (id, cashRemitted) => api.put(`/deliveries/${id}/remit`, { cashRemitted });
 export const deleteDelivery = (id) => api.delete(`/deliveries/${id}`);
 export const getDeliveryPerformance = (params) => api.get('/deliveries/performance', { params });

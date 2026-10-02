@@ -17,6 +17,7 @@ import CourierRuns from '../components/CourierRuns';
 import AwaitingPayment from '../components/AwaitingPayment';
 import { useAuth } from '../hooks/useAuth';
 import Modal from '../components/Modal';
+import CarrierSelect, { encodeCarrier, decodeCarrier } from '../components/CarrierSelect';
 
 // money: true means the tab reads or moves money, which stays with an admin. The inventory
 // role assigns and watches runs; it does not reconcile cash or settle the rider's expenses.
@@ -277,15 +278,9 @@ export default function Deliveries() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Who is taking it</label>
-              <select value={carrier} onChange={e => setCarrier(e.target.value)}
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800">
-                <option value="">One of us — not decided yet</option>
-                {riders.filter(r => r.isActive).map(r => (
-                  <option key={r.id} value={`rider:${r.id}`}>{r.name}{r.vehicle ? ` (${r.vehicle})` : ''}</option>
-                ))}
-                <option value="hire:yango">Yango</option>
-                <option value="hire:other">Another courier</option>
-              </select>
+              <CarrierSelect riders={riders} value={carrier} onChange={setCarrier}
+                unsetLabel="One of us — not decided yet"
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
             </div>
             {hiring && (
               <>
@@ -421,13 +416,15 @@ export default function Deliveries() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
-                  <select value={d.rider?.id || ''} onChange={async (e) => { await reassignDelivery(d.id, e.target.value || null); toast.success('Reassigned'); loadAll(); }}
-                    className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs outline-none">
-                    <option value="">Nobody</option>
-                    {riders.filter(r => r.isActive).map(r => (
-                      <option key={r.id} value={r.id}>{r.name}{r.vehicle ? ` (${r.vehicle})` : ''}</option>
-                    ))}
-                  </select>
+                  <CarrierSelect riders={riders} value={encodeCarrier(d)}
+                    onChange={async (v) => {
+                      try {
+                        await reassignDelivery(d.id, decodeCarrier(v));
+                        toast.success('Handed over');
+                        loadAll();
+                      } catch (err) { toast.error(err.response?.data?.error || 'Could not hand it over'); }
+                    }}
+                    className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs outline-none" />
                   <button onClick={() => openClose(d)}
                     className="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Delivered</button>
                   <button onClick={() => openFail(d)}
