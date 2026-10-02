@@ -210,6 +210,14 @@ export const acknowledgeRiderReport = (id, acknowledged) => api.put(`/deliveries
 export const getDeliveryFinances = (params) => api.get('/deliveries/finances', { params });
 export const getDeliveryActivity = (params) => api.get('/deliveries/activity', { params });
 
+// Out-of-town parcels, batched into the day's sessions
+export const getCourierRuns = (params) => api.get('/deliveries/runs', { params });
+export const addParcelsToRun = (data) => api.post('/deliveries/runs/parcels', data);
+export const removeParcelFromRun = (runId, deliveryId) => api.delete(`/deliveries/runs/${runId}/parcels/${deliveryId}`);
+export const dispatchCourierRun = (runId, data) => api.put(`/deliveries/runs/${runId}/dispatch`, data);
+export const getAwaitingPayment = () => api.get('/deliveries/awaiting-payment');
+export const confirmPaymentReceived = (deliveryId, data) => api.put(`/deliveries/${deliveryId}/payment-received`, data);
+
 // Name-only consultant list, for attributing a counter sale without exposing pay terms
 export const getConsultantNames = () => api.get('/consultants/names');
 

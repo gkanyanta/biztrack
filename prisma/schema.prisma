@@ -43,6 +43,7 @@ model Company {
   staffPayments      StaffPayment[]
   riderExpenses      RiderExpense[]
   riderDailyReports  RiderDailyReport[]
+  courierRuns        CourierRun[]
 }
 
 model User {
@@ -58,6 +59,7 @@ model User {
   statusChanges      OrderStatusLog[] @relation("StatusChanges")
   deliveriesAssigned Delivery[]       @relation("DeliveriesAssigned")
   salesRecorded      Sale[]           @relation("SalesRecorded")
+  runsDispatched     CourierRun[]     @relation("RunsDispatched")
 }
 
 model Product {
@@ -528,6 +530,7 @@ model Rider {
   deliveries   Delivery[]
   expenses     RiderExpense[]
   dailyReports RiderDailyReport[]
+  courierRuns  CourierRun[]
 
   @@index([companyId])
 }
@@ -538,6 +541,38 @@ model Rider {
 // What the rider spent out of his own pocket on the company's behalf — a Platinum courier fee,
 // fuel, airtime. Settlement is net: he hands over collections minus these, so an unsettled
 // expense reduces what he owes rather than triggering a separate reimbursement.
+// A courier run is one trip to one courier at one of the day's sessions. Parcels for out of town
+// go to Platinum rather than on the bike, and batching them into sessions is the whole point:
+// one trip with seven parcels instead of seven trips.
+//
+// Payment comes after dispatch, not before. The receipt Platinum gives for each parcel is sent
+// to the customer as proof it is on its way, and only then do they pay — so a dispatched parcel
+// is money owed, and the run is where that debt starts rather than where the job ends.
+model CourierRun {
+  id             String     @id @default(cuid())
+  // Which session: the morning, afternoon or day-end run.
+  slot           String
+  scheduledFor   DateTime
+  courier        String     @default("Platinum")
+  riderId        String?
+  rider          Rider?     @relation(fields: [riderId], references: [id])
+  status         String     @default("Open")
+  dispatchedAt   DateTime?
+  dispatchedById String?
+  dispatchedBy   User?      @relation("RunsDispatched", fields: [dispatchedById], references: [id])
+  notes          String?
+  companyId      String
+  company        Company    @relation(fields: [companyId], references: [id])
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deliveries     Delivery[]
+
+  // One run per courier per session per day, so adding a parcel finds the run rather than
+  // inventing a second one beside it.
+  @@unique([companyId, scheduledFor, courier])
+  @@index([companyId, status])
+}
+
 model RiderExpense {
   id              String            @id @default(cuid())
   riderId         String
@@ -612,6 +647,11 @@ model Delivery {
   courier                    String      @default("rider")
   // Whatever identifies the trip — a Yango reference, a driver, a plate.
   courierRef                 String?
+  // The run this parcel went out on, and the courier's receipt for it — the receipt is what the
+  // customer is sent as proof of dispatch, and what they pay against.
+  courierRunId               String?
+  courierRun                 CourierRun? @relation(fields: [courierRunId], references: [id])
+  courierReceiptNo           String?
   // Where the goods physically left from. Null means the warehouse; set means that consultant
   // handed them over out of their own stock, which is a dispatch nobody at the warehouse saw.
   dispatchedFromConsultantId String?
@@ -648,4 +688,5 @@ model Delivery {
   @@index([companyId, courier])
   @@index([dispatchedFromConsultantId])
   @@index([assignedById])
+  @@index([courierRunId])
 }

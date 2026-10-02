@@ -13,6 +13,8 @@ import {
 import RiderExpenseReview from '../components/RiderExpenseReview';
 import RiderReportReview from '../components/RiderReportReview';
 import DispatchActivity from '../components/DispatchActivity';
+import CourierRuns from '../components/CourierRuns';
+import AwaitingPayment from '../components/AwaitingPayment';
 import { useAuth } from '../hooks/useAuth';
 
 // money: true means the tab reads or moves money, which stays with an admin. The inventory
@@ -20,6 +22,8 @@ import { useAuth } from '../hooks/useAuth';
 const TABS = [
   { key: 'assign', label: 'Assign' },
   { key: 'active', label: 'In progress' },
+  { key: 'runs', label: 'Courier runs' },
+  { key: 'owed', label: 'Awaiting payment', money: true },
   { key: 'cash', label: 'Cash', money: true },
   { key: 'performance', label: 'Performance', money: true },
   { key: 'expenses', label: 'His spending', money: true },
@@ -441,6 +445,8 @@ export default function Deliveries() {
         </div>
       )}
 
+      {tab === 'runs' && <CourierRuns />}
+      {tab === 'owed' && <AwaitingPayment />}
       {tab === 'activity' && <DispatchActivity />}
       {tab === 'expenses' && <RiderExpenseReview />}
       {tab === 'reports' && <RiderReportReview />}

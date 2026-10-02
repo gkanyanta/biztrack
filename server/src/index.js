@@ -34,7 +34,9 @@ app.use(cors({
 // Rate limiting - general
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200,
+  // Right for real traffic. A full test run makes thousands of calls across seven suites and
+  // two backends, so it raises this rather than the suites being written around the ceiling.
+  max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 200,
   message: { error: 'Too many requests, please try again later' }
 }));
 

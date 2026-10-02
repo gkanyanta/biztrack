@@ -7,7 +7,7 @@ const { authenticate, requireAdmin, requireAdminOrInventory } = require('../midd
 // rider role, the same way consultants are scoped to their own sales.
 // (mirrored in api/index.js)
 
-const STATUSES = ['Assigned', 'PickedUp', 'Delivered', 'Failed'];
+const STATUSES = ['Assigned', 'PickedUp', 'AtCourier', 'Delivered', 'Failed'];
 
 // The company runs one hired bike and one rider, so "what does a delivery cost us" is simply
 // the weekly hire plus the monthly wage spread over the deliveries actually made. Kept as
@@ -972,6 +972,363 @@ router.put('/reports/:id/acknowledge', requireAdmin, async (req, res) => {
     res.json(await prisma.riderDailyReport.update({
       where: { id: report.id }, data: { acknowledgedAt: ack ? new Date() : null },
     }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- COURIER RUNS ----
+//
+// Out-of-town parcels go to Platinum rather than on the bike, and they go in batches: a morning,
+// an afternoon and a day-end run. A run is one trip to one courier at one session, so adding a
+// parcel finds that session's run rather than creating a trip of its own.
+//
+// Platinum charges per parcel, because each is going to a different customer in a different town,
+// so the fee is entered per parcel at dispatch along with its receipt number. The rider pays those
+// fees, so each one both lands on its order as the delivery cost and credits him what he laid out
+// — the same two facts a courier drop-off has always been.
+//
+// And payment comes after dispatch. The receipt is sent to the customer as proof the parcel is on
+// its way, and only then do they pay. So dispatching does not finish an order, it starts a debt,
+// which is why a dispatched parcel sits in an awaiting-payment list until somebody confirms the
+// money arrived. (mirrored in api/index.js)
+
+const COURIER_SLOTS = [
+  { key: '09:00', label: 'Morning run', hour: 9 },
+  { key: '13:00', label: 'Afternoon run', hour: 13 },
+  { key: '16:00', label: 'Day-end run', hour: 16 },
+];
+
+// The instant a session falls on, for a given Lusaka date. Stored as UTC like everything else.
+function runInstant(dateStr, hour) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hour - 2, 0, 0, 0));
+}
+
+function lusakaDateString(at = new Date()) {
+  return new Date(at.getTime() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// Which session a parcel ready now would make. After the last run of the day it is tomorrow's
+// first — saying so lets the warehouse tell a customer when their parcel actually leaves.
+function nextSlotFrom(at = new Date()) {
+  const local = new Date(at.getTime() + 2 * 3600 * 1000);
+  const hour = local.getUTCHours() + local.getUTCMinutes() / 60;
+  for (const s of COURIER_SLOTS) if (hour < s.hour) return { date: lusakaDateString(at), slot: s.key };
+  const tomorrow = new Date(at.getTime() + 24 * 3600 * 1000);
+  return { date: lusakaDateString(tomorrow), slot: COURIER_SLOTS[0].key };
+}
+
+const runInclude = {
+  rider: { select: { id: true, name: true, phone: true } },
+  dispatchedBy: { select: { id: true, name: true, username: true } },
+  deliveries: {
+    include: {
+      sale: {
+        select: {
+          id: true, orderNumber: true, customerName: true, customerPhone: true, customerCity: true,
+          deliveryAddress: true, totalPrice: true, amountPaid: true, paymentStatus: true,
+          shippingCost: true, shippingCharge: true,
+          consultant: { select: { id: true, name: true } },
+          items: { select: { qty: true, product: { select: { name: true } } } },
+        },
+      },
+    },
+    orderBy: { assignedAt: 'asc' },
+  },
+};
+
+function shapeRun(run) {
+  const parcels = (run.deliveries || []).map(d => ({
+    deliveryId: d.id,
+    status: d.status,
+    receiptNo: d.courierReceiptNo,
+    fee: parseFloat(d.sale?.shippingCost || 0),
+    billed: parseFloat(d.sale?.shippingCharge || 0),
+    saleId: d.saleId,
+    orderNumber: d.sale?.orderNumber,
+    customerName: d.sale?.customerName,
+    customerPhone: d.sale?.customerPhone,
+    town: d.sale?.customerCity,
+    address: d.sale?.deliveryAddress,
+    consultant: d.sale?.consultant?.name || null,
+    orderTotal: parseFloat(d.sale?.totalPrice || 0),
+    outstanding: Math.max(0, parseFloat(d.sale?.totalPrice || 0) - parseFloat(d.sale?.amountPaid || 0)),
+    paymentStatus: d.sale?.paymentStatus,
+    items: (d.sale?.items || []).map(i => ({ name: i.product?.name || 'Item', qty: i.qty })),
+  }));
+  const slot = COURIER_SLOTS.find(s => s.key === run.slot);
+  return {
+    id: run.id,
+    slot: run.slot,
+    slotLabel: slot ? slot.label : run.slot,
+    scheduledFor: run.scheduledFor,
+    courier: run.courier,
+    status: run.status,
+    rider: run.rider,
+    dispatchedAt: run.dispatchedAt,
+    dispatchedBy: run.dispatchedBy,
+    notes: run.notes,
+    parcels,
+    parcelCount: parcels.length,
+    towns: [...new Set(parcels.map(p => p.town).filter(Boolean))],
+    feesTotal: round2(parcels.reduce((s, p) => s + p.fee, 0)),
+    billedTotal: round2(parcels.reduce((s, p) => s + p.billed, 0)),
+    outstandingTotal: round2(parcels.reduce((s, p) => s + p.outstanding, 0)),
+  };
+}
+
+// The day's three sessions, whether or not a run exists for them yet — an empty session is still
+// a session, and seeing it is how the warehouse knows what is coming.
+router.get('/runs', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : lusakaDateString();
+    const courier = req.query.courier || 'Platinum';
+
+    const instants = COURIER_SLOTS.map(s => runInstant(date, s.hour));
+    const existing = await prisma.courierRun.findMany({
+      where: { companyId, courier, scheduledFor: { in: instants } },
+      include: runInclude,
+    });
+    const byInstant = {};
+    for (const r of existing) byInstant[r.scheduledFor.toISOString()] = r;
+
+    const sessions = COURIER_SLOTS.map((s, i) => {
+      const found = byInstant[instants[i].toISOString()];
+      if (found) return shapeRun(found);
+      return {
+        id: null, slot: s.key, slotLabel: s.label, scheduledFor: instants[i], courier,
+        status: 'Open', rider: null, parcels: [], parcelCount: 0, towns: [],
+        feesTotal: 0, billedTotal: 0, outstandingTotal: 0,
+      };
+    });
+
+    res.json({ date, courier, slots: COURIER_SLOTS, sessions, next: nextSlotFrom() });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Put prepared parcels on a session. Creates the run if that session has none yet.
+router.post('/runs/parcels', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const { saleIds, riderId, notes } = req.body;
+    const courier = req.body.courier || 'Platinum';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : lusakaDateString();
+    const slot = COURIER_SLOTS.find(s => s.key === req.body.slot);
+    if (!slot) return res.status(400).json({ error: `Slot must be one of ${COURIER_SLOTS.map(s => s.key).join(', ')}` });
+
+    const ids = Array.isArray(saleIds) ? saleIds : (req.body.saleId ? [req.body.saleId] : []);
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one order' });
+
+    const sales = await prisma.sale.findMany({
+      where: { id: { in: ids }, companyId },
+      select: { id: true, items: { select: { stockSourceConsultantId: true } } },
+    });
+    if (sales.length !== ids.length) return res.status(400).json({ error: 'One or more orders were not found' });
+    const already = await prisma.delivery.findMany({ where: { saleId: { in: ids } }, select: { saleId: true } });
+    if (already.length) return res.status(400).json({ error: `${already.length} of those orders are already on a run or out for delivery` });
+
+    const scheduledFor = runInstant(date, slot.hour);
+    const run = await prisma.courierRun.upsert({
+      where: { companyId_scheduledFor_courier: { companyId, scheduledFor, courier } },
+      update: { ...(riderId !== undefined && { riderId: riderId || null }), ...(notes !== undefined && { notes: notes || null }) },
+      create: { slot: slot.key, scheduledFor, courier, riderId: riderId || null, notes: notes || null, companyId },
+    });
+    if (run.status !== 'Open') return res.status(400).json({ error: 'That run has already gone out — put these on the next session' });
+
+    const originBySale = {};
+    for (const sale of sales) originBySale[sale.id] = dispatchOriginFor(sale.items);
+
+    await prisma.delivery.createMany({
+      data: ids.map(saleId => ({
+        saleId, courierRunId: run.id, courier: 'other', courierRef: courier,
+        riderId: null, dispatchedFromConsultantId: originBySale[saleId] || null,
+        assignedById: req.user.id, companyId,
+      })),
+    });
+
+    const full = await prisma.courierRun.findUnique({ where: { id: run.id }, include: runInclude });
+    res.status(201).json(shapeRun(full));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Take a parcel back off a run, while it is still open.
+router.delete('/runs/:id/parcels/:deliveryId', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const run = await prisma.courierRun.findFirst({ where: { id: req.params.id, companyId } });
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (run.status !== 'Open') return res.status(400).json({ error: 'That run has already gone out' });
+    const parcel = await prisma.delivery.findFirst({ where: { id: req.params.deliveryId, courierRunId: run.id, companyId } });
+    if (!parcel) return res.status(404).json({ error: 'That parcel is not on this run' });
+    await prisma.delivery.delete({ where: { id: parcel.id } });
+    const full = await prisma.courierRun.findUnique({ where: { id: run.id }, include: runInclude });
+    res.json(shapeRun(full));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// The run went out. Each parcel carries what Platinum charged for it and the receipt number that
+// becomes the customer's proof of dispatch — and the fee both lands on the order and credits the
+// rider who paid it.
+router.put('/runs/:id/dispatch', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const run = await prisma.courierRun.findFirst({
+      where: { id: req.params.id, companyId },
+      include: { deliveries: { select: { id: true, saleId: true } } },
+    });
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (run.status !== 'Open') return res.status(400).json({ error: 'That run has already gone out' });
+    if (!run.deliveries.length) return res.status(400).json({ error: 'There is nothing on this run' });
+
+    const entries = Array.isArray(req.body.parcels) ? req.body.parcels : [];
+    const onRun = new Set(run.deliveries.map(d => d.id));
+    const byDelivery = {};
+    for (const e of entries) {
+      if (!onRun.has(e.deliveryId)) return res.status(400).json({ error: 'A parcel in that list is not on this run' });
+      const fee = e.fee === undefined || e.fee === '' ? 0 : parseFloat(e.fee);
+      if (!Number.isFinite(fee) || fee < 0) return res.status(400).json({ error: 'Every fee must be zero or more' });
+      byDelivery[e.deliveryId] = { fee, receiptNo: e.receiptNo ? String(e.receiptNo).trim() : null };
+    }
+
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      for (const d of run.deliveries) {
+        const entry = byDelivery[d.id] || { fee: 0, receiptNo: null };
+        await tx.delivery.update({
+          where: { id: d.id },
+          // AtCourier, not Delivered: it is with Platinum, not with the customer.
+          data: { status: 'AtCourier', pickedUpAt: now, courierReceiptNo: entry.receiptNo },
+        });
+        if (entry.fee > 0) {
+          await shiftSaleShippingCost(tx, d.saleId, companyId, entry.fee);
+          // The rider paid it, so the company owes him — the same credit any courier drop earns.
+          if (run.riderId) {
+            await tx.riderExpense.create({
+              data: {
+                riderId: run.riderId, category: 'Platinum courier', amount: entry.fee,
+                description: `${run.courier} drop on the ${run.slot} run`,
+                saleId: d.saleId, rechargeable: true, onSaleShipping: true, companyId,
+              },
+            });
+          }
+        }
+      }
+      await tx.courierRun.update({
+        where: { id: run.id },
+        data: { status: 'Dispatched', dispatchedAt: now, dispatchedById: req.user.id },
+      });
+    }, { timeout: 30000 });
+
+    const full = await prisma.courierRun.findUnique({ where: { id: run.id }, include: runInclude });
+    res.json(shapeRun(full));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Dispatched and not yet paid for. This is a receivables queue, not a logistics one: the customer
+// has the receipt and owes the money, and nothing else in the system was watching for it.
+router.get('/awaiting-payment', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const role = req.user.role;
+    if (!['admin', 'superadmin', 'inventory', 'consultant'].includes(role)) {
+      return res.status(403).json({ error: 'Not available for this role' });
+    }
+    const where = {
+      companyId, status: 'AtCourier',
+      sale: { paymentStatus: { not: 'Paid' } },
+    };
+    // A consultant chases their own customer, so they see their own parcels and no others.
+    if (role === 'consultant') where.sale = { ...where.sale, consultantId: req.user.consultantId };
+
+    const parcels = await prisma.delivery.findMany({
+      where,
+      include: {
+        courierRun: { select: { id: true, slot: true, scheduledFor: true, courier: true } },
+        sale: {
+          select: {
+            id: true, orderNumber: true, customerName: true, customerPhone: true, customerCity: true,
+            totalPrice: true, amountPaid: true, paymentStatus: true,
+            consultant: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { pickedUpAt: 'asc' },
+      take: 300,
+    });
+
+    const rows = parcels.map(d => {
+      const outstanding = round2(Math.max(0, parseFloat(d.sale.totalPrice) - parseFloat(d.sale.amountPaid)));
+      const days = d.pickedUpAt ? Math.floor((Date.now() - d.pickedUpAt.getTime()) / 86400000) : null;
+      return {
+        deliveryId: d.id, saleId: d.sale.id, orderNumber: d.sale.orderNumber,
+        customerName: d.sale.customerName, customerPhone: d.sale.customerPhone, town: d.sale.customerCity,
+        consultant: d.sale.consultant?.name || null,
+        receiptNo: d.courierReceiptNo, courier: d.courierRun?.courier || d.courierRef,
+        dispatchedAt: d.pickedUpAt, daysWaiting: days,
+        orderTotal: parseFloat(d.sale.totalPrice), paid: parseFloat(d.sale.amountPaid), outstanding,
+      };
+    });
+
+    res.json({
+      parcels: rows,
+      total: round2(rows.reduce((s, r) => s + r.outstanding, 0)),
+      // The ones worth a phone call rather than a wait.
+      overdue: rows.filter(r => (r.daysWaiting || 0) >= 3).length,
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// The customer paid against the receipt. Records it as a real payment on the order and closes the
+// parcel, because with nobody confirming receipt this is the only ending the order ever gets.
+router.put('/:id/payment-received', requireAdminOrInventory, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const parcel = await prisma.delivery.findFirst({
+      where: { id: req.params.id, companyId },
+      include: { sale: { select: { id: true, totalPrice: true, amountPaid: true, status: true } } },
+    });
+    if (!parcel) return res.status(404).json({ error: 'Parcel not found' });
+    if (parcel.status !== 'AtCourier') return res.status(400).json({ error: 'That parcel has not been dispatched to a courier' });
+
+    const outstanding = round2(parseFloat(parcel.sale.totalPrice) - parseFloat(parcel.sale.amountPaid));
+    const amount = req.body.amount === undefined || req.body.amount === '' ? outstanding : parseFloat(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'The amount must be more than zero' });
+    if (amount > outstanding + 0.01) return res.status(400).json({ error: `That is more than the ${outstanding.toFixed(2)} outstanding` });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.creditPayment.create({
+        data: {
+          saleId: parcel.sale.id, amount, paymentMethod: req.body.paymentMethod || 'Mobile Money',
+          reference: parcel.courierReceiptNo ? `Against ${parcel.courierRef || 'courier'} receipt ${parcel.courierReceiptNo}` : 'Paid after dispatch',
+          notes: 'Customer paid after being sent the courier receipt',
+          companyId,
+        },
+      });
+      const newPaid = round2(parseFloat(parcel.sale.amountPaid) + amount);
+      const paymentStatus = newPaid >= parseFloat(parcel.sale.totalPrice) ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
+      await tx.sale.update({ where: { id: parcel.sale.id }, data: { amountPaid: newPaid, paymentStatus } });
+
+      // Paid in full is the end of it. Nobody confirms the customer received the parcel, so
+      // payment against the receipt is the closest thing to proof the order completed.
+      if (paymentStatus === 'Paid') {
+        await tx.delivery.update({ where: { id: parcel.id }, data: { status: 'Delivered', deliveredAt: new Date() } });
+        if (['Confirmed', 'Shipped'].includes(parcel.sale.status)) {
+          await tx.sale.update({ where: { id: parcel.sale.id }, data: { status: 'Delivered' } });
+          await tx.orderStatusLog.create({
+            data: { saleId: parcel.sale.id, fromStatus: parcel.sale.status, toStatus: 'Delivered', byUserId: req.user.id, companyId },
+          });
+        }
+      }
+      return tx.delivery.findUnique({ where: { id: parcel.id }, include: deliveryInclude });
+    }, { timeout: 20000 });
+
+    res.json(shapeDelivery(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

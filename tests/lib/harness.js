@@ -125,8 +125,9 @@ async function startBackend(which, testUrl) {
     DATABASE_URL_UNPOOLED: testUrl,
     JWT_SECRET: 'test-secret-not-a-real-one',
     PORT: String(cfg.port),
-    // See the comment on the limiter in both entry points.
+    // See the comments on both limiters in the entry points.
     AUTH_RATE_LIMIT_MAX: '100000',
+    RATE_LIMIT_MAX: '1000000',
   };
   const proc = cfg.start(env);
   let log = '';
