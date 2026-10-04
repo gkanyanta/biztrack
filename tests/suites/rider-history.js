@@ -137,6 +137,29 @@ module.exports = {
     const reread = await greg('GET', `/deliveries/my/report?date=${dayKey(threeDaysAgo)}`);
     near('and it reads back with that day\'s figures', reread.body.actuals.cashCollected, 400);
 
+    section('a car is not asked for a daily report');
+    // The owner delivers sometimes. His rider record carries his admin login, not a rider one,
+    // and he is not going to send himself a report — counting every drop of his as a missing
+    // report was noise on a screen whose whole job is to show what needs attention.
+    const ownerUser = await prisma.user.findFirst({ where: { username: 'boss' }, select: { id: true } });
+    const car = await prisma.rider.create({
+      data: { name: 'The Owner', vehicle: 'Car', userId: ownerUser.id, companyId: seed.companyId },
+    });
+    const carDrop = await order('ORD-CAR');
+    await prisma.delivery.create({
+      data: {
+        saleId: carDrop.id, riderId: car.id, status: 'Delivered',
+        assignedAt: threeDaysAgo, deliveredAt: threeDaysAgo,
+        cashCollected: 0, companyId: seed.companyId,
+      },
+    });
+    const carHist = await admin('GET', `/deliveries/riders/${car.id}/history`);
+    eq('his day is still there', carHist.body.days.some(d => d.date === dayKey(threeDaysAgo)), true);
+    eq('but no report is expected of him', carHist.body.rider.expectsReports, false);
+    eq('so nothing is counted as missing', carHist.body.totals.reportsMissing, 0);
+    const gregHist = await admin('GET', `/deliveries/riders/${seed.gregRiderId}/history`);
+    eq('while a rider with a login is still expected to report', gregHist.body.rider.expectsReports, true);
+
     section('a fare on a mid-flight handover lands on the order');
     const moving = await order('ORD-HANDOVER', 600);
     const assigned = await admin('POST', '/deliveries', { saleIds: [moving.id], riderId: seed.gregRiderId });

@@ -170,7 +170,7 @@ export default function RiderHistory() {
                           {day.settled
                             ? <span className="text-[11px] px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full flex items-center gap-1"><FiCheck size={10} /> settled</span>
                             : <span className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full">needs attention</span>}
-                          {!day.report && (day.delivered > 0 || day.failed > 0) && (
+                          {data.rider.expectsReports && !day.report && (day.delivered > 0 || day.failed > 0) && (
                             <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">no report</span>
                           )}
                         </div>

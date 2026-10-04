@@ -3944,6 +3944,36 @@ function delivery_shapeDelivery(d) {
   };
 }
 
+// Whether the office has signed off a rider's completed drop, and so whether he may still
+// correct it himself.
+//
+// He closes a drop on his phone with a cash figure and an outcome, and he sometimes gets one
+// wrong — the wrong amount, or marked failed when the customer paid at the second knock. Sending
+// him to the office for every slip was needless; what the office actually needs is that nothing
+// changes under a figure it has already acted on. Two things count as having acted: the cash was
+// posted to the order's ledger, or the day's report was checked. After either, a change on his
+// phone would quietly disagree with the books, so it has to come from the office.
+//
+// Returns a reason to refuse, or null to allow. (mirrored in server/src/routes/deliveries.js)
+async function delivery_riderSignOffBlock(delivery, companyId) {
+  if (delivery.cashRemitted) {
+    return 'The office has already banked this cash, so only they can change it now';
+  }
+  const key = localDayKey(delivery.deliveredAt || delivery.failedAt || delivery.assignedAt);
+  const checked = await prisma.riderDailyReport.findFirst({
+    where: {
+      riderId: delivery.riderId, companyId,
+      date: new Date(key + 'T00:00:00.000Z'),
+      acknowledgedAt: { not: null },
+    },
+    select: { id: true },
+  });
+  if (checked) {
+    return 'The office has already checked your report for that day, so only they can change it now';
+  }
+  return null;
+}
+
 // ---- CASH AND THE LEDGER ----
 // The rider records what he took at the door, and nothing reaches the books until the office
 // confirms the money arrived. That confirmation posts a CreditPayment against the order, so
@@ -4093,6 +4123,17 @@ app.get('/api/v1/deliveries/my/runs', authenticate, async (req, res) => {
       prisma.rider.findUnique({ where: { id: req.user.riderId }, select: { id: true, name: true } }),
     ]);
 
+    // Once the office has checked the day's report, his finished drops are theirs to correct.
+    const checkedReport = await prisma.riderDailyReport.findFirst({
+      where: {
+        riderId: req.user.riderId, companyId,
+        date: new Date(day.key + 'T00:00:00.000Z'),
+        acknowledgedAt: { not: null },
+      },
+      select: { id: true },
+    });
+    const dayChecked = !!checkedReport;
+
     const delivered = todayDone.filter(d => d.status === 'Delivered');
     const cashToday = delivered.reduce((s, d) => s + parseFloat(d.cashCollected), 0);
     const cashUnremitted = delivered.filter(d => !d.cashRemitted).reduce((s, d) => s + parseFloat(d.cashCollected), 0);
@@ -4101,6 +4142,8 @@ app.get('/api/v1/deliveries/my/runs', authenticate, async (req, res) => {
       rider,
       date: day.key,
       isToday,
+      // Whether he can still fix a mistake on this day's finished drops himself.
+      dayChecked,
       open: open.map(delivery_shapeDelivery),
       completedToday: todayDone.map(delivery_shapeDelivery),
       today: {
@@ -4237,8 +4280,10 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
     const delivery = await prisma.delivery.findFirst({ where, include: { sale: { select: { id: true, status: true, totalPrice: true, amountPaid: true, paymentStatus: true } } } });
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-    if (delivery.status === 'Delivered' && req.user.role === 'rider') {
-      return res.status(400).json({ error: 'This delivery is already completed — ask an admin to correct it' });
+    // He may correct his own finished work right up until the office has acted on it.
+    if (req.user.role === 'rider' && (delivery.status === 'Delivered' || delivery.status === 'Failed')) {
+      const blocked = await delivery_riderSignOffBlock(delivery, companyId);
+      if (blocked) return res.status(400).json({ error: blocked });
     }
     if (status === 'Failed' && !String(failureReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a delivery fails' });
@@ -4248,7 +4293,9 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
     const now = new Date();
     if (status === 'PickedUp' && !delivery.pickedUpAt) data.pickedUpAt = now;
     if (status === 'Delivered') {
-      data.deliveredAt = now;
+      // Only stamp the time on a drop that was not already delivered. Correcting the cash on a
+      // completed one must not move it to today, or it leaves the day it belongs to.
+      if (delivery.status !== 'Delivered' || !delivery.deliveredAt) data.deliveredAt = now;
       data.failedAt = null;
       data.failureReason = null;
       if (recipientName !== undefined) data.recipientName = recipientName || null;
@@ -4259,7 +4306,7 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
       }
     }
     if (status === 'Failed') {
-      data.failedAt = now;
+      if (delivery.status !== 'Failed' || !delivery.failedAt) data.failedAt = now;
       data.failureReason = String(failureReason).trim();
       data.deliveredAt = null;
     }
@@ -4758,9 +4805,16 @@ app.get('/api/v1/deliveries/riders/:id/history', authenticate, requireAdmin, asy
     const companyId = req.user.companyId;
     const rider = await prisma.rider.findFirst({
       where: { id: req.params.id, companyId },
-      select: { id: true, name: true, vehicle: true, phone: true, isActive: true },
+      select: { id: true, name: true, vehicle: true, phone: true, isActive: true, userId: true },
     });
     if (!rider) return res.status(404).json({ error: 'Not found' });
+    // A daily report is only expected from somebody who files them. The owner's car is in here
+    // because he delivers sometimes, and he is not going to send himself a report — counting
+    // every one of his drops as a missing report was just noise.
+    const linked = rider.userId
+      ? await prisma.user.findUnique({ where: { id: rider.userId }, select: { role: true } })
+      : null;
+    const expectsReports = linked?.role === 'rider';
 
     // A fortnight back by default: long enough to catch a day nobody balanced, short enough
     // to read. Both ends are Zambian days, not UTC ones.
@@ -4851,7 +4905,8 @@ app.get('/api/v1/deliveries/riders/:id/history', authenticate, requireAdmin, asy
     }));
 
     res.json({
-      rider, from, to,
+      rider: { ...rider, expectsReports },
+      from, to,
       days: list,
       totals: {
         delivered: list.reduce((s, d) => s + d.delivered, 0),
@@ -4861,7 +4916,9 @@ app.get('/api/v1/deliveries/riders/:id/history', authenticate, requireAdmin, asy
         cashStillHeld: round2(list.reduce((s, d) => s + d.cashHeld, 0)),
         expenses: round2(list.reduce((s, d) => s + d.expenses, 0)),
         daysUnsettled: list.filter(d => !d.settled).length,
-        reportsMissing: list.filter(d => !d.report && (d.delivered > 0 || d.failed > 0)).length,
+        reportsMissing: expectsReports
+          ? list.filter(d => !d.report && (d.delivered > 0 || d.failed > 0)).length
+          : 0,
       },
       // Where he stands overall, which is a balance rather than a window figure.
       account: await riderAccount(prisma, rider.id, companyId),

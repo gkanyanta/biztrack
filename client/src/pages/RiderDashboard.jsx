@@ -3,7 +3,7 @@ import { getMyRuns, updateDeliveryStatus } from '../services/api';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
-import { FiPhone, FiMapPin, FiPackage, FiCheck, FiX, FiTruck, FiDollarSign, FiNavigation, FiChevronLeft, FiChevronRight, FiCalendar } from 'react-icons/fi';
+import { FiPhone, FiMapPin, FiPackage, FiCheck, FiX, FiTruck, FiDollarSign, FiNavigation, FiChevronLeft, FiChevronRight, FiCalendar, FiEdit2, FiLock } from 'react-icons/fi';
 import RiderExpenses from '../components/RiderExpenses';
 import RiderDayReport from '../components/RiderDayReport';
 
@@ -82,9 +82,26 @@ export default function RiderDashboard() {
   };
 
   const openComplete = (d) => {
-    setForm({ recipientName: '', cashCollected: d.amountToCollect > 0 ? String(d.amountToCollect) : '0' });
+    const done = d.status === 'Delivered';
+    setForm({
+      recipientName: done ? (d.recipientName || '') : '',
+      cashCollected: done ? String(parseFloat(d.cashCollected) || 0)
+                          : (d.amountToCollect > 0 ? String(d.amountToCollect) : '0'),
+    });
     setCompleting(d);
   };
+
+  const openFail = (d) => {
+    setFailForm({
+      failureReason: d.failureReason && FAILURE_REASONS.includes(d.failureReason) ? d.failureReason : FAILURE_REASONS[0],
+      notes: d.notes || '',
+    });
+    setFailing(d);
+  };
+
+  // He can fix his own finished work until the office has acted on it — banked the cash or checked
+  // the day. After that a change here would disagree with their books, so it is theirs to make.
+  const canFix = (d) => !d.cashRemitted && !data?.dayChecked;
 
   if (loading) return <LoadingSpinner />;
   if (!data) return <p className="text-red-500">Could not load your runs.</p>;
@@ -215,7 +232,7 @@ export default function RiderDashboard() {
                       <FiCheck size={15} /> Delivered
                     </button>
                   )}
-                  <button onClick={() => { setFailForm({ failureReason: FAILURE_REASONS[0], notes: '' }); setFailing(d); }} disabled={busyId === d.id}
+                  <button onClick={() => openFail(d)} disabled={busyId === d.id}
                     className="px-4 py-3 border border-red-200 text-red-600 rounded-xl text-sm font-medium disabled:opacity-50">
                     <FiX size={15} />
                   </button>
@@ -253,6 +270,16 @@ export default function RiderDashboard() {
                   ) : (
                     <span className="text-xs font-medium text-red-500">Failed</span>
                   )}
+                  {canFix(d) ? (
+                    <button onClick={() => (d.status === 'Delivered' ? openComplete(d) : openFail(d))}
+                      className="mt-1 text-xs font-medium text-slate-600 underline flex items-center gap-1 ml-auto">
+                      <FiEdit2 size={11} /> Fix
+                    </button>
+                  ) : (
+                    <div className="mt-1 text-[11px] text-gray-400 flex items-center gap-1 justify-end">
+                      <FiLock size={10} /> with the office
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -264,7 +291,7 @@ export default function RiderDashboard() {
       {completing && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={() => setCompleting(null)}>
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-gray-800">Confirm delivery</h3>
+            <h3 className="font-semibold text-gray-800">{completing.status === 'Delivered' ? 'Fix this delivery' : 'Confirm delivery'}</h3>
             <p className="text-sm text-gray-500">{completing.customerName} · {completing.orderNumber}</p>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Who received it?</label>
@@ -285,9 +312,14 @@ export default function RiderDashboard() {
               <button disabled={busyId === completing.id}
                 onClick={() => setStatus(completing, 'Delivered', { recipientName: form.recipientName, cashCollected: parseFloat(form.cashCollected) || 0 })}
                 className="flex-1 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">
-                {busyId === completing.id ? 'Saving…' : 'Confirm'}
+                {busyId === completing.id ? 'Saving…' : completing.status === 'Delivered' ? 'Save the fix' : 'Confirm'}
               </button>
             </div>
+            {completing.status === 'Delivered' && (
+              // Sometimes the fix is the outcome itself, not the figures.
+              <button onClick={() => { const d = completing; setCompleting(null); openFail(d); }}
+                className="w-full text-xs text-red-600 underline">It did not actually arrive</button>
+            )}
           </div>
         </div>
       )}
@@ -296,7 +328,7 @@ export default function RiderDashboard() {
       {failing && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={() => setFailing(null)}>
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-gray-800">What went wrong?</h3>
+            <h3 className="font-semibold text-gray-800">{failing.status === 'Failed' ? 'Fix what you reported' : 'What went wrong?'}</h3>
             <p className="text-sm text-gray-500">{failing.customerName} · {failing.orderNumber}</p>
             <div className="space-y-2">
               {FAILURE_REASONS.map(reason => (
@@ -308,12 +340,17 @@ export default function RiderDashboard() {
             </div>
             <input value={failForm.notes} onChange={e => setFailForm({ ...failForm, notes: e.target.value })}
               placeholder="Anything to add (optional)" className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+            {failing.status === 'Delivered' && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+                You marked this one delivered. Saving this takes it back off, and takes the {formatMoney(failing.cashCollected)} with it.
+              </p>
+            )}
             <div className="flex gap-2">
               <button onClick={() => setFailing(null)} className="flex-1 py-3 border border-gray-200 rounded-xl text-sm font-medium">Cancel</button>
               <button disabled={busyId === failing.id}
                 onClick={() => setStatus(failing, 'Failed', { failureReason: failForm.failureReason, notes: failForm.notes })}
                 className="flex-1 py-3 bg-red-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">
-                {busyId === failing.id ? 'Saving…' : 'Report'}
+                {busyId === failing.id ? 'Saving…' : failing.status === 'Failed' ? 'Save the fix' : 'Report'}
               </button>
             </div>
           </div>
