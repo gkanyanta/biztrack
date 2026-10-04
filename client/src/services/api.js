@@ -173,7 +173,8 @@ export const getRiders = (params) => api.get('/deliveries/riders', { params });
 export const createRider = (data) => api.post('/deliveries/riders', data);
 export const updateRider = (id, data) => api.put(`/deliveries/riders/${id}`, data);
 export const createRiderLogin = (id, data) => api.post(`/deliveries/riders/${id}/login`, data);
-export const getMyRuns = () => api.get('/deliveries/my/runs');
+// A date looks back at a day already worked; without one it is today.
+export const getMyRuns = (date) => api.get('/deliveries/my/runs', { params: date ? { date } : undefined });
 export const getUnassignedOrders = (params) => api.get('/deliveries/unassigned', { params });
 export const getDeliveries = (params) => api.get('/deliveries', { params });
 export const assignDeliveries = (data) => api.post('/deliveries', data);
@@ -211,6 +212,8 @@ export const getRiderReports = (params) => api.get('/deliveries/reports', { para
 export const acknowledgeRiderReport = (id, acknowledged) => api.put(`/deliveries/reports/${id}/acknowledge`, { acknowledged });
 export const getDeliveryFinances = (params) => api.get('/deliveries/finances', { params });
 export const getDeliveryActivity = (params) => api.get('/deliveries/activity', { params });
+// One rider's whole record over a stretch of days: runs, cash, spending and what he reported.
+export const getRiderHistory = (id, params) => api.get(`/deliveries/riders/${id}/history`, { params });
 
 // Out-of-town parcels, batched into the day's sessions
 export const getCourierRuns = (params) => api.get('/deliveries/runs', { params });

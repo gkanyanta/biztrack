@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { getMyRuns, updateDeliveryStatus } from '../services/api';
-import { formatMoney } from '../utils/format';
+import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
-import { FiPhone, FiMapPin, FiPackage, FiCheck, FiX, FiTruck, FiDollarSign, FiNavigation } from 'react-icons/fi';
+import { FiPhone, FiMapPin, FiPackage, FiCheck, FiX, FiTruck, FiDollarSign, FiNavigation, FiChevronLeft, FiChevronRight, FiCalendar } from 'react-icons/fi';
 import RiderExpenses from '../components/RiderExpenses';
 import RiderDayReport from '../components/RiderDayReport';
 
@@ -18,6 +18,13 @@ const RIDER_TABS = [
 // The rider's whole app. Built for one hand on a phone: big targets, no tables, no nav
 // beyond this page. Everything he needs for a drop is on the card — who, where, what,
 // and how much to collect.
+
+// Walk one day along from a YYYY-MM-DD key.
+function shiftDay(key, delta) {
+  const d = new Date(key + 'T12:00:00.000Z');
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
 
 const FAILURE_REASONS = [
   'Customer not available',
@@ -52,8 +59,11 @@ export default function RiderDashboard() {
   const [form, setForm] = useState({ recipientName: '', cashCollected: '' });
   const [failForm, setFailForm] = useState({ failureReason: FAILURE_REASONS[0], notes: '' });
 
-  const load = () => getMyRuns().then(res => setData(res.data)).finally(() => setLoading(false));
-  useEffect(() => { load(); }, []);
+  // Which day he is looking at. Today unless he steps back, and stepping back is the point:
+  // his own record used to end at midnight, so a day he had not settled was gone by morning.
+  const [date, setDate] = useState(null);
+  const load = () => getMyRuns(date).then(res => setData(res.data)).finally(() => setLoading(false));
+  useEffect(() => { setLoading(true); load(); }, [date]);
 
   const setStatus = async (d, status, extra = {}) => {
     if (busyId) return;
@@ -103,6 +113,23 @@ export default function RiderDashboard() {
       {tab === 'report' && <RiderDayReport />}
 
       {tab === 'runs' && (<>
+      {/* Yesterday and the days before it, one tap back at a time. */}
+      <div className="flex items-center justify-between gap-2 bg-white rounded-xl border border-gray-200 px-2 py-2">
+        <button onClick={() => setDate(shiftDay(data.date, -1))}
+          className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 active:bg-gray-100 flex items-center gap-1">
+          <FiChevronLeft size={16} /> Earlier
+        </button>
+        <div className="text-sm font-semibold text-gray-800">{data.isToday ? 'Today' : formatDate(data.date)}</div>
+        {data.isToday ? (
+          <span className="px-3 py-2 text-sm text-transparent select-none">Later</span>
+        ) : (
+          <button onClick={() => setDate(shiftDay(data.date, 1))}
+            className="px-3 py-2 rounded-lg text-sm font-medium text-gray-600 active:bg-gray-100 flex items-center gap-1">
+            Later <FiChevronRight size={16} />
+          </button>
+        )}
+      </div>
+
       <div className="grid grid-cols-4 gap-2">
         <Stat label="Delivered" value={today.delivered} tone="green" />
         <Stat label="Still out" value={today.outstanding} />
@@ -110,13 +137,14 @@ export default function RiderDashboard() {
         <Stat label="Cash held" value={formatMoney(today.cashToRemit)} tone={today.cashToRemit > 0 ? 'amber' : 'slate'} />
       </div>
 
-      {today.cashToRemit > 0 && (
+      {today.cashToRemit > 0 && data.isToday && (
         <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
           <FiDollarSign className="mt-0.5 shrink-0" size={16} />
           <span>You are holding <strong>{formatMoney(today.cashToRemit)}</strong> in customer payments. Hand it in before the end of the day.</span>
         </div>
       )}
 
+      {data.isToday && (
       <div>
         <h3 className="text-sm font-semibold text-gray-700 mb-2">To deliver</h3>
         {open.length === 0 ? (
@@ -197,10 +225,18 @@ export default function RiderDashboard() {
           </div>
         )}
       </div>
+      )}
+
+      {completedToday.length === 0 && !data.isToday && (
+        <div className="text-center py-10 bg-white rounded-xl border border-gray-100">
+          <FiCalendar className="mx-auto mb-2 text-gray-300" size={28} />
+          <p className="text-gray-500 text-sm">Nothing recorded on this day.</p>
+        </div>
+      )}
 
       {completedToday.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Done today</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">{data.isToday ? 'Done today' : 'Done that day'}</h3>
           <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
             {completedToday.map(d => (
               <div key={d.id} className="flex items-center justify-between px-4 py-3">

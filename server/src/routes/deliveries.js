@@ -242,16 +242,25 @@ router.get('/my/runs', async (req, res) => {
     if (req.user.role !== 'rider') return res.status(403).json({ error: 'Rider access required' });
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const now = new Date();
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // ?date= lets him look back at a day he has already worked. Without it this showed today
+    // and nothing else, so a day that went unbalanced was gone by morning.
+    const day = localDayBounds(req.query.date);
+    const isToday = day.key === localDayKey(new Date());
 
     const [open, todayDone, rider] = await Promise.all([
-      prisma.delivery.findMany({
+      // Open runs are open whatever day you ask about — they are work still to do, not history.
+      isToday ? prisma.delivery.findMany({
         where: { companyId, riderId: req.user.riderId, status: { in: ['Assigned', 'PickedUp'] } },
         include: deliveryInclude, orderBy: { assignedAt: 'asc' },
-      }),
+      }) : [],
       prisma.delivery.findMany({
-        where: { companyId, riderId: req.user.riderId, status: { in: ['Delivered', 'Failed'] }, updatedAt: { gte: dayStart } },
+        where: {
+          companyId, riderId: req.user.riderId, status: { in: ['Delivered', 'Failed'] },
+          OR: [
+            { deliveredAt: { gte: day.start, lte: day.end } },
+            { failedAt: { gte: day.start, lte: day.end } },
+          ],
+        },
         include: deliveryInclude, orderBy: { updatedAt: 'desc' },
       }),
       prisma.rider.findUnique({ where: { id: req.user.riderId }, select: { id: true, name: true } }),
@@ -263,6 +272,8 @@ router.get('/my/runs', async (req, res) => {
 
     res.json({
       rider,
+      date: day.key,
+      isToday,
       open: open.map(shapeDelivery),
       completedToday: todayDone.map(shapeDelivery),
       today: {
@@ -270,8 +281,8 @@ router.get('/my/runs', async (req, res) => {
         delivered: delivered.length,
         failed: todayDone.filter(d => d.status === 'Failed').length,
         outstanding: open.length,
-        cashCollected: cashToday,
-        cashToRemit: cashUnremitted,
+        cashCollected: round2(cashToday),
+        cashToRemit: round2(cashUnremitted),
       },
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -473,17 +484,30 @@ router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
     if (isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
     }
+    // The fare for a trip booked now, which belongs on the order as its delivery cost. No rider
+    // credit: the office books and pays a courier directly, unlike a parcel one of ours carries
+    // to a counter out of his own pocket.
+    let handoverFare = null;
+    if (isHiredCourier(courier) && req.body.courierCost !== undefined && req.body.courierCost !== '') {
+      handoverFare = parseFloat(req.body.courierCost);
+      if (!Number.isFinite(handoverFare) || handoverFare < 0) {
+        return res.status(400).json({ error: 'The fare must be zero or more' });
+      }
+    }
     if (riderId) {
       const rider = await prisma.rider.findFirst({ where: { id: riderId, companyId } });
       if (!rider) return res.status(404).json({ error: 'Rider not found' });
     }
-    const updated = await prisma.delivery.update({ where: { id: delivery.id }, data: {
-      riderId: isHiredCourier(courier) ? null : (riderId || null),
-      courier,
-      // Handing a run to somebody else is a dispatch decision of its own.
-      assignedById: req.user.id,
-      ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
-    }, include: deliveryInclude });
+    const updated = await prisma.$transaction(async (tx) => {
+      if (handoverFare !== null) await shiftSaleShippingCost(tx, delivery.saleId, companyId, handoverFare);
+      return tx.delivery.update({ where: { id: delivery.id }, data: {
+        riderId: isHiredCourier(courier) ? null : (riderId || null),
+        courier,
+        // Handing a run to somebody else is a dispatch decision of its own.
+        assignedById: req.user.id,
+        ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
+      }, include: deliveryInclude });
+    }, { timeout: 20000 });
     res.json(shapeDelivery(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -634,6 +658,21 @@ router.get('/performance', requireAdmin, async (req, res) => {
 //   netDue     = holding - owedToRider, which is what should physically change hands
 //
 // A negative netDue means the company owes him. (mirrored in api/index.js)
+
+// Zambia sits at UTC+2 all year, and the server runs on UTC. Without saying so, a delivery
+// made at half past midnight belongs to the wrong day on every screen that shows one.
+const ZM_OFFSET_MS = 2 * 60 * 60 * 1000;
+// Which Zambian day a moment falls on.
+function localDayKey(d) {
+  if (!d) return null;
+  return new Date(new Date(d).getTime() + ZM_OFFSET_MS).toISOString().slice(0, 10);
+}
+// The UTC instants a Zambian day runs between, so a query asks for the day people mean.
+function localDayBounds(dateStr) {
+  const key = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : localDayKey(new Date());
+  const start = new Date(new Date(key + 'T00:00:00.000Z').getTime() - ZM_OFFSET_MS);
+  return { key, start, end: new Date(start.getTime() + 86400000 - 1) };
+}
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -995,6 +1034,131 @@ router.put('/reports/:id/acknowledge', requireAdmin, async (req, res) => {
     res.json(await prisma.riderDailyReport.update({
       where: { id: report.id }, data: { acknowledgedAt: ack ? new Date() : null },
     }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// A rider's whole picture for a stretch of days — what he carried, what cash passed through his
+// hands, what he laid out, and what he said about each day.
+//
+// There was nowhere to see any of this. His own screen showed today and dropped yesterday at
+// midnight. The office saw open runs and cash still owed, but a delivery completed with nothing
+// to collect simply vanished the moment it was done. So a day that was not balanced on the day
+// could not be balanced afterwards: the records were there, and no screen would show them.
+// (mirrored in api/index.js)
+router.get('/riders/:id/history', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const rider = await prisma.rider.findFirst({
+      where: { id: req.params.id, companyId },
+      select: { id: true, name: true, vehicle: true, phone: true, isActive: true },
+    });
+    if (!rider) return res.status(404).json({ error: 'Not found' });
+
+    // A fortnight back by default: long enough to catch a day nobody balanced, short enough
+    // to read. Both ends are Zambian days, not UTC ones.
+    const toDay = localDayBounds(req.query.to);
+    const from = req.query.from ? localDayBounds(req.query.from).start
+                                : localDayBounds(localDayKey(new Date(toDay.start.getTime() - 13 * 86400000))).start;
+    const to = toDay.end;
+
+    const [deliveries, reports, expenses] = await Promise.all([
+      // Every delivery that touched this window, by when it was assigned or finished, so a run
+      // assigned late one night and delivered the next morning shows on both days it belongs to.
+      prisma.delivery.findMany({
+        where: {
+          companyId, riderId: rider.id,
+          OR: [
+            { assignedAt: { gte: from, lte: to } },
+            { deliveredAt: { gte: from, lte: to } },
+            { failedAt: { gte: from, lte: to } },
+          ],
+        },
+        include: deliveryInclude,
+        orderBy: { assignedAt: 'desc' },
+        take: 500,
+      }),
+      prisma.riderDailyReport.findMany({
+        where: { companyId, riderId: rider.id, date: { gte: from, lte: to } },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.riderExpense.findMany({
+        where: { companyId, riderId: rider.id, date: { gte: from, lte: to } },
+        include: { sale: { select: { orderNumber: true } } },
+        orderBy: { date: 'desc' },
+      }),
+    ]);
+
+    // Grouped by the day the work actually landed on, because balancing is a per-day job.
+    const dayOf = localDayKey;
+    const days = {};
+    const touch = (key) => {
+      if (!days[key]) {
+        days[key] = {
+          date: key, delivered: 0, failed: 0, assigned: 0,
+          cashCollected: 0, cashRemitted: 0, cashHeld: 0,
+          expenses: 0, report: null, deliveries: [],
+        };
+      }
+      return days[key];
+    };
+
+    for (const d of deliveries) {
+      const key = dayOf(d.deliveredAt || d.failedAt || d.assignedAt);
+      const day = touch(key);
+      day.deliveries.push(shapeDelivery(d));
+      if (d.status === 'Delivered') {
+        day.delivered += 1;
+        const cash = parseFloat(d.cashCollected);
+        day.cashCollected = round2(day.cashCollected + cash);
+        if (d.cashRemitted) day.cashRemitted = round2(day.cashRemitted + cash);
+        else day.cashHeld = round2(day.cashHeld + cash);
+      } else if (d.status === 'Failed') day.failed += 1;
+      else day.assigned += 1;
+    }
+    for (const e of expenses) {
+      const day = touch(dayOf(e.date));
+      day.expenses = round2(day.expenses + parseFloat(e.amount));
+    }
+    for (const r of reports) {
+      const day = touch(dayOf(r.date));
+      day.report = {
+        id: r.id,
+        deliveriesCompleted: r.deliveriesCompleted, deliveriesFailed: r.deliveriesFailed,
+        cashCollected: parseFloat(r.cashCollected), expensesPaid: parseFloat(r.expensesPaid),
+        cashHandedOver: parseFloat(r.cashHandedOver), closingFloat: parseFloat(r.closingFloat),
+        submittedAt: r.submittedAt, acknowledgedAt: r.acknowledgedAt,
+      };
+    }
+
+    // A day is only settled when nothing is still held and his own money is back.
+    const list = Object.values(days).sort((a, b) => (a.date < b.date ? 1 : -1)).map(day => ({
+      ...day,
+      // What the records say against what he said, which is the whole reason to look at a past day.
+      variance: day.report ? {
+        deliveriesCompleted: day.report.deliveriesCompleted - day.delivered,
+        cashCollected: round2(day.report.cashCollected - day.cashCollected),
+        expensesPaid: round2(day.report.expensesPaid - day.expenses),
+      } : null,
+      settled: day.cashHeld === 0 && (!day.report || !!day.report.acknowledgedAt),
+    }));
+
+    res.json({
+      rider, from, to,
+      days: list,
+      totals: {
+        delivered: list.reduce((s, d) => s + d.delivered, 0),
+        failed: list.reduce((s, d) => s + d.failed, 0),
+        cashCollected: round2(list.reduce((s, d) => s + d.cashCollected, 0)),
+        cashRemitted: round2(list.reduce((s, d) => s + d.cashRemitted, 0)),
+        cashStillHeld: round2(list.reduce((s, d) => s + d.cashHeld, 0)),
+        expenses: round2(list.reduce((s, d) => s + d.expenses, 0)),
+        daysUnsettled: list.filter(d => !d.settled).length,
+        reportsMissing: list.filter(d => !d.report && (d.delivered > 0 || d.failed > 0)).length,
+      },
+      // Where he stands overall, which is a balance rather than a window figure.
+      account: await riderAccount(prisma, rider.id, companyId),
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

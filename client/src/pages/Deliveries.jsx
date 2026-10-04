@@ -12,6 +12,7 @@ import {
 } from 'react-icons/fi';
 import RiderExpenseReview from '../components/RiderExpenseReview';
 import RiderReportReview from '../components/RiderReportReview';
+import RiderHistory from '../components/RiderHistory';
 import DispatchActivity from '../components/DispatchActivity';
 import CourierRuns from '../components/CourierRuns';
 import AwaitingPayment from '../components/AwaitingPayment';
@@ -30,6 +31,9 @@ const TABS = [
   { key: 'performance', label: 'Performance', money: true },
   { key: 'expenses', label: 'His spending', money: true },
   { key: 'reports', label: 'Daily reports', money: true },
+  // The one tab that looks backwards. Everything else here shows what is outstanding now,
+  // which is no help on a day that went unbalanced and then fell off every screen.
+  { key: 'history', label: 'History', money: true },
   { key: 'riders', label: 'Who delivers', money: true },
   // An oversight view, so it belongs with the admin-only tabs.
   { key: 'activity', label: 'Who did what', money: true },
@@ -91,6 +95,9 @@ export default function Deliveries() {
   // 'rider:<id>' for one of ours, 'hire:yango' or 'hire:other' for a car booked for the trip.
   const [carrier, setCarrier] = useState('');
   const [fareForm, setFareForm] = useState({ cost: '', ref: '' });
+  // A mid-flight handover to a hired courier, held open while the fare is entered.
+  const [handover, setHandover] = useState(null);
+  const [handoverForm, setHandoverForm] = useState({ cost: '', ref: '' });
   const [assignSort, setAssignSort] = useState('ready');
   const [closing, setClosing] = useState(null);
   const [closeForm, setCloseForm] = useState({ recipientName: '', cashCollected: '' });
@@ -418,8 +425,16 @@ export default function Deliveries() {
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
                   <CarrierSelect riders={riders} value={encodeCarrier(d)}
                     onChange={async (v) => {
+                      const next = decodeCarrier(v);
+                      // Hiring somebody costs a fare, and the fare belongs on the order. Handing it
+                      // to one of us costs nothing extra, so that goes straight through.
+                      if (next.courier !== 'rider') {
+                        setHandover({ delivery: d, ...next });
+                        setHandoverForm({ cost: '', ref: d.courierRef || '' });
+                        return;
+                      }
                       try {
-                        await reassignDelivery(d.id, decodeCarrier(v));
+                        await reassignDelivery(d.id, next);
                         toast.success('Handed over');
                         loadAll();
                       } catch (err) { toast.error(err.response?.data?.error || 'Could not hand it over'); }
@@ -513,6 +528,7 @@ export default function Deliveries() {
       {tab === 'activity' && <DispatchActivity />}
       {tab === 'expenses' && <RiderExpenseReview />}
       {tab === 'reports' && <RiderReportReview />}
+      {tab === 'history' && <RiderHistory />}
 
       {/* ---- PERFORMANCE ---- */}
       {tab === 'performance' && perf && (
@@ -668,6 +684,56 @@ export default function Deliveries() {
           </form>
         </div>
       )}
+
+      {/* Handing a parcel to a hired courier mid-flight. The fare is asked for here because it is
+          a real cost of this order and there was nowhere else to put it — a handover used to
+          change who was carrying the parcel and quietly lose what the trip cost. */}
+      <Modal isOpen={!!handover} onClose={() => { setHandover(null); loadAll(); }}
+        title={handover ? `Hand ${handover.delivery.orderNumber} to ${COURIER_LABELS[handover.courier] || handover.courier}` : ''}>
+        {handover && (
+          <div className="space-y-3">
+            <div className="bg-gray-50 rounded-lg p-3 text-sm">
+              <div className="text-gray-800">{handover.delivery.customerName || 'Customer'}</div>
+              <div className="text-xs text-gray-500">{handover.delivery.deliveryAddress || 'No address'}{handover.delivery.customerCity ? `, ${handover.delivery.customerCity}` : ''}</div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fare we are paying</label>
+              <input type="number" min="0" step="0.01" value={handoverForm.cost}
+                onChange={e => setHandoverForm({ ...handoverForm, cost: e.target.value })}
+                placeholder="0.00"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+              <p className="text-xs text-gray-400 mt-1">
+                Goes onto this order's delivery cost{handover.delivery.courierCost > 0 ? `, on top of the ${formatMoney(handover.delivery.courierCost)} already there` : ''}. Leave it blank if the fare is not settled yet.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+              <input value={handoverForm.ref} onChange={e => setHandoverForm({ ...handoverForm, ref: e.target.value })}
+                placeholder="Driver, plate, trip"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setHandover(null); loadAll(); }} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+              <button disabled={submitting} onClick={async () => {
+                setSubmitting(true);
+                try {
+                  await reassignDelivery(handover.delivery.id, {
+                    courier: handover.courier, riderId: null,
+                    ...(handoverForm.cost !== '' && { courierCost: handoverForm.cost }),
+                    courierRef: handoverForm.ref || undefined,
+                  });
+                  toast.success('Handed over');
+                  setHandover(null);
+                  loadAll();
+                } catch (err) { toast.error(err.response?.data?.error || 'Could not hand it over'); }
+                finally { setSubmitting(false); }
+              }} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {submitting ? 'Handing over…' : 'Hand over'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal isOpen={!!closing} onClose={() => setClosing(null)} title={closing ? `Close ${closing.orderNumber}` : ''}>
         {closing && (

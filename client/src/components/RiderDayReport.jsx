@@ -15,10 +15,13 @@ export default function RiderDayReport() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(null);
+  // Which day he is reporting on. Today unless he picks an earlier one, which he needs to be
+  // able to do: a day that went by without being balanced still has to be balanced afterwards.
+  const [date, setDate] = useState(null);
 
   const load = () => {
     setLoading(true);
-    Promise.all([getMyDailyReport(), getMyDailyReports()])
+    Promise.all([getMyDailyReport(date || undefined), getMyDailyReports()])
       .then(([r, h]) => {
         setState(r.data);
         setHistory(h.data);
@@ -32,17 +35,17 @@ export default function RiderDayReport() {
           closingFloat: String(existing?.closingFloat ?? ''),
         });
       })
-      .catch(() => toast.error('Could not load today'))
+      .catch(() => toast.error('Could not load that day'))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [date]);
 
   const submit = async (e) => {
     e.preventDefault();
     if (submitting) return;
     setSubmitting(true);
     try {
-      await submitMyDailyReport(form);
+      await submitMyDailyReport({ ...form, date: state.date });
       toast.success('Sent to the office');
       load();
     } catch (err) {
@@ -52,6 +55,8 @@ export default function RiderDayReport() {
 
   if (loading || !form) return <LoadingSpinner />;
   const a = state.actuals;
+  const todayKey = new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+  const isToday = state.date?.slice(0, 10) === todayKey;
 
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
   // What he says he took, less what he says he spent and handed over and still holds.
@@ -81,7 +86,20 @@ export default function RiderDayReport() {
       )}
 
       <form onSubmit={submit} className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3.5">
-        <h3 className="text-sm font-semibold text-gray-800">Today — {formatDate(state.date)}</h3>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h3 className="text-sm font-semibold text-gray-800">
+            {isToday ? 'Today' : 'Catching up'} — {formatDate(state.date)}
+          </h3>
+          {/* A missed day is reported by picking it, and the figures above fill from that day. */}
+          <input type="date" value={state.date?.slice(0, 10) || ''} max={todayKey}
+            onChange={e => setDate(e.target.value || null)}
+            className="border border-gray-300 rounded-xl px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+        </div>
+        {!isToday && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+            You are reporting on an earlier day. The figures start from what the system recorded that day.
+          </p>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Drops done" k="deliveriesCompleted" money={false} hint={`system: ${a.deliveriesCompleted}`} />
@@ -126,7 +144,8 @@ export default function RiderDayReport() {
           <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">Your last reports</h3>
           <div className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-50">
             {history.map(r => (
-              <div key={r.id} className="flex items-center justify-between gap-3 p-3.5">
+              <button type="button" key={r.id} onClick={() => setDate(r.date.slice(0, 10))}
+                className="w-full text-left flex items-center justify-between gap-3 p-3.5 active:bg-gray-50">
                 <div>
                   <div className="text-sm text-gray-800">{formatDate(r.date)}</div>
                   <div className="text-xs text-gray-500">
@@ -136,7 +155,7 @@ export default function RiderDayReport() {
                 {r.acknowledgedAt
                   ? <span className="text-xs text-emerald-600 flex items-center gap-1 shrink-0"><FiCheck size={12} /> checked</span>
                   : <span className="text-xs text-gray-400 shrink-0">sent</span>}
-              </div>
+              </button>
             ))}
           </div>
         </div>
