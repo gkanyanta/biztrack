@@ -3,7 +3,7 @@ import { getMyRiderAccount, getMyRiderExpenses, logMyRiderExpense, deleteMyRider
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from './LoadingSpinner';
 import toast from 'react-hot-toast';
-import { FiPlus, FiTrash2, FiLock, FiCheck } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiLock, FiCheck, FiChevronDown, FiChevronUp } from 'react-icons/fi';
 
 // The rider's side of the money. He spends his own cash on the company's behalf — a Platinum
 // courier fee for an out-of-town parcel, fuel, airtime — and settlement is net, so what he logs
@@ -23,6 +23,7 @@ export default function RiderExpenses() {
   const [submitting, setSubmitting] = useState(false);
   const [runs, setRuns] = useState([]);
   const [form, setForm] = useState({ category: 'Platinum courier', amount: '', description: '', rechargeable: true, saleId: '' });
+  const [showHeld, setShowHeld] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -30,8 +31,12 @@ export default function RiderExpenses() {
       .then(([a, e, r]) => {
         setAccount(a.data);
         setExpenses(e.data);
-        // The parcels he is carrying — the ones a courier fee could belong to.
-        setRuns([...(r.data.open || []), ...(r.data.completedToday || [])]);
+        // The parcels a courier fee could belong to. Today's runs first because that is usually
+        // the one he means, then the last three weeks — a fee he forgot to log yesterday had no
+        // order to attach it to before.
+        const todays = [...(r.data.open || []), ...(r.data.completedToday || [])];
+        const seen = new Set(todays.map(d => d.saleId));
+        setRuns([...todays, ...(a.data.recentDeliveries || []).filter(d => d.saleId && !seen.has(d.saleId))]);
       })
       .catch(() => toast.error('Could not load'))
       .finally(() => setLoading(false));
@@ -82,6 +87,31 @@ export default function RiderExpenses() {
             <div className="flex justify-between"><span className="text-gray-500">Collected at doors</span><span className="font-medium">{formatMoney(account.holding)}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Your money out</span><span className="font-medium text-emerald-600">-{formatMoney(account.owedToRider)}</span></div>
           </div>
+
+          {/* Which drops that cash came from. It was one number before, so a rider holding cash
+              from three different days could not tell what he had already handed over. */}
+          {account.heldDeliveries?.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <button type="button" onClick={() => setShowHeld(!showHeld)}
+                className="w-full flex items-center justify-between text-xs font-medium text-gray-600">
+                <span>{account.heldDeliveries.length} drop{account.heldDeliveries.length === 1 ? '' : 's'} not handed in yet</span>
+                {showHeld ? <FiChevronUp size={14} /> : <FiChevronDown size={14} />}
+              </button>
+              {showHeld && (
+                <div className="mt-2 space-y-1.5">
+                  {account.heldDeliveries.map(d => (
+                    <div key={d.id} className="flex items-center justify-between gap-2 text-sm">
+                      <div className="min-w-0">
+                        <div className="text-gray-700 truncate">{d.customerName || 'Customer'}</div>
+                        <div className="text-[11px] text-gray-400">{d.orderNumber} · {formatDate(d.deliveredAt)}</div>
+                      </div>
+                      <span className="font-medium text-gray-800 shrink-0">{formatMoney(d.cashCollected)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -117,7 +147,7 @@ export default function RiderExpenses() {
                 <option value="">Not sure / not on my list</option>
                 {runs.map(d => (
                   <option key={d.id} value={d.saleId}>
-                    {d.orderNumber} — {d.customerName || 'Customer'}
+                    {d.orderNumber} — {d.customerName || 'Customer'}{d.assignedAt ? ` · ${formatDate(d.assignedAt)}` : ''}
                   </option>
                 ))}
               </select>

@@ -45,7 +45,8 @@ export default function RiderDayReport() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await submitMyDailyReport({ ...form, date: state.date });
+      // The day only, never the timestamp the API handed back.
+      await submitMyDailyReport({ ...form, date: state.date.slice(0, 10) });
       toast.success('Sent to the office');
       load();
     } catch (err) {

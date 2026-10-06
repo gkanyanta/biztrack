@@ -160,6 +160,53 @@ module.exports = {
     const gregHist = await admin('GET', `/deliveries/riders/${seed.gregRiderId}/history`);
     eq('while a rider with a login is still expected to report', gregHist.body.rider.expectsReports, true);
 
+    section('a report submits with the date the API itself handed back');
+    // The bug this exists to stop: the screen reads a day with GET, which answers with a full
+    // timestamp, and posts that same value straight back. The parser glued 'T00:00:00+02:00' onto
+    // it, every step after that was NaN, and the Invalid Date surfaced to the rider as "something
+    // went wrong" — for every report, not just a backdated one. The earlier test here invented a
+    // clean 'YYYY-MM-DD' that the screen never sends, so it passed while the screen was broken.
+    const readBack = await greg('GET', '/deliveries/my/report');
+    eq('the API answers with a timestamp', /^\d{4}-\d{2}-\d{2}T/.test(readBack.body.date), true);
+    const echoed = await greg('POST', '/deliveries/my/report', {
+      date: readBack.body.date, cashHandedOver: 0, closingFloat: 0,
+    });
+    eq('posting it straight back works', echoed.status, 201);
+    eq('on the day it was read for', dayKey(new Date(echoed.body.date)), dayKey(today));
+
+    const readPast = await greg('GET', `/deliveries/my/report?date=${dayKey(threeDaysAgo)}`);
+    const echoedPast = await greg('POST', '/deliveries/my/report', {
+      date: readPast.body.date, cashHandedOver: 400, closingFloat: 0,
+    });
+    eq('and so does a backdated one', echoedPast.status, 201);
+    eq('against the right day', dayKey(new Date(echoedPast.body.date)), dayKey(threeDaysAgo));
+
+    // A timestamp must mean that day on the way in too, not silently become today.
+    const runsByStamp = await greg('GET', `/deliveries/my/runs?date=${dayKey(threeDaysAgo)}T00:00:00.000Z`);
+    eq('a timestamp asks for the day it names', runsByStamp.body.date, dayKey(threeDaysAgo));
+    eq('and is not today', runsByStamp.body.isToday, false);
+
+    const nonsense = await greg('POST', '/deliveries/my/report', { date: 'not-a-date', cashHandedOver: 0 });
+    eq('a date that is not a date is refused, not a 500', nonsense.status, 400);
+    const nonsenseGet = await greg('GET', '/deliveries/my/report?date=not-a-date');
+    eq('on the way out too', nonsenseGet.status, 400);
+
+    section('he can see what the cash he holds is made of');
+    const acct = await greg('GET', '/deliveries/my/account');
+    eq('the breakdown is there', Array.isArray(acct.body.heldDeliveries), true);
+    // ORD-PAST was settled further up this suite, so it is no longer his to hand in.
+    eq('and leaves out the drop already handed in', acct.body.heldDeliveries.some(d => d.orderNumber === 'ORD-PAST'), false);
+    // The one that was never settled is the point of the list.
+    const stillOut = await prisma.delivery.findFirst({
+      where: { riderId: seed.gregRiderId, status: 'Delivered', cashRemitted: false, cashCollected: { gt: 0 } },
+      select: { sale: { select: { orderNumber: true } } },
+    });
+    if (stillOut) {
+      eq('while cash he is still holding is named', acct.body.heldDeliveries.some(d => d.orderNumber === stillOut.sale.orderNumber), true);
+    }
+    eq('his recent parcels are offered for a courier fee', Array.isArray(acct.body.recentDeliveries), true);
+    eq('including one from days ago', acct.body.recentDeliveries.some(d => d.orderNumber === 'ORD-PAST'), true);
+
     section('a fare on a mid-flight handover lands on the order');
     const moving = await order('ORD-HANDOVER', 600);
     const assigned = await admin('POST', '/deliveries', { saleIds: [moving.id], riderId: seed.gregRiderId });

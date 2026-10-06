@@ -3482,9 +3482,21 @@ function localDayKey(d) {
   if (!d) return null;
   return new Date(new Date(d).getTime() + ZM_OFFSET_MS).toISOString().slice(0, 10);
 }
+// Read a day out of either a plain '2026-10-04' or a full timestamp. Null when it is neither.
+function dayKeyFrom(input) {
+  if (input === undefined || input === null || input === '') return null;
+  const s = String(input).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const parsed = new Date(s);
+  return Number.isNaN(parsed.getTime()) ? null : localDayKey(parsed);
+}
+
 // The UTC instants a Zambian day runs between, so a query asks for the day people mean.
 function localDayBounds(dateStr) {
-  const key = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : localDayKey(new Date());
+  // Same tolerance as riderDayBounds: a plain day or a full timestamp both mean a day. Falling
+  // back to today on a timestamp was worse than failing — the caller asked for Tuesday and
+  // silently got today's figures back.
+  const key = dayKeyFrom(dateStr) || localDayKey(new Date());
   const start = new Date(new Date(key + 'T00:00:00.000Z').getTime() - ZM_OFFSET_MS);
   return { key, start, end: new Date(start.getTime() + 86400000 - 1) };
 }
@@ -4489,12 +4501,29 @@ async function riderDayActuals(prisma, riderId, companyId, dayStart, dayEnd) {
 }
 
 // A calendar day in Lusaka, expressed as the UTC instants that bound it.
-function riderDayBounds(dateStr) {
-  const base = dateStr ? new Date(dateStr + 'T00:00:00+02:00') : new Date();
+// A day can arrive as a plain '2026-10-04' from a date picker or as a full timestamp, because
+// that is what these endpoints hand out and a client that echoes one straight back must not be a
+// 500. It used to glue 'T00:00:00+02:00' onto whatever it was given, so a timestamp became an
+// unparseable string, every arithmetic step after it was NaN, and the Invalid Date only blew up
+// deep inside Prisma as "something went wrong" — which is exactly how it reached the rider.
+// A date that cannot be read at all says so, rather than quietly standing in for today.
+function riderDayBounds(input) {
+  let base = null;
+  if (input === undefined || input === null || input === '') {
+    base = new Date();
+  } else {
+    const s = String(input).trim();
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T00:00:00+02:00') : new Date(s);
+    if (!Number.isNaN(parsed.getTime())) base = parsed;
+  }
+  if (!base) return { valid: false };
   const local = new Date(base.getTime() + 2 * 3600 * 1000);
   const y = local.getUTCFullYear(), m = local.getUTCMonth(), d = local.getUTCDate();
   const start = new Date(Date.UTC(y, m, d) - 2 * 3600 * 1000);
-  return { start, end: new Date(start.getTime() + 86400000), dateOnly: new Date(Date.UTC(y, m, d)) };
+  return {
+    valid: true, start, end: new Date(start.getTime() + 86400000),
+    dateOnly: new Date(Date.UTC(y, m, d)),
+  };
 }
 
 function requireRider(req, res) {
@@ -4522,7 +4551,45 @@ async function delivery_shiftSaleShippingCost(tx, saleId, companyId, delta) {
 app.get('/api/v1/deliveries/my/account', authenticate,  async (req, res) => {
   try {
     if (!requireRider(req, res)) return;
-    res.json(await riderAccount(prisma, req.user.riderId, req.user.companyId));
+    const riderId = req.user.riderId, companyId = req.user.companyId;
+    const account = await riderAccount(prisma, riderId, companyId);
+
+    // What the holding figure is actually made of. It was one number, and a rider holding cash
+    // from three different days could not see which days, so he could not tell what he had
+    // already handed over from what he still owed. Not date-limited: cash he is holding is cash
+    // he is holding, however long ago he took it.
+    const held = await prisma.delivery.findMany({
+      where: { riderId, companyId, status: 'Delivered', cashRemitted: false, cashCollected: { gt: 0 } },
+      select: {
+        id: true, deliveredAt: true, cashCollected: true,
+        sale: { select: { orderNumber: true, customerName: true } },
+      },
+      orderBy: { deliveredAt: 'desc' }, take: 100,
+    });
+
+    // The parcels a courier fee could belong to. This used to be today's runs only, so a fee he
+    // forgot to log yesterday had no order to attach it to.
+    const recent = await prisma.delivery.findMany({
+      where: { riderId, companyId, assignedAt: { gte: new Date(Date.now() - 21 * 86400000) } },
+      select: {
+        id: true, status: true, assignedAt: true,
+        sale: { select: { id: true, orderNumber: true, customerName: true, customerCity: true } },
+      },
+      orderBy: { assignedAt: 'desc' }, take: 150,
+    });
+
+    res.json({
+      ...account,
+      heldDeliveries: held.map(d => ({
+        id: d.id, deliveredAt: d.deliveredAt,
+        cashCollected: parseFloat(d.cashCollected),
+        orderNumber: d.sale?.orderNumber, customerName: d.sale?.customerName,
+      })),
+      recentDeliveries: recent.map(d => ({
+        id: d.id, status: d.status, assignedAt: d.assignedAt, saleId: d.sale?.id,
+        orderNumber: d.sale?.orderNumber, customerName: d.sale?.customerName, customerCity: d.sale?.customerCity,
+      })),
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -4594,7 +4661,9 @@ app.delete('/api/v1/deliveries/my/expenses/:id', authenticate,  async (req, res)
 app.get('/api/v1/deliveries/my/report', authenticate,  async (req, res) => {
   try {
     if (!requireRider(req, res)) return;
-    const { start, end, dateOnly } = riderDayBounds(req.query.date);
+    const bounds = riderDayBounds(req.query.date);
+    if (!bounds.valid) return res.status(400).json({ error: 'That is not a date I can read' });
+    const { start, end, dateOnly } = bounds;
     const actuals = await riderDayActuals(prisma, req.user.riderId, req.user.companyId, start, end);
     const existing = await prisma.riderDailyReport.findUnique({
       where: { riderId_date: { riderId: req.user.riderId, date: dateOnly } },
@@ -4607,7 +4676,9 @@ app.post('/api/v1/deliveries/my/report', authenticate,  async (req, res) => {
   try {
     if (!requireRider(req, res)) return;
     const companyId = req.user.companyId;
-    const { dateOnly, start, end } = riderDayBounds(req.body.date);
+    const bounds = riderDayBounds(req.body.date);
+    if (!bounds.valid) return res.status(400).json({ error: 'That is not a date I can read' });
+    const { dateOnly, start, end } = bounds;
     const num = (v, fallback = 0) => {
       const n = parseFloat(v);
       return Number.isFinite(n) && n >= 0 ? n : fallback;
