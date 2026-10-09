@@ -451,8 +451,13 @@ router.put('/:id', async (req, res) => {
         else if (deposit > 0) data.paymentStatus = 'Partial';
         else data.paymentStatus = 'Unpaid';
       } else if (raw.paymentType === 'Cash') {
-        data.amountPaid = data.totalPrice || parseFloat(existing.totalPrice);
-        data.paymentStatus = 'Paid';
+        // Honour the status the user picked (same rule as create): only Paid
+        // or a missing status means the full total was collected.
+        const status = raw.paymentStatus || 'Paid';
+        data.paymentStatus = status;
+        if (status === 'Paid') data.amountPaid = (data.totalPrice || parseFloat(existing.totalPrice));
+        else if (status === 'Unpaid') data.amountPaid = 0;
+        else data.amountPaid = parseFloat(raw.amountPaid) || 0;
       }
     } else if (raw.amountPaid !== undefined && existing.paymentType === 'Credit') {
       const deposit = parseFloat(raw.amountPaid) || 0;
