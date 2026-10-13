@@ -44,6 +44,11 @@ model Company {
   riderExpenses      RiderExpense[]
   riderDailyReports  RiderDailyReport[]
   courierRuns        CourierRun[]
+  loans              Loan[]
+  payAdjustments     PayAdjustment[]
+  payRuns            PayRun[]
+  payslips           Payslip[]
+  payslipLines       PayslipLine[]
 }
 
 model User {
@@ -161,6 +166,7 @@ model Sale {
   quote           Quote?
   delivery        Delivery?
   riderExpenses   RiderExpense[]
+  payAdjustments  PayAdjustment[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -287,6 +293,7 @@ model Expense {
   staffPayment      StaffPayment?
   commissionPayment CommissionPayment?
   riderExpense      RiderExpense?
+  payslip           Payslip?
 
   @@index([companyId, date])
 }
@@ -387,6 +394,9 @@ model Consultant {
   saleItemSources      SaleItem[]          @relation("StockSource")
   quotes               Quote[]
   dispatchedDeliveries Delivery[]          @relation("DispatchedDeliveries")
+  loans                Loan[]
+  payAdjustments       PayAdjustment[]
+  payslips             Payslip[]
 }
 
 model CommissionPayment {
@@ -403,11 +413,16 @@ model CommissionPayment {
   // The Salaries & Wages expense this payment raised; null for advances (see StaffPayment).
   expenseId     String?    @unique
   expense       Expense?   @relation(fields: [expenseId], references: [id])
+  // Set when this is cash paid against a finalised payslip. The wage cost was booked when the
+  // cycle was finalised, so a payslip payment raises no expense of its own.
+  payslipId     String?
+  payslip       Payslip?   @relation(fields: [payslipId], references: [id])
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id])
   createdAt     DateTime   @default(now())
 
   @@index([consultantId])
+  @@index([payslipId])
   @@index([companyId])
 }
 
@@ -415,24 +430,27 @@ model CommissionPayment {
 // Deliberately NOT the Consultant table: a Consultant row is selectable as the source of a
 // sale and as a stock location, and an inventory clerk or a rider must never appear there.
 model Staff {
-  id               String         @id @default(cuid())
+  id               String          @id @default(cuid())
   name             String
   phone            String?
   jobTitle         String?
-  monthlySalary    Decimal        @default(0) @db.Decimal(10, 2)
+  monthlySalary    Decimal         @default(0) @db.Decimal(10, 2)
   // Communication allowance, paid monthly and capped the way a consultant's is.
-  monthlyAllowance Decimal        @default(100) @db.Decimal(10, 2)
-  isActive         Boolean        @default(true)
+  monthlyAllowance Decimal         @default(100) @db.Decimal(10, 2)
+  isActive         Boolean         @default(true)
   startDate        DateTime?
   notes            String?
   // The login they use, and the rider profile if this person also makes deliveries.
-  userId           String?        @unique
-  riderId          String?        @unique
+  userId           String?         @unique
+  riderId          String?         @unique
   companyId        String
-  company          Company        @relation(fields: [companyId], references: [id])
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  company          Company         @relation(fields: [companyId], references: [id])
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
   payments         StaffPayment[]
+  loans            Loan[]
+  payAdjustments   PayAdjustment[]
+  payslips         Payslip[]
 
   @@index([companyId])
 }
@@ -455,12 +473,158 @@ model StaffPayment {
   // Null for advances, which are not a cost until the pay they anticipate is earned.
   expenseId     String?   @unique
   expense       Expense?  @relation(fields: [expenseId], references: [id])
+  // Cash paid against a finalised payslip — see CommissionPayment.payslipId.
+  payslipId     String?
+  payslip       Payslip?  @relation(fields: [payslipId], references: [id])
   companyId     String
   company       Company   @relation(fields: [companyId], references: [id])
   createdAt     DateTime  @default(now())
 
   @@index([staffId])
+  @@index([payslipId])
   @@index([companyId])
+}
+
+// A loan to someone the company pays: a phone bought on credit, cash lent against future pay.
+// Only the terms live here. What has been recovered is the sum of the payslip lines that point
+// at the loan, so the balance cannot drift from the pay record.
+model Loan {
+  id               String          @id @default(cuid())
+  consultantId     String?
+  consultant       Consultant?     @relation(fields: [consultantId], references: [id])
+  staffId          String?
+  staff            Staff?          @relation(fields: [staffId], references: [id])
+  description      String
+  principal        Decimal         @db.Decimal(10, 2)
+  // Taken from each pay run, starting with firstPeriod, until the principal is covered.
+  instalmentAmount Decimal         @db.Decimal(10, 2)
+  firstPeriod      String
+  issuedAt         DateTime        @default(now())
+  // active | cancelled. A cancelled loan is written off: nothing more is deducted.
+  status           String          @default("active")
+  notes            String?
+  companyId        String
+  company          Company         @relation(fields: [companyId], references: [id])
+  createdAt        DateTime        @default(now())
+  adjustments      PayAdjustment[]
+  lines            PayslipLine[]
+
+  @@index([companyId])
+  @@index([consultantId])
+  @@index([staffId])
+}
+
+// Something the admin adds to one person's pay for one cycle, outside what the system works
+// out by itself:
+//   bonus            extra pay
+//   deduction        a one-off deduction
+//   recovery         money taken for an order that went wrong (delivery cost for goods that
+//                    came back unpaid, the full order for goods that were lost) or held until
+//                    the consultant settles something. refundable marks money that goes back
+//                    when the order is paid or the hold is released.
+//   loan_instalment  "this cycle take exactly this much for this loan" (zero skips it)
+// It is applied when a finalised payslip line points at it.
+model PayAdjustment {
+  id           String        @id @default(cuid())
+  consultantId String?
+  consultant   Consultant?   @relation(fields: [consultantId], references: [id])
+  staffId      String?
+  staff        Staff?        @relation(fields: [staffId], references: [id])
+  period       String
+  kind         String
+  amount       Decimal       @db.Decimal(10, 2)
+  reason       String?
+  saleId       String?
+  sale         Sale?         @relation(fields: [saleId], references: [id])
+  refundable   Boolean       @default(false)
+  // Set when the admin releases held money by hand; it is refunded in this cycle's pay run.
+  refundPeriod String?
+  loanId       String?
+  loan         Loan?         @relation(fields: [loanId], references: [id])
+  companyId    String
+  company      Company       @relation(fields: [companyId], references: [id])
+  createdAt    DateTime      @default(now())
+  lines        PayslipLine[]
+
+  @@index([companyId, period])
+  @@index([consultantId])
+  @@index([staffId])
+}
+
+// A finalised pay cycle. A row exists only once the cycle is finalised: until then the run is
+// worked out live, and afterwards its payslips never change.
+model PayRun {
+  id          String    @id @default(cuid())
+  // The cycle label, e.g. "2026-11": the month the cycle closes and is paid.
+  period      String
+  periodFrom  DateTime
+  periodTo    DateTime
+  finalisedAt DateTime  @default(now())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+  payslips    Payslip[]
+
+  @@unique([companyId, period])
+}
+
+// One person's pay for one finalised cycle:
+//   netPay = broughtForward + earnings - alreadyPaid - deductions
+// What is still outstanding (netPay less the payments made against it) is the next cycle's
+// brought forward, negative when the person owes the company.
+model Payslip {
+  id                 String              @id @default(cuid())
+  payRunId           String
+  payRun             PayRun              @relation(fields: [payRunId], references: [id])
+  consultantId       String?
+  consultant         Consultant?         @relation(fields: [consultantId], references: [id])
+  staffId            String?
+  staff              Staff?              @relation(fields: [staffId], references: [id])
+  name               String
+  jobTitle           String?
+  broughtForward     Decimal             @default(0) @db.Decimal(10, 2)
+  earnings           Decimal             @default(0) @db.Decimal(10, 2)
+  alreadyPaid        Decimal             @default(0) @db.Decimal(10, 2)
+  deductions         Decimal             @default(0) @db.Decimal(10, 2)
+  netPay             Decimal             @default(0) @db.Decimal(10, 2)
+  // The cycle's wage cost that was not already booked by a payment made during the cycle.
+  expenseId          String?             @unique
+  expense            Expense?            @relation(fields: [expenseId], references: [id])
+  companyId          String
+  company            Company             @relation(fields: [companyId], references: [id])
+  createdAt          DateTime            @default(now())
+  lines              PayslipLine[]
+  commissionPayments CommissionPayment[]
+  staffPayments      StaffPayment[]
+
+  @@unique([payRunId, consultantId])
+  @@unique([payRunId, staffId])
+  @@index([companyId])
+}
+
+// One row of a payslip. amount is signed: earnings are positive, deductions negative.
+model PayslipLine {
+  id           String         @id @default(cuid())
+  payslipId    String
+  payslip      Payslip        @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+  kind         String
+  label        String
+  amount       Decimal        @db.Decimal(10, 2)
+  // For commission lines: the cycle the orders belong to, and the total commission those
+  // orders had earned when this line was written. The next run pays only what has been
+  // earned beyond that figure, which is how money collected late reaches a later payslip.
+  sourcePeriod String?
+  entitlement  Decimal?       @db.Decimal(10, 2)
+  loanId       String?
+  loan         Loan?          @relation(fields: [loanId], references: [id])
+  adjustmentId String?
+  adjustment   PayAdjustment? @relation(fields: [adjustmentId], references: [id])
+  sort         Int            @default(0)
+  companyId    String
+  company      Company        @relation(fields: [companyId], references: [id])
+
+  @@index([payslipId])
+  @@index([companyId, loanId])
+  @@index([companyId, adjustmentId])
 }
 
 model ConsultantStock {

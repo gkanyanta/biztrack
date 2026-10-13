@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { calcCommission } = require('../utils/commission');
+const { payrollInternals } = require('./payroll');
 
 router.use(authenticate);
 
@@ -35,7 +36,11 @@ router.get('/consultant', async (req, res) => {
     const commissionPaid = sum(payments.filter(p => p.type === 'commission'), p => parseFloat(p.amount));
     const allowancePaid = sum(payments.filter(p => p.type === 'allowance'), p => parseFloat(p.amount));
     const advancePaid = sum(payments.filter(p => p.type === 'advance'), p => parseFloat(p.amount));
-    const balance = commissionEarnedAllTime - commissionPaid - advancePaid;
+    // What is owed now is the payslip for the cycle to be paid next: its commission and
+    // anything brought forward, less loans and recoveries.
+    const pay = await payrollInternals.payroll_consultantPay(prisma, companyId, null);
+    const payslip = pay.slips.get(consultantId) || null;
+    const balance = payslip ? payslip.balance : 0;
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
@@ -44,6 +49,7 @@ router.get('/consultant', async (req, res) => {
       allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
+      payslip,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });

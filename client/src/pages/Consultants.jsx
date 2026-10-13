@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, getPayReview, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts, createConsultantLogin, resetConsultantPassword, revokeConsultantLogin } from '../services/api';
 import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
@@ -379,6 +380,11 @@ export default function Consultants() {
                       <span className={(s?.balance || 0) < 0 ? 'text-amber-600' : (s?.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'} title={(s?.balance || 0) < 0 ? 'Owes back (advanced more than earned)' : undefined}>
                         {formatMoney(Math.abs(s?.balance || 0))}
                       </span>
+                      {s?.payslip && (
+                        <div className="text-[10px] font-normal text-gray-400">
+                          {s.payslip.status === 'draft' ? 'draft payslip' : s.payslip.carried ? 'carried forward' : s.payslip.outstanding > 0 ? 'to pay' : 'paid'}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex gap-1 justify-end">
@@ -523,13 +529,45 @@ export default function Consultants() {
                 <div className="text-lg font-bold text-orange-600">{formatMoney(showDetail.commissionEarned || 0)}</div>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500">{(showDetail.balance || 0) < 0 ? 'Owes Back (advance)' : 'Balance Owed'}</div>
+                <div className="text-xs text-gray-500">
+                  {(showDetail.balance || 0) < 0 ? 'Owes Back'
+                    : !showDetail.payslip ? 'Balance Owed'
+                    : showDetail.payslip.status === 'draft' ? 'Net Pay So Far' : 'Still To Pay'}
+                </div>
                 <div className={`text-lg font-bold ${(showDetail.balance || 0) < 0 ? 'text-amber-600' : (showDetail.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
                   {formatMoney(Math.abs(showDetail.balance || 0))}
                 </div>
               </div>
             </div>
 
+            {/* The same payslip the Payroll page shows, so the two can never give different answers. */}
+            {showDetail.payslip && (
+              <div className="border border-gray-200 rounded-lg p-3 text-sm">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-gray-700">
+                    Payslip · {showDetail.payslip.status === 'draft' ? <span className="text-amber-600">draft, not finalised</span> : <span className="text-emerald-600">finalised</span>}
+                  </span>
+                  <Link to="/payroll" className="text-xs text-blue-600 hover:underline">Open in Payroll</Link>
+                </div>
+                {showDetail.payslip.broughtForward !== 0 && (
+                  <div className="flex justify-between py-0.5 text-gray-600"><span>Brought forward</span><span>{formatMoney(showDetail.payslip.broughtForward)}</span></div>
+                )}
+                {showDetail.payslip.lines.map((l, i) => (
+                  <div key={i} className="flex justify-between gap-3 py-0.5 text-gray-600">
+                    <span>{l.label}</span><span className={l.amount < 0 ? 'text-red-600' : ''}>{formatMoney(l.amount)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between py-1 mt-1 border-t border-gray-100 font-semibold"><span>Net pay</span><span>{formatMoney(showDetail.payslip.netPay)}</span></div>
+                {showDetail.payslip.status === 'final' && (
+                  <>
+                    <div className="flex justify-between py-0.5 text-gray-600"><span>Paid</span><span>{formatMoney(showDetail.payslip.paid)}</span></div>
+                    <div className="flex justify-between py-0.5 font-semibold">
+                      <span>{showDetail.payslip.carried ? 'Carried into the next payslip' : 'Still to pay'}</span><span>{formatMoney(showDetail.payslip.outstanding)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             {showDetail.period && (
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 flex flex-wrap gap-x-4 gap-y-1 items-center">
                 <span><span className="text-gray-500">Cycle:</span> <strong>{new Date(showDetail.period.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(new Date(showDetail.period.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
@@ -810,6 +848,11 @@ export default function Consultants() {
                       <option value="allowance">Communication Allowance</option>
                       <option value="advance">Salary Advance</option>
                     </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {paymentForm.type === 'allowance'
+                        ? 'Paid on top of commission, up to the cycle cap.'
+                        : 'Taken off the payslip for this cycle. Once a cycle is finalised it is paid from its payslip on the Payroll page.'}
+                    </p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>

@@ -237,6 +237,15 @@ router.get('/commission-summary', requireAdmin, async (req, res) => {
       };
     });
 
+    // Once pay runs cover a cycle, the payslip is the answer to what is owed, not the sum above.
+    const pay = isCycle ? await payrollInternals.payroll_consultantPay(prisma, companyId, periodLabel) : null;
+    if (pay) {
+      for (const row of summary) {
+        row.payslip = pay.slips.get(row.consultant.id) || null;
+        row.balance = row.payslip ? row.payslip.balance : 0;
+      }
+    }
+
     const totals = {
       totalSales: summary.reduce((s, c) => s + c.totalSales, 0),
       totalRevenue: summary.reduce((s, c) => s + c.totalRevenue, 0),
@@ -398,7 +407,10 @@ router.get('/:id', async (req, res) => {
     const commissionPaid = payments.filter(p => p.type === 'commission').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const allowancePaid = payments.filter(p => p.type === 'allowance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const advancePaid = payments.filter(p => p.type === 'advance').reduce((sum, p) => sum + parseFloat(p.amount), 0);
-    const balance = commissionEarned - commissionPaid - advancePaid;
+    // Once pay runs cover the cycle, the payslip is the answer to what is owed.
+    const pay = period ? await payrollInternals.payroll_consultantPay(prisma, companyId, period) : null;
+    const payslip = pay ? pay.slips.get(consultant.id) || null : null;
+    const balance = pay ? (payslip ? payslip.balance : 0) : commissionEarned - commissionPaid - advancePaid;
 
     const baseAllowance = parseFloat(consultant.monthlyAllowance) || 0;
     const allowanceCap = periodInfo ? Math.round(baseAllowance * (periodInfo.factor || 0) * 100) / 100 : null;
@@ -409,7 +421,7 @@ router.get('/:id', async (req, res) => {
       totalSales, totalProductsSold, totalRevenue,
       commissionEarned, commissionPaid, balance,
       allowancePaid, allowanceCap, allowanceRemaining, advancePaid,
-      period: periodInfo,
+      period: periodInfo, payslip,
       sales, payments,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -476,7 +488,11 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Consultant not found' });
 
     // Check if they have sales - if so, just deactivate
-    const salesCount = await prisma.sale.count({ where: { consultantId: req.params.id } });
+    // Pay history is a record of money, so it keeps the consultant just as their sales do.
+    const salesCount = await prisma.sale.count({ where: { consultantId: req.params.id } })
+      + await prisma.payslip.count({ where: { consultantId: req.params.id } })
+      + await prisma.loan.count({ where: { consultantId: req.params.id } })
+      + await prisma.payAdjustment.count({ where: { consultantId: req.params.id } });
     if (salesCount > 0) {
       await prisma.consultant.update({ where: { id: req.params.id }, data: { isActive: false } });
       return res.json({ message: 'Consultant deactivated (has existing sales)' });
@@ -516,6 +532,11 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
     }
 
     // Enforce allowance cap (prorated by startDate)
+    if ((type || 'commission') !== 'allowance') {
+      const closed = await payrollInternals.payroll_finalisedCycleOf(prisma, companyId, periodFrom, periodTo);
+      if (closed) return res.status(400).json({ error: `The ${closed} cycle is finalised. Pay it from its payslip on the Payroll page.` });
+    }
+
     if ((type || 'commission') === 'allowance' && periodFrom && periodTo) {
       const eff = getEffectivePeriod(periodFrom, periodTo, consultant.startDate);
       if (!eff) return res.status(400).json({ error: 'Consultant was not active during this pay cycle' });

@@ -25,6 +25,7 @@ something else.
 |---|---|
 | `delivery-cash` | Cash a rider collects reaching the order's ledger only when the office confirms it, and coming back out when that is undone |
 | `payroll` | Salary accrual and proration, the allowance cap, advances netting off what is owed, and staff pay reaching the P&L |
+| `payrun` | A finalised cycle never changing, late customer payments and unpaid balances arriving on the next payslip, loan instalments deducted on their terms unless edited, recoveries and held money, and the wage cost booked once |
 | `rider-finance` | The rider's balance, expenses settled as company cost or recharged, partial recharges, and the delivery finances figures |
 | `rider-scope` | Who may reach what — every endpoint closed to a rider, the inventory role able to dispatch but not touch money, and the payment secret withheld from non-admins |
 | `sale-status` | An order that still has to travel cannot be recorded as already delivered, while a counter collection can |

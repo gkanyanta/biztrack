@@ -195,6 +195,20 @@ export const deleteStaffMember = (id) => api.delete(`/payroll/staff/${id}`);
 export const getStaffPayments = (id) => api.get(`/payroll/staff/${id}/payments`);
 export const payStaffMember = (id, data) => api.post(`/payroll/staff/${id}/payments`, data);
 export const deleteStaffPayment = (id) => api.delete(`/payroll/payments/${id}`);
+// Pay runs — one cycle's payslips, the loans deducted on them and the adjustments added to them
+export const getPayRun = (params) => api.get('/payroll/run', { params });
+export const finalisePayRun = (period) => api.post('/payroll/run/finalise', { period });
+export const reopenPayRun = (period) => api.post('/payroll/run/reopen', { period });
+export const payPayslip = (id, data) => api.post(`/payroll/payslips/${id}/payments`, data);
+export const deletePayslipPayment = (id, paymentId) => api.delete(`/payroll/payslips/${id}/payments/${paymentId}`);
+export const createPayAdjustment = (data) => api.post('/payroll/adjustments', data);
+export const deletePayAdjustment = (id) => api.delete(`/payroll/adjustments/${id}`);
+export const releasePayAdjustment = (id, period) => api.post(`/payroll/adjustments/${id}/release`, { period });
+export const getLoans = () => api.get('/payroll/loans');
+export const createLoan = (data) => api.post('/payroll/loans', data);
+export const updateLoan = (id, data) => api.put(`/payroll/loans/${id}`, data);
+export const deleteLoan = (id) => api.delete(`/payroll/loans/${id}`);
+export const setLoanInstalment = (id, data) => api.put(`/payroll/loans/${id}/instalment`, data);
 
 // The rider's own money — what he collects, what he lays out, and his daily account
 export const getMyRiderAccount = () => api.get('/deliveries/my/account');

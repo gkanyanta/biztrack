@@ -21,7 +21,7 @@ export default function ConsultantDashboard() {
   if (loading) return <LoadingSpinner />;
   if (!data) return <p className="text-red-500">Failed to load{error ? `: ${error}` : ''}</p>;
 
-  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments } = data;
+  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments, payslip } = data;
   const cycleFrom = cycle ? new Date(cycle.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
   const cycleTo = cycle ? new Date(new Date(cycle.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
   const cyclePayDate = cycle ? new Date(cycle.payDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
@@ -84,14 +84,30 @@ export default function ConsultantDashboard() {
             <p className="text-xl font-bold text-gray-700">{formatMoney(allTime.commissionPaid)}</p>
           </div>
           <div className="bg-amber-50 rounded-lg p-4 ring-2 ring-amber-200">
-            <p className="text-xs text-amber-700 font-medium">Balance Owed</p>
-            <p className="text-2xl font-bold text-amber-700">{formatMoney(allTime.balance)}</p>
+            <p className="text-xs text-amber-700 font-medium">{allTime.balance < 0 ? 'You Owe Back' : 'Due On Next Payslip'}</p>
+            <p className="text-2xl font-bold text-amber-700">{formatMoney(Math.abs(allTime.balance))}</p>
           </div>
           <div className="bg-blue-50 rounded-lg p-4">
             <p className="text-xs text-gray-500">Allowance Paid</p>
             <p className="text-xl font-bold text-blue-700">{formatMoney(allTime.allowancePaid)}</p>
           </div>
         </div>
+        {/* How the figure above is made up: the payslip as it stands today. */}
+        {payslip && (
+          <div className="mt-3 bg-white border border-gray-100 rounded-lg p-4 text-sm">
+            <p className="font-medium text-gray-700 mb-1">Your payslip so far · {payslip.periodName}</p>
+            {payslip.broughtForward !== 0 && (
+              <div className="flex justify-between py-0.5 text-gray-600"><span>Brought forward</span><span>{formatMoney(payslip.broughtForward)}</span></div>
+            )}
+            {payslip.lines.map((l, i) => (
+              <div key={i} className="flex justify-between gap-3 py-0.5 text-gray-600">
+                <span>{l.label}</span><span className={l.amount < 0 ? 'text-red-600' : ''}>{formatMoney(l.amount)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between py-1 mt-1 border-t border-gray-100 font-semibold"><span>Net pay</span><span>{formatMoney(payslip.netPay)}</span></div>
+            <p className="text-xs text-gray-400 mt-1">Commission counts only what customers have paid. It is final once the cycle is closed.</p>
+          </div>
+        )}
       </div>
 
       {/* Recent sales */}
