@@ -256,8 +256,10 @@ export default function Payroll() {
   const openPeriod = isDraft ? run.period.label : run.currentPeriod;
 
   // The cycle label is the month the period closes and is paid.
-  const periodOptions = [];
-  for (let i = 0; i < 12; i++) periodOptions.push(shiftLabel(run.currentPeriod, -i));
+  // The last year of cycles, and every finalised cycle however old.
+  const recent = [];
+  for (let i = 0; i < 12; i++) recent.push(shiftLabel(run.currentPeriod, -i));
+  const periodOptions = [...new Set([...recent, ...run.finalisedPeriods])].sort().reverse();
 
   const people = [
     ...staff.filter(s => s.isActive).map(s => ({ key: `salaried:${s.id}`, name: s.name })),
@@ -403,7 +405,7 @@ export default function Payroll() {
           <select value={period} onChange={e => setPeriod(e.target.value)}
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none">
             <option value="">Cycle to pay next</option>
-            {periodOptions.map(p => <option key={p} value={p}>{p}</option>)}
+            {periodOptions.map(p => <option key={p} value={p}>{p}{run.finalisedPeriods.includes(p) ? ' · finalised' : ''}</option>)}
           </select>
           <button onClick={newLoan} className="px-3 py-2 border border-gray-200 rounded-lg text-sm flex items-center gap-1.5"><FiPlus size={15} /> Loan</button>
           <button onClick={() => openStaffForm(null)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm flex items-center gap-1.5"><FiPlus size={15} /> Staff</button>

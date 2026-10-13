@@ -41,10 +41,8 @@ router.get('/consultant', async (req, res) => {
     const pay = await payrollInternals.payroll_consultantPay(prisma, companyId, null);
     const payslip = pay.slips.get(consultantId) || null;
     const balance = payslip ? payslip.balance : 0;
-    // The last cycle that was closed, so they can keep a copy of what they were paid.
-    const lastRun = await prisma.payRun.findFirst({ where: { companyId }, orderBy: { period: 'desc' }, select: { period: true } });
-    const lastPay = lastRun ? await payrollInternals.payroll_consultantPay(prisma, companyId, lastRun.period) : null;
-    const lastPayslip = lastPay ? lastPay.slips.get(consultantId) || null : null;
+    // Every cycle that has been closed, so they can keep a copy of what they were paid.
+    const payslipHistory = await payrollInternals.payroll_payslipHistory(prisma, companyId, consultantId);
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
@@ -53,7 +51,7 @@ router.get('/consultant', async (req, res) => {
       allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
-      payslip, lastPayslip,
+      payslip, payslipHistory,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });

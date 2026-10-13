@@ -3225,10 +3225,8 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
     const pay = await payroll_consultantPay(prisma, companyId, null);
     const payslip = pay.slips.get(consultantId) || null;
     const balance = payslip ? payslip.balance : 0;
-    // The last cycle that was closed, so they can keep a copy of what they were paid.
-    const lastRun = await prisma.payRun.findFirst({ where: { companyId }, orderBy: { period: 'desc' }, select: { period: true } });
-    const lastPay = lastRun ? await payroll_consultantPay(prisma, companyId, lastRun.period) : null;
-    const lastPayslip = lastPay ? lastPay.slips.get(consultantId) || null : null;
+    // Every cycle that has been closed, so they can keep a copy of what they were paid.
+    const payslipHistory = await payroll_payslipHistory(prisma, companyId, consultantId);
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, payType: consultant.payType, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
@@ -3238,7 +3236,7 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
       allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
-      payslip, lastPayslip,
+      payslip, payslipHistory,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -4217,6 +4215,8 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
     // Only the newest run can be reopened, and only before any of it has been paid out.
     canReopen: !!existing && lastRun.id === existing.id && slips.every(p => p.paid === 0),
     firstRun: runs.length === 0,
+    // Every cycle with payslips on record, so an old one can always be reached.
+    finalisedPeriods: runs.map(r => r.period),
     currentPeriod: currentLabel,
     payslips: slips,
     totals: {
@@ -4256,6 +4256,33 @@ async function payroll_consultantPay(prisma, companyId, period) {
     });
   }
   return { status: run.status, period: run.period, slips };
+}
+
+// Every finalised payslip one consultant has, newest first, in the same shape the screens
+// already read. Read straight from what was written down, so an old payslip costs nothing to
+// show and is exactly what it was on the day the cycle closed.
+async function payroll_payslipHistory(prisma, companyId, consultantId) {
+  const payslips = await prisma.payslip.findMany({
+    where: { companyId, consultantId },
+    include: { payRun: true, lines: { orderBy: { sort: 'asc' } }, commissionPayments: { orderBy: { createdAt: 'asc' } } },
+  });
+  payslips.sort((a, b) => (a.payRun.period < b.payRun.period ? 1 : -1));
+  return payslips.map((p, i) => {
+    const netPay = payroll_num(p.netPay);
+    const paid = round2(p.commissionPayments.reduce((s, x) => s + payroll_num(x.amount), 0));
+    // Anything but the newest has had its balance carried into the payslip after it.
+    const carried = i > 0;
+    const outstanding = round2(netPay - paid);
+    return {
+      status: 'final', period: p.payRun.period, finalisedAt: p.payRun.finalisedAt,
+      periodName: payroll_cycleName({ periodFrom: p.payRun.periodFrom, periodTo: p.payRun.periodTo }),
+      broughtForward: payroll_num(p.broughtForward), earnings: payroll_num(p.earnings), alreadyPaid: payroll_num(p.alreadyPaid),
+      deductions: payroll_num(p.deductions), netPay, paid, outstanding, carried, balance: carried ? 0 : outstanding,
+      lines: p.lines.filter(l => l.kind !== 'baseline').map(l => ({ kind: l.kind, label: l.label, amount: payroll_num(l.amount) })),
+      payments: p.commissionPayments.map(x => ({ id: x.id, amount: payroll_num(x.amount), createdAt: x.createdAt, paymentMethod: x.paymentMethod, reference: x.reference, notes: x.notes })),
+      loans: [], held: [],
+    };
+  });
 }
 
 // The finalised cycle a directly recorded payment would fall in, if there is one. That

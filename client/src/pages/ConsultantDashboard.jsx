@@ -22,7 +22,7 @@ export default function ConsultantDashboard() {
   if (loading) return <LoadingSpinner />;
   if (!data) return <p className="text-red-500">Failed to load{error ? `: ${error}` : ''}</p>;
 
-  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments, payslip, lastPayslip } = data;
+  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments, payslip, payslipHistory = [] } = data;
   const savePayslip = (slip) => downloadPayslip({
     slip, name: consultant.name, jobTitle: 'Sales consultant', periodLabel: slip.period, periodName: slip.periodName,
     status: slip.status, finalisedAt: slip.finalisedAt,
@@ -113,12 +113,22 @@ export default function ConsultantDashboard() {
             <p className="text-xs text-gray-400 mt-1">Commission counts only what customers have paid. It is final once the cycle is closed.</p>
           </div>
         )}
-        {lastPayslip && (
-          <div className="mt-3 bg-white border border-gray-100 rounded-lg p-4 text-sm flex items-center justify-between gap-3">
-            <span className="text-gray-700">
-              Last payslip · {lastPayslip.periodName} · net pay {formatMoney(lastPayslip.netPay)}
-            </span>
-            <button onClick={() => savePayslip(lastPayslip)} className="text-blue-600 hover:underline shrink-0">Download PDF</button>
+        {payslipHistory.length > 0 && (
+          <div className="mt-3 bg-white border border-gray-100 rounded-lg p-4 text-sm">
+            <p className="font-medium text-gray-700 mb-1">Your payslips</p>
+            <div className="divide-y divide-gray-50">
+              {payslipHistory.map(p => (
+                <div key={p.period} className="flex items-center justify-between gap-3 py-2">
+                  <span className="text-gray-700 min-w-0">
+                    {p.periodName} {new Date(p.finalisedAt).getFullYear()} · net pay {formatMoney(p.netPay)}
+                    <span className="text-xs text-gray-400 ml-2">
+                      {p.outstanding <= 0 ? 'paid' : p.carried ? `${formatMoney(p.outstanding)} carried forward` : `${formatMoney(p.outstanding)} still to pay`}
+                    </span>
+                  </span>
+                  <button onClick={() => savePayslip(p)} className="text-blue-600 hover:underline shrink-0">Download PDF</button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

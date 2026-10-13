@@ -27,6 +27,9 @@ module.exports = async function seed(prisma) {
     data: { name: 'Annie', payType: 'revenue_pct', commissionRate: 5, tierThreshold: 0, tierRate: 0,
             monthlyAllowance: 400, startDate: new Date('2020-01-01'), companyId: company.id },
   });
+  // Annie's own login, so what she is shown about her pay can be checked too.
+  const annieUser = await prisma.user.create({ data: { username: 'annie', password: pw, name: 'Annie', role: 'consultant', companyId: company.id } });
+  await prisma.consultant.update({ where: { id: annie.id }, data: { userId: annieUser.id } });
   const product = await prisma.product.create({ data: { name: 'Widget', sku: 'W1', costPrice: 100, sellingPrice: 500, stock: 100, companyId: company.id } });
 
   const [c0, c1, c2, c3] = [0, 1, 2, 3].map(cycle);

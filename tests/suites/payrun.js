@@ -145,6 +145,15 @@ module.exports = {
     await api('POST', `/payroll/payslips/${slip(r, 'Annie').id}/payments`, { amount: 170 });
     eq('but not once someone has been paid from it', (await api('POST', '/payroll/run/reopen', { period: L1 })).status, 400);
 
+    section('what the consultant sees');
+    const mine = (await (await loginAs(base, 'annie'))('GET', '/dashboard/consultant')).body;
+    eq('every finalised payslip, newest first', mine.payslipHistory.map(p => p.period), [L1, L2]);
+    eq('each as it was closed', mine.payslipHistory.map(p => p.netPay), [170, 15]);
+    eq('the older one carried forward, the newer one paid', mine.payslipHistory.map(p => [p.carried, p.outstanding]), [[false, 0], [true, 15]]);
+    eq('with the lines that explain it', mine.payslipHistory[0].lines.some(l => l.kind === 'loan'), true);
+    eq('and the payslip so far for the cycle running now', [mine.payslip.status, mine.allTime.balance], ['draft', 10]);
+    eq('the pay run lists every finalised cycle to pick from', (await run(L0)).finalisedPeriods, [L2, L1]);
+
     section('the cycle after that starts clean');
     annie = slip(await run(L0), 'Annie');
     eq('nothing brought forward, no late commission, no loan', [annie.broughtForward, line(annie, 'arrears').length, annie.loans.length], [0, 0, 0]);
