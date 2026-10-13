@@ -1,3 +1,4 @@
+import { downloadPayslip } from '../components/PayslipPDF';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getConsultantDashboard } from '../services/api';
@@ -21,7 +22,11 @@ export default function ConsultantDashboard() {
   if (loading) return <LoadingSpinner />;
   if (!data) return <p className="text-red-500">Failed to load{error ? `: ${error}` : ''}</p>;
 
-  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments, payslip } = data;
+  const { consultant, cycle, today, thisCycle, allTime, recentSales, recentPayments, payslip, lastPayslip } = data;
+  const savePayslip = (slip) => downloadPayslip({
+    slip, name: consultant.name, jobTitle: 'Sales consultant', periodLabel: slip.period, periodName: slip.periodName,
+    status: slip.status, finalisedAt: slip.finalisedAt,
+  }).catch(() => {});
   const cycleFrom = cycle ? new Date(cycle.from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
   const cycleTo = cycle ? new Date(new Date(cycle.to).getTime() - 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
   const cyclePayDate = cycle ? new Date(cycle.payDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
@@ -106,6 +111,14 @@ export default function ConsultantDashboard() {
             ))}
             <div className="flex justify-between py-1 mt-1 border-t border-gray-100 font-semibold"><span>Net pay</span><span>{formatMoney(payslip.netPay)}</span></div>
             <p className="text-xs text-gray-400 mt-1">Commission counts only what customers have paid. It is final once the cycle is closed.</p>
+          </div>
+        )}
+        {lastPayslip && (
+          <div className="mt-3 bg-white border border-gray-100 rounded-lg p-4 text-sm flex items-center justify-between gap-3">
+            <span className="text-gray-700">
+              Last payslip · {lastPayslip.periodName} · net pay {formatMoney(lastPayslip.netPay)}
+            </span>
+            <button onClick={() => savePayslip(lastPayslip)} className="text-blue-600 hover:underline shrink-0">Download PDF</button>
           </div>
         )}
       </div>

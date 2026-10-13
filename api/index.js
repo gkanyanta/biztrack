@@ -3225,6 +3225,10 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
     const pay = await payroll_consultantPay(prisma, companyId, null);
     const payslip = pay.slips.get(consultantId) || null;
     const balance = payslip ? payslip.balance : 0;
+    // The last cycle that was closed, so they can keep a copy of what they were paid.
+    const lastRun = await prisma.payRun.findFirst({ where: { companyId }, orderBy: { period: 'desc' }, select: { period: true } });
+    const lastPay = lastRun ? await payroll_consultantPay(prisma, companyId, lastRun.period) : null;
+    const lastPayslip = lastPay ? lastPay.slips.get(consultantId) || null : null;
 
     res.json({
       consultant: { id: consultant.id, name: consultant.name, payType: consultant.payType, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
@@ -3234,7 +3238,7 @@ app.get('/api/v1/dashboard/consultant', authenticate, async (req, res) => {
       allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
-      payslip,
+      payslip, lastPayslip,
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
@@ -4248,6 +4252,7 @@ async function payroll_consultantPay(prisma, companyId, period) {
       // to pay once it is finalised, and nothing once that has moved to a later payslip.
       balance: run.status === 'draft' ? p.netPay : (p.carried ? 0 : p.outstanding),
       lines: p.lines.filter(l => l.kind !== 'baseline').map(l => ({ kind: l.kind, label: l.label, amount: l.amount })),
+      payments: p.payments, loans: p.loans, held: p.held, finalisedAt: run.finalisedAt,
     });
   }
   return { status: run.status, period: run.period, slips };

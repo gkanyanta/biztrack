@@ -10,9 +10,10 @@ import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
+import { downloadPayslip } from '../components/PayslipPDF';
 import toast from 'react-hot-toast';
 import {
-  FiUsers, FiPlus, FiDollarSign, FiTrash2, FiEdit2, FiAlertCircle, FiArrowRight, FiLock, FiUnlock, FiX,
+  FiUsers, FiPlus, FiDollarSign, FiTrash2, FiEdit2, FiAlertCircle, FiArrowRight, FiLock, FiUnlock, FiX, FiDownload,
 } from 'react-icons/fi';
 import { Link } from 'react-router-dom';
 
@@ -233,6 +234,20 @@ export default function Payroll() {
     if (ok) setInstalmentFor(null);
   };
 
+  const printSlip = async (slip) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await downloadPayslip({
+        slip, name: slip.name, jobTitle: slip.jobTitle, periodLabel: run.period.label, periodName: run.period.name,
+        status: run.status, finalisedAt: run.finalisedAt,
+      });
+    } catch (err) {
+      console.error('Failed to generate payslip:', err);
+      toast.error('Could not make the payslip');
+    } finally { setSubmitting(false); }
+  };
+
   if (loading && !run) return <LoadingSpinner />;
   if (!run) return null;
 
@@ -361,6 +376,8 @@ export default function Payroll() {
               <button onClick={() => openPay(slip)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Pay {formatMoney(slip.outstanding)}</button>
             )
           )}
+          <button disabled={submitting} onClick={() => printSlip(slip)}
+            className="px-2.5 py-1 border border-gray-200 rounded-lg text-xs flex items-center gap-1"><FiDownload size={12} /> Payslip</button>
           {staffRecord && (
             <button onClick={() => { setDirectFor(staffRecord); setDirectForm({ amount: '', type: 'allowance', paymentMethod: '', reference: '', notes: '' }); }}
               className="px-2.5 py-1 border border-gray-200 rounded-lg text-xs">Allowance or advance</button>

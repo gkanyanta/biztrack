@@ -736,6 +736,7 @@ async function payroll_consultantPay(prisma, companyId, period) {
       // to pay once it is finalised, and nothing once that has moved to a later payslip.
       balance: run.status === 'draft' ? p.netPay : (p.carried ? 0 : p.outstanding),
       lines: p.lines.filter(l => l.kind !== 'baseline').map(l => ({ kind: l.kind, label: l.label, amount: l.amount })),
+      payments: p.payments, loans: p.loans, held: p.held, finalisedAt: run.finalisedAt,
     });
   }
   return { status: run.status, period: run.period, slips };

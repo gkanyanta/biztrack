@@ -1,3 +1,4 @@
+import { downloadPayslip } from '../components/PayslipPDF';
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { getConsultants, createConsultant, updateConsultant, deleteConsultant, getCommissionSummary, getPayReview, recordCommissionPayment, getConsultant, getSettings, getConsultantStock, transferStockToConsultant, returnStockFromConsultant, getStockTransfers, getProducts, createConsultantLogin, resetConsultantPassword, revokeConsultantLogin } from '../services/api';
@@ -547,7 +548,14 @@ export default function Consultants() {
                   <span className="font-medium text-gray-700">
                     Payslip · {showDetail.payslip.status === 'draft' ? <span className="text-amber-600">draft, not finalised</span> : <span className="text-emerald-600">finalised</span>}
                   </span>
-                  <Link to="/payroll" className="text-xs text-blue-600 hover:underline">Open in Payroll</Link>
+                  <span className="flex items-center gap-3 text-xs">
+                    <button onClick={() => downloadPayslip({
+                      slip: showDetail.payslip, name: showDetail.name, jobTitle: 'Sales consultant',
+                      periodLabel: showDetail.payslip.period, periodName: showDetail.payslip.periodName,
+                      status: showDetail.payslip.status, finalisedAt: showDetail.payslip.finalisedAt,
+                    }).catch(() => toast.error('Could not make the payslip'))} className="text-blue-600 hover:underline">Download PDF</button>
+                    <Link to="/payroll" className="text-blue-600 hover:underline">Open in Payroll</Link>
+                  </span>
                 </div>
                 {showDetail.payslip.broughtForward !== 0 && (
                   <div className="flex justify-between py-0.5 text-gray-600"><span>Brought forward</span><span>{formatMoney(showDetail.payslip.broughtForward)}</span></div>
