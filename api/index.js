@@ -1689,6 +1689,105 @@ app.delete('/api/v1/shipping-rates/:id', authenticate, requireAdmin, async (req,
 });
 
 // ---- DASHBOARD ----
+// ---- TARGET TRACKER ----
+// The dashboard's headline: how the period is going against a target that can be reached.
+// A target the admin has set for a period containing today wins. Without one, the target is
+// the best of the last three full months plus ten percent, which asks for a record month
+// without asking for the impossible. Profit and cash sit beside revenue, because a month
+// can sell more and still keep less. (mirrored between api/index.js and
+// server/src/routes/dashboard.js)
+const TRACKER_UPLIFT = 0.10;
+const TRACKER_AD_CATEGORY = 'Facebook Ads';
+
+async function dashboard_targetTracker(prisma, companyId) {
+  const now = new Date();
+  const monthStart = (back) => new Date(now.getFullYear(), now.getMonth() - back, 1);
+  const num = (v) => parseFloat(v || 0) || 0;
+  const r2 = (n) => Math.round(n * 100) / 100;
+
+  const activeTargets = await prisma.salesTarget.findMany({ where: { companyId, periodStart: { lte: now }, periodEnd: { gte: now } } });
+  // The shortest period containing today is the most specific one.
+  activeTargets.sort((a, b) => (a.periodEnd - a.periodStart) - (b.periodEnd - b.periodStart));
+  const activeTarget = activeTargets[0] || null;
+  const periodStart = activeTarget ? new Date(activeTarget.periodStart) : monthStart(0);
+  const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  const historyFrom = monthStart(3);
+  const from = periodStart < historyFrom ? periodStart : historyFrom;
+  const [sales, expenses] = await Promise.all([
+    prisma.sale.findMany({
+      where: { companyId, status: { not: 'Cancelled' }, date: { gte: from, lte: periodEnd } },
+      select: { date: true, totalPrice: true, amountPaid: true, shippingCost: true, items: { select: { qty: true, costPrice: true } } },
+    }),
+    prisma.expense.findMany({
+      where: { companyId, category: { not: 'Stock Purchase' }, date: { gte: from, lte: periodEnd } },
+      select: { date: true, amount: true, category: true },
+    }),
+  ]);
+  const between = (rows, a, b) => rows.filter(r => new Date(r.date) >= a && new Date(r.date) <= b);
+  const revenueOf = (rows) => rows.reduce((s, r) => s + num(r.totalPrice), 0);
+  const adsOf = (rows) => rows.filter(e => e.category === TRACKER_AD_CATEGORY).reduce((s, e) => s + num(e.amount), 0);
+
+  // The last three full months, newest first.
+  const months = [1, 2, 3].map(back => {
+    const a = monthStart(back), b = new Date(monthStart(back - 1).getTime() - 1);
+    const rows = between(sales, a, b);
+    return {
+      month: `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`,
+      revenue: revenueOf(rows), orders: rows.length, adSpend: adsOf(between(expenses, a, b)),
+    };
+  });
+  const best = months.reduce((top, m) => (m.revenue > top.revenue ? m : top), months[0]);
+  const defaultTarget = Math.round((best.revenue * (1 + TRACKER_UPLIFT)) / 1000) * 1000;
+
+  const periodSales = between(sales, periodStart, periodEnd);
+  const periodExpenses = between(expenses, periodStart, periodEnd);
+  const periodRevenue = revenueOf(periodSales);
+  const periodOrders = periodSales.length;
+  const thisMonthSales = between(sales, monthStart(0), now);
+
+  const growthTarget = activeTarget ? num(activeTarget.revenueTarget) : defaultTarget;
+  const remainingToTarget = Math.max(0, growthTarget - periodRevenue);
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const periodTotalDays = Math.max(1, Math.ceil((periodEnd - periodStart) / MS_PER_DAY));
+  const periodDayIdx = Math.min(periodTotalDays, Math.max(1, Math.ceil((now - periodStart) / MS_PER_DAY)));
+  const daysLeft = Math.max(0, periodTotalDays - periodDayIdx);
+  const dailyRevenueRate = periodRevenue / periodDayIdx;
+
+  const cogs = periodSales.reduce((s, r) => s + r.items.reduce((x, i) => x + num(i.costPrice) * i.qty, 0), 0);
+  const deliveryCost = periodSales.reduce((s, r) => s + num(r.shippingCost), 0);
+  const grossProfit = periodRevenue - cogs - deliveryCost;
+  const expensesTotal = periodExpenses.reduce((s, e) => s + num(e.amount), 0);
+  const adSpend = adsOf(periodExpenses);
+  const collected = periodSales.reduce((s, r) => s + Math.min(num(r.amountPaid), num(r.totalPrice)), 0);
+  // What a kwacha of advertising has brought in lately, to judge this period's spend against.
+  const recentAds = months.reduce((s, m) => s + m.adSpend, 0);
+  const recentRevenuePerAdKwacha = recentAds > 0 ? months.reduce((s, m) => s + m.revenue, 0) / recentAds : null;
+
+  return {
+    thisMonthRevenue: revenueOf(thisMonthSales), thisMonthOrders: thisMonthSales.length,
+    lastMonthRevenue: months[0].revenue, lastMonthOrders: months[0].orders,
+    periodRevenue, periodOrders, periodStart, periodEnd, periodTotalDays, periodDayIdx,
+    activeTarget: activeTarget ? { id: activeTarget.id, label: activeTarget.label, periodStart: activeTarget.periodStart, periodEnd: activeTarget.periodEnd, revenueTarget: activeTarget.revenueTarget, savingsRate: activeTarget.savingsRate } : null,
+    targetBasis: activeTarget ? null : { month: best.month, revenue: best.revenue, upliftPercent: TRACKER_UPLIFT * 100 },
+    recentMonths: months,
+    growthTarget, growthProgress: growthTarget > 0 ? Math.min(100, (periodRevenue / growthTarget) * 100) : 0,
+    remainingToTarget, daysLeft, dailyRevenueRate,
+    dailyTargetNeeded: daysLeft > 0 ? remainingToTarget / daysLeft : remainingToTarget,
+    projectedMonthRevenue: dailyRevenueRate * periodTotalDays,
+    projectedMonthOrders: Math.round((periodOrders / periodDayIdx) * periodTotalDays),
+    profit: {
+      grossProfit: r2(grossProfit), expenses: r2(expensesTotal), netProfit: r2(grossProfit - expensesTotal),
+      adSpend: r2(adSpend), wages: r2(periodExpenses.filter(e => e.category === 'Salaries & Wages').reduce((s, e) => s + num(e.amount), 0)),
+      collected: r2(collected), unpaid: r2(periodRevenue - collected),
+      adShareOfGrossProfit: grossProfit > 0 ? r2((adSpend / grossProfit) * 100) : null,
+      revenuePerAdKwacha: adSpend > 0 ? r2(periodRevenue / adSpend) : null,
+      recentRevenuePerAdKwacha: recentRevenuePerAdKwacha === null ? null : r2(recentRevenuePerAdKwacha),
+      adsToCloseGap: recentRevenuePerAdKwacha && remainingToTarget > 0 ? r2(remainingToTarget / recentRevenuePerAdKwacha) : 0,
+    },
+  };
+}
+
 app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
@@ -1802,22 +1901,6 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const projectedMonthRevenue = dailyRevenueRate * daysInMonth;
     const projectedMonthOrders = Math.round(dailyOrderRate * daysInMonth);
 
-    const growthTarget = lastMonthRevenue * 3;
-    const growthProgress = growthTarget > 0 ? (thisMonthRevenue / growthTarget) * 100 : 0;
-    const remainingToTarget = Math.max(0, growthTarget - thisMonthRevenue);
-    const daysLeft = daysInMonth - dayOfMonth;
-    const dailyTargetNeeded = daysLeft > 0 ? remainingToTarget / daysLeft : 0;
-    const actualGrowthRate = lastMonthRevenue > 0 ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100 : 0;
-
-    const avgProfitPerSale = thisMonthOrders > 0 ? (thisMonthRevenue - thisMonthCOGS) / thisMonthOrders : 0;
-    const effectiveRoas = roas > 0 ? roas : 3;
-    const additionalAdBudgetNeeded = (2 * (lastMonthRevenue || thisMonthRevenue)) / effectiveRoas;
-    const targetMonthlyOrders = (lastMonthOrders || thisMonthOrders) * 3;
-    const additionalInventoryCost = targetMonthlyOrders > 0 && thisMonthOrders > 0 ? thisMonthCOGS * 2 : 0;
-    const totalReinvestmentNeeded = additionalAdBudgetNeeded + additionalInventoryCost;
-    const reinvestPerSale = thisMonthOrders > 0 ? totalReinvestmentNeeded / (thisMonthOrders * 3) : 0;
-    const reinvestPercentOfProfit = avgProfitPerSale > 0 ? (reinvestPerSale / avgProfitPerSale) * 100 : 0;
-
     // ---- DAILY SAVINGS (25% of daily gross profit) ----
     const SAVINGS_RATE = 0.25;
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -1841,13 +1924,7 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
       avgDailySavings: dayOfMonth > 0 ? thisMonthSavings / dayOfMonth : 0
     };
 
-    const growth = {
-      thisMonthRevenue, thisMonthOrders, lastMonthRevenue, lastMonthOrders,
-      dailyRevenueRate, projectedMonthRevenue, projectedMonthOrders,
-      growthTarget, growthProgress: Math.min(growthProgress, 100), remainingToTarget, dailyTargetNeeded, daysLeft,
-      actualGrowthRate,
-      reinvestment: { perSale: reinvestPerSale, percentOfProfit: reinvestPercentOfProfit, monthlyAdBudget: additionalAdBudgetNeeded, monthlyInventory: additionalInventoryCost, totalMonthly: totalReinvestmentNeeded, avgProfitPerSale, roas: effectiveRoas }
-    };
+    const growth = await dashboard_targetTracker(prisma, companyId);
 
     // ---- CONSULTANT IMPACT ----
     const consultants = await prisma.consultant.findMany({ where: { companyId, isStockLocation: false } });
@@ -1915,25 +1992,54 @@ app.get('/api/v1/reports/growth', authenticate, requireAdmin, async (req, res) =
     for (let i = 1; i < history.length; i++) { history[i].growthRate = history[i - 1].revenue > 0 ? ((history[i].revenue - history[i - 1].revenue) / history[i - 1].revenue) * 100 : 0; }
     if (history.length > 0) history[0].growthRate = 0;
 
+    // Projections stand on full months only. The month in progress is a part figure, and
+    // using it as the base dragged every line down for the first weeks of each month.
     const now = new Date();
-    const latestMonth = history.length > 0 ? history[history.length - 1] : null;
-    const avgGrowthRate = history.length >= 2 ? history.slice(1).reduce((s, h) => s + h.growthRate, 0) / (history.length - 1) : 0;
-    const avgMargin = latestMonth && latestMonth.revenue > 0 ? (latestMonth.profit / latestMonth.revenue) : 0.3;
-    const avgExpenseRatio = latestMonth && latestMonth.revenue > 0 ? (latestMonth.expenses / latestMonth.revenue) : 0.2;
+    const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const full = history.filter(h => h.month < thisMonth);
+    const recent = full.slice(-3);
+    const total = (rows, fn) => rows.reduce((s, r) => s + fn(r), 0);
+    const recentRevenue = total(recent, h => h.revenue);
+    const baseRevenue = recent.length ? recentRevenue / recent.length : 0;
+    const baseOrders = recent.length ? total(recent, h => h.orders) / recent.length : 0;
+    const netMargin = recentRevenue > 0 ? total(recent, h => h.netProfit) / recentRevenue : 0;
+    const grossMargin = recentRevenue > 0 ? total(recent, h => h.profit) / recentRevenue : 0.3;
+    const recentAds = total(recent, h => h.adSpend);
+    const revenuePerAdKwacha = recentAds > 0 ? recentRevenue / recentAds : null;
+
+    // Three lines to plan against: standing still, carrying on as lately, and a stretch.
+    // The recent trend is held inside a band so one freak month cannot project a fantasy,
+    // which is what compounding a tripling target did.
+    const TREND_FLOOR = -20, TREND_CAP = 30, STRETCH_RATE = 10;
+    const withGrowth = recent.filter(h => full.indexOf(h) > 0);
+    const rawGrowthRate = withGrowth.length ? total(withGrowth, h => h.growthRate) / withGrowth.length : 0;
+    const avgGrowthRate = Math.max(TREND_FLOOR, Math.min(TREND_CAP, rawGrowthRate));
 
     const projections = [];
     for (let i = 1; i <= 6; i++) {
-      const projMonth = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      const monthLabel = projMonth.toISOString().slice(0, 7);
-      const baseRevenue = latestMonth ? latestMonth.revenue : 0;
-      const currentGrowthMultiplier = Math.pow(1 + avgGrowthRate / 100, i);
-      const currentRevenue = baseRevenue * currentGrowthMultiplier;
-      const targetRevenue = baseRevenue * Math.pow(3, i);
-      const targetAdSpend = latestMonth && latestMonth.roas > 0 ? targetRevenue / latestMonth.roas : targetRevenue / 3;
-      projections.push({ month: monthLabel, currentTrajectory: { revenue: currentRevenue, profit: currentRevenue * avgMargin, orders: Math.round(latestMonth ? (latestMonth.orders * currentGrowthMultiplier) : 0) }, targetTrajectory: { revenue: targetRevenue, profit: targetRevenue * avgMargin - targetRevenue * avgExpenseRatio, adSpendNeeded: targetAdSpend, inventoryNeeded: targetRevenue * (1 - avgMargin) }, gap: targetRevenue - currentRevenue });
+      const projMonth = new Date(now.getFullYear(), now.getMonth() + i - 1, 1);
+      const monthLabel = `${projMonth.getFullYear()}-${String(projMonth.getMonth() + 1).padStart(2, '0')}`;
+      const trend = Math.pow(1 + avgGrowthRate / 100, i);
+      const trendRevenue = baseRevenue * trend;
+      const stretchRevenue = baseRevenue * Math.pow(1 + STRETCH_RATE / 100, i);
+      projections.push({
+        month: monthLabel,
+        flat: { revenue: baseRevenue, profit: baseRevenue * netMargin },
+        currentTrajectory: { revenue: trendRevenue, profit: trendRevenue * netMargin, orders: Math.round(baseOrders * trend) },
+        targetTrajectory: {
+          revenue: stretchRevenue, profit: stretchRevenue * netMargin,
+          adSpendNeeded: revenuePerAdKwacha ? stretchRevenue / revenuePerAdKwacha : null,
+          inventoryNeeded: stretchRevenue * (1 - grossMargin),
+        },
+        gap: stretchRevenue - trendRevenue,
+      });
     }
 
-    res.json({ history, projections, avgGrowthRate, targetGrowthRate: 200 });
+    res.json({
+      history, projections, avgGrowthRate, rawGrowthRate, targetGrowthRate: STRETCH_RATE,
+      base: { revenue: baseRevenue, months: recent.map(h => h.month), netMargin },
+      currentMonth: thisMonth,
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -2342,6 +2448,7 @@ app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, 
     await prisma.payRun.deleteMany({ where: { companyId } });
     await prisma.payAdjustment.deleteMany({ where: { companyId } });
     await prisma.loan.deleteMany({ where: { companyId } });
+    await prisma.consultantTarget.deleteMany({ where: { companyId } });
     await prisma.staff.deleteMany({ where: { companyId } });
     await prisma.debtReminder.deleteMany({ where: { companyId } });
     await prisma.creditPayment.deleteMany({ where: { companyId } });
@@ -3058,6 +3165,8 @@ app.delete('/api/v1/consultants/:id', authenticate, requireAdmin, async (req, re
       + await prisma.payslip.count({ where: { consultantId: req.params.id } })
       + await prisma.loan.count({ where: { consultantId: req.params.id } })
       + await prisma.payAdjustment.count({ where: { consultantId: req.params.id } });
+    // A target nobody was paid on is not history, so it goes with the consultant.
+    if (salesCount === 0) await prisma.consultantTarget.deleteMany({ where: { consultantId: req.params.id } });
     if (salesCount > 0) {
       await prisma.consultant.update({ where: { id: req.params.id }, data: { isActive: false } });
       return res.json({ message: 'Consultant deactivated (has existing sales)' });
@@ -3953,6 +4062,22 @@ function payroll_entitlement(consultant, sales, cycle) {
   };
 }
 
+// Goods value actually collected on one cycle's orders: the figure commission is paid on, and
+// so the figure a consultant's target is measured in. Delivery fees and unpaid money are out.
+function payroll_collectedGoods(consultant, sales, cycle) {
+  const eff = getEffectivePeriod(cycle.periodFrom, cycle.periodTo, consultant.startDate);
+  if (!eff) return 0;
+  let collected = 0;
+  for (const s of sales) {
+    if (s.consultantId !== consultant.id || new Date(s.date) < eff.effectiveFrom || new Date(s.date) >= cycle.periodTo) continue;
+    const total = payroll_num(s.totalPrice);
+    if (!(total > 0)) continue;
+    const goods = Math.max(0, total - payroll_num(s.shippingCharge));
+    collected += goods * Math.min(1, Math.max(0, payroll_num(s.amountPaid) / total));
+  }
+  return round2(collected);
+}
+
 // The person a loan or adjustment is for, checked against the company.
 async function payroll_resolvePerson(prisma, companyId, { personKind, personId }) {
   if (!personId) return null;
@@ -4006,6 +4131,9 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
       },
     }),
   ]);
+
+  const targets = existing ? [] : await prisma.consultantTarget.findMany({ where: { companyId, period } });
+  const kwacha = (n) => `K${Math.round(n).toLocaleString('en-US')}`;
 
   const paymentsOf = (slip) => (slip.consultantId ? cPayments : sPayments).filter(p => p.payslipId === slip.id);
   const paidOn = (slip) => round2(paymentsOf(slip).reduce((s, p) => s + payroll_num(p.amount), 0));
@@ -4165,6 +4293,29 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
         });
       }
 
+      // A target for the cycle pays its bonus once what has been collected reaches it.
+      const collected = payroll_collectedGoods(c, sales, cycle);
+      const goal = targets.find(t => t.consultantId === c.id) || null;
+      let target = null;
+      if (goal) {
+        const aim = payroll_num(goal.target), flat = payroll_num(goal.bonus), rate = payroll_num(goal.bonusRate);
+        const reached = collected >= aim;
+        const bonusNow = reached ? round2(flat + ((collected - aim) * rate) / 100) : 0;
+        if (bonusNow > 0) earning.push({ kind: 'bonus', label: `Target bonus: ${kwacha(collected)} collected against a target of ${kwacha(aim)}`, amount: bonusNow });
+        target = {
+          id: goal.id, target: aim, bonus: flat, bonusRate: rate, collected, reached, bonusNow,
+          toGo: round2(Math.max(0, aim - collected)), progress: aim > 0 ? Math.min(100, round2((collected / aim) * 100)) : 0,
+        };
+      }
+      // Offered when a target is being set: ten percent above their recent cycles, so it asks
+      // for more than usual without asking for their best month ever.
+      const recentCycles = [1, 2, 3]
+        .map(back => payroll_collectedGoods(c, sales, payPeriodFromLabel(payroll_shiftLabel(period, -back), payDay)))
+        .filter(v => v > 0);
+      const suggestedTarget = recentCycles.length
+        ? Math.round(((recentCycles.reduce((a, b) => a + b, 0) / recentCycles.length) * 1.1) / 1000) * 1000
+        : 0;
+
       const slip = build(key, {
         kind: 'commission', personId: c.id, name: c.name,
         jobTitle: c.payType === 'revenue_pct' ? 'Sales consultant (% of revenue)' : 'Sales consultant (per unit)',
@@ -4187,7 +4338,7 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
         })
         .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-      return { ...slip, unpaidOrders, onRun: activeNow };
+      return { ...slip, unpaidOrders, onRun: activeNow, target, collected, suggestedTarget };
     });
 
     // Someone who has left still gets a payslip while there is anything on it.
@@ -4253,6 +4404,7 @@ async function payroll_consultantPay(prisma, companyId, period) {
       balance: run.status === 'draft' ? p.netPay : (p.carried ? 0 : p.outstanding),
       lines: p.lines.filter(l => l.kind !== 'baseline').map(l => ({ kind: l.kind, label: l.label, amount: l.amount })),
       payments: p.payments, loans: p.loans, held: p.held, finalisedAt: run.finalisedAt,
+      target: p.target || null,
     });
   }
   return { status: run.status, period: run.period, slips };
@@ -4500,6 +4652,44 @@ app.post('/api/v1/payroll/adjustments/:id/release', authenticate, requireAdmin, 
       if (await payroll_periodIsClosed(prisma, companyId, period)) return res.status(400).json({ error: 'That cycle is finalised. Release it on the cycle that is still open.' });
     }
     res.json(await prisma.payAdjustment.update({ where: { id: adjustment.id }, data: { refundPeriod: period } }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- CONSULTANT TARGETS ----
+
+// Set, or change, what a consultant is asked to collect in a cycle and what reaching it pays.
+app.put('/api/v1/payroll/targets', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { consultantId, period } = req.body;
+    if (!payroll_isLabel(period)) return res.status(400).json({ error: 'Period must look like 2026-11' });
+    const consultant = await prisma.consultant.findFirst({ where: { id: consultantId || '', companyId, isStockLocation: false } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    const target = round2(parseFloat(req.body.target));
+    if (!Number.isFinite(target) || target <= 0) return res.status(400).json({ error: 'Target must be more than zero' });
+    const bonus = req.body.bonus === undefined || req.body.bonus === '' ? 0 : round2(parseFloat(req.body.bonus));
+    const bonusRate = req.body.bonusRate === undefined || req.body.bonusRate === '' ? 0 : round2(parseFloat(req.body.bonusRate));
+    if (!Number.isFinite(bonus) || bonus < 0) return res.status(400).json({ error: 'Bonus must be zero or more' });
+    if (!Number.isFinite(bonusRate) || bonusRate < 0 || bonusRate > 100) return res.status(400).json({ error: 'The share above target must be between 0 and 100 percent' });
+    if (await payroll_periodIsClosed(prisma, companyId, period)) return res.status(400).json({ error: 'That cycle is finalised, so its target can no longer change.' });
+
+    const saved = await prisma.consultantTarget.upsert({
+      where: { consultantId_period: { consultantId: consultant.id, period } },
+      create: { consultantId: consultant.id, period, target, bonus, bonusRate, companyId },
+      update: { target, bonus, bonusRate },
+    });
+    res.json(saved);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.delete('/api/v1/payroll/targets/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const target = await prisma.consultantTarget.findFirst({ where: { id: req.params.id, companyId } });
+    if (!target) return res.status(404).json({ error: 'Target not found' });
+    if (await payroll_periodIsClosed(prisma, companyId, target.period)) return res.status(400).json({ error: 'That cycle is finalised, so its target can no longer change.' });
+    await prisma.consultantTarget.delete({ where: { id: target.id } });
+    res.json({ success: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

@@ -97,6 +97,24 @@ export default function ConsultantDashboard() {
             <p className="text-xl font-bold text-blue-700">{formatMoney(allTime.allowancePaid)}</p>
           </div>
         </div>
+        {/* The target for the cycle, and what reaching it is worth. */}
+        {payslip?.target && (
+          <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-medium text-blue-900">Your target · {payslip.periodName}</p>
+              <p className="text-blue-900 font-semibold">{formatMoney(payslip.target.collected)} of {formatMoney(payslip.target.target)}</p>
+            </div>
+            <div className="w-full bg-white rounded-full h-2 mt-2">
+              <div className={`h-2 rounded-full ${payslip.target.reached ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${payslip.target.progress}%` }} />
+            </div>
+            <p className="text-xs text-blue-800 mt-2">
+              {payslip.target.reached
+                ? `Target reached. Your bonus so far is ${formatMoney(payslip.target.bonusNow)}, and it grows with every paid order from here.`
+                : `${formatMoney(payslip.target.toGo)} to go for a bonus of ${formatMoney(payslip.target.bonus)}${payslip.target.bonusRate > 0 ? `, plus ${payslip.target.bonusRate}% of everything above the target` : ''}.`}
+              {' '}Only orders customers have paid for count.
+            </p>
+          </div>
+        )}
         {/* How the figure above is made up: the payslip as it stands today. */}
         {payslip && (
           <div className="mt-3 bg-white border border-gray-100 rounded-lg p-4 text-sm">

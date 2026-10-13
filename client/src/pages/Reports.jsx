@@ -463,48 +463,50 @@ export default function Reports() {
 }
 
 function GrowthReport({ data }) {
-  const { history, projections, avgGrowthRate, targetGrowthRate } = data;
+  const { history, projections, avgGrowthRate, rawGrowthRate, targetGrowthRate, base, currentMonth } = data;
 
-  // Build chart data: history + projections
+  // Full months as they happened, then the three lines from the month in progress onwards.
   const chartData = [
-    ...history.map(h => ({ month: h.month, actual: h.revenue, type: 'actual' })),
+    ...history.filter(h => h.month < currentMonth).map(h => ({ month: h.month, actual: h.revenue, type: 'actual' })),
     ...projections.map(p => ({
       month: p.month,
+      flat: p.flat.revenue,
       currentPace: p.currentTrajectory.revenue,
-      target200: p.targetTrajectory.revenue,
+      stretch: p.targetTrajectory.revenue,
       type: 'projected'
     }))
   ];
+  const capped = Math.abs(rawGrowthRate - avgGrowthRate) > 0.05;
 
   return (
     <div className="space-y-6">
       {/* Summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-          <p className="text-xs text-gray-500 uppercase font-medium">Your Avg Monthly Growth</p>
+          <p className="text-xs text-gray-500 uppercase font-medium">Steady Base</p>
+          <p className="text-2xl font-bold mt-1 text-gray-800">{formatMoney(base.revenue)}</p>
+          <p className="text-xs text-gray-400 mt-1">Average of your last {base.months.length} full months</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Recent Monthly Growth</p>
           <p className={`text-2xl font-bold mt-1 ${avgGrowthRate >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             {avgGrowthRate.toFixed(1)}%
           </p>
-          <p className="text-xs text-gray-400 mt-1">Based on actual sales data</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-          <p className="text-xs text-gray-500 uppercase font-medium">Target Growth Rate</p>
-          <p className="text-2xl font-bold mt-1 text-blue-600">200%</p>
-          <p className="text-xs text-gray-400 mt-1">3x revenue every month</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-          <p className="text-xs text-gray-500 uppercase font-medium">Growth Gap</p>
-          <p className={`text-2xl font-bold mt-1 ${avgGrowthRate >= targetGrowthRate ? 'text-green-600' : 'text-amber-600'}`}>
-            {avgGrowthRate >= targetGrowthRate ? 'On Track!' : `${(targetGrowthRate - avgGrowthRate).toFixed(0)}% behind`}
+          <p className="text-xs text-gray-400 mt-1">
+            {capped ? `Actual average ${rawGrowthRate.toFixed(0)}%, held to a believable range for projecting` : 'Month on month, over the same months'}
           </p>
-          <p className="text-xs text-gray-400 mt-1">Need {(targetGrowthRate - avgGrowthRate).toFixed(0)}% more growth</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          <p className="text-xs text-gray-500 uppercase font-medium">Stretch Pace</p>
+          <p className="text-2xl font-bold mt-1 text-blue-600">{targetGrowthRate}%</p>
+          <p className="text-xs text-gray-400 mt-1">Growth a month, kept at about {(base.netMargin * 100).toFixed(0)}% net margin</p>
         </div>
       </div>
 
       {/* Revenue Projection Chart */}
       <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
         <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-          <FiTrendingUp className="text-blue-500" /> Revenue Projection: Current Pace vs 200% Target
+          <FiTrendingUp className="text-blue-500" /> Revenue Projection: Standing Still, Recent Trend and Stretch
         </h3>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={chartData}>
@@ -514,8 +516,9 @@ function GrowthReport({ data }) {
             <Tooltip formatter={(v) => formatMoney(v)} />
             <Legend />
             <Line type="monotone" dataKey="actual" stroke="#3B82F6" strokeWidth={3} name="Actual Revenue" dot={{ r: 4 }} connectNulls={false} />
-            <Line type="monotone" dataKey="currentPace" stroke="#F59E0B" strokeWidth={2} strokeDasharray="5 5" name="Current Pace" dot={{ r: 3 }} connectNulls={false} />
-            <Line type="monotone" dataKey="target200" stroke="#10B981" strokeWidth={2} strokeDasharray="8 4" name="200% Target" dot={{ r: 3 }} connectNulls={false} />
+            <Line type="monotone" dataKey="flat" stroke="#9CA3AF" strokeWidth={2} strokeDasharray="2 4" name="Standing Still" dot={{ r: 2 }} connectNulls={false} />
+            <Line type="monotone" dataKey="currentPace" stroke="#F59E0B" strokeWidth={2} strokeDasharray="5 5" name="Recent Trend" dot={{ r: 3 }} connectNulls={false} />
+            <Line type="monotone" dataKey="stretch" stroke="#10B981" strokeWidth={2} strokeDasharray="8 4" name="Stretch" dot={{ r: 3 }} connectNulls={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -563,28 +566,30 @@ function GrowthReport({ data }) {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100">
         <div className="p-4 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-700">6-Month Projections</h3>
-          <p className="text-xs text-gray-400 mt-1">What you need to invest each month to hit 200% growth</p>
+          <p className="text-xs text-gray-400 mt-1">Three ways the next six months could go, and what the stretch would take</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-gray-50">
                 <th className="text-left p-3 font-medium text-gray-600">Month</th>
-                <th className="text-right p-3 font-medium text-gray-600">Current Pace</th>
-                <th className="text-right p-3 font-medium text-gray-600">200% Target</th>
-                <th className="text-right p-3 font-medium text-gray-600">Gap</th>
-                <th className="text-right p-3 font-medium text-gray-600">Ad Spend Needed</th>
-                <th className="text-right p-3 font-medium text-gray-600">Inventory Needed</th>
+                <th className="text-right p-3 font-medium text-gray-600">Standing Still</th>
+                <th className="text-right p-3 font-medium text-gray-600">Recent Trend</th>
+                <th className="text-right p-3 font-medium text-gray-600">Stretch</th>
+                <th className="text-right p-3 font-medium text-gray-600">Net Profit at Stretch</th>
+                <th className="text-right p-3 font-medium text-gray-600">Ads for Stretch</th>
+                <th className="text-right p-3 font-medium text-gray-600">Stock for Stretch</th>
               </tr>
             </thead>
             <tbody>
               {projections.map(p => (
                 <tr key={p.month} className="border-b border-gray-50">
                   <td className="p-3 font-medium">{p.month}</td>
+                  <td className="p-3 text-right text-gray-500">{formatMoney(p.flat.revenue)}</td>
                   <td className="p-3 text-right text-amber-600">{formatMoney(p.currentTrajectory.revenue)}</td>
                   <td className="p-3 text-right text-green-600 font-medium">{formatMoney(p.targetTrajectory.revenue)}</td>
-                  <td className="p-3 text-right text-red-500">{formatMoney(p.gap)}</td>
-                  <td className="p-3 text-right">{formatMoney(p.targetTrajectory.adSpendNeeded)}</td>
+                  <td className="p-3 text-right">{formatMoney(p.targetTrajectory.profit)}</td>
+                  <td className="p-3 text-right">{p.targetTrajectory.adSpendNeeded === null ? '—' : formatMoney(p.targetTrajectory.adSpendNeeded)}</td>
                   <td className="p-3 text-right">{formatMoney(p.targetTrajectory.inventoryNeeded)}</td>
                 </tr>
               ))}

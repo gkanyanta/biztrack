@@ -56,6 +56,105 @@ router.get('/consultant', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- TARGET TRACKER ----
+// The dashboard's headline: how the period is going against a target that can be reached.
+// A target the admin has set for a period containing today wins. Without one, the target is
+// the best of the last three full months plus ten percent, which asks for a record month
+// without asking for the impossible. Profit and cash sit beside revenue, because a month
+// can sell more and still keep less. (mirrored between api/index.js and
+// server/src/routes/dashboard.js)
+const TRACKER_UPLIFT = 0.10;
+const TRACKER_AD_CATEGORY = 'Facebook Ads';
+
+async function dashboard_targetTracker(prisma, companyId) {
+  const now = new Date();
+  const monthStart = (back) => new Date(now.getFullYear(), now.getMonth() - back, 1);
+  const num = (v) => parseFloat(v || 0) || 0;
+  const r2 = (n) => Math.round(n * 100) / 100;
+
+  const activeTargets = await prisma.salesTarget.findMany({ where: { companyId, periodStart: { lte: now }, periodEnd: { gte: now } } });
+  // The shortest period containing today is the most specific one.
+  activeTargets.sort((a, b) => (a.periodEnd - a.periodStart) - (b.periodEnd - b.periodStart));
+  const activeTarget = activeTargets[0] || null;
+  const periodStart = activeTarget ? new Date(activeTarget.periodStart) : monthStart(0);
+  const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  const historyFrom = monthStart(3);
+  const from = periodStart < historyFrom ? periodStart : historyFrom;
+  const [sales, expenses] = await Promise.all([
+    prisma.sale.findMany({
+      where: { companyId, status: { not: 'Cancelled' }, date: { gte: from, lte: periodEnd } },
+      select: { date: true, totalPrice: true, amountPaid: true, shippingCost: true, items: { select: { qty: true, costPrice: true } } },
+    }),
+    prisma.expense.findMany({
+      where: { companyId, category: { not: 'Stock Purchase' }, date: { gte: from, lte: periodEnd } },
+      select: { date: true, amount: true, category: true },
+    }),
+  ]);
+  const between = (rows, a, b) => rows.filter(r => new Date(r.date) >= a && new Date(r.date) <= b);
+  const revenueOf = (rows) => rows.reduce((s, r) => s + num(r.totalPrice), 0);
+  const adsOf = (rows) => rows.filter(e => e.category === TRACKER_AD_CATEGORY).reduce((s, e) => s + num(e.amount), 0);
+
+  // The last three full months, newest first.
+  const months = [1, 2, 3].map(back => {
+    const a = monthStart(back), b = new Date(monthStart(back - 1).getTime() - 1);
+    const rows = between(sales, a, b);
+    return {
+      month: `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`,
+      revenue: revenueOf(rows), orders: rows.length, adSpend: adsOf(between(expenses, a, b)),
+    };
+  });
+  const best = months.reduce((top, m) => (m.revenue > top.revenue ? m : top), months[0]);
+  const defaultTarget = Math.round((best.revenue * (1 + TRACKER_UPLIFT)) / 1000) * 1000;
+
+  const periodSales = between(sales, periodStart, periodEnd);
+  const periodExpenses = between(expenses, periodStart, periodEnd);
+  const periodRevenue = revenueOf(periodSales);
+  const periodOrders = periodSales.length;
+  const thisMonthSales = between(sales, monthStart(0), now);
+
+  const growthTarget = activeTarget ? num(activeTarget.revenueTarget) : defaultTarget;
+  const remainingToTarget = Math.max(0, growthTarget - periodRevenue);
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const periodTotalDays = Math.max(1, Math.ceil((periodEnd - periodStart) / MS_PER_DAY));
+  const periodDayIdx = Math.min(periodTotalDays, Math.max(1, Math.ceil((now - periodStart) / MS_PER_DAY)));
+  const daysLeft = Math.max(0, periodTotalDays - periodDayIdx);
+  const dailyRevenueRate = periodRevenue / periodDayIdx;
+
+  const cogs = periodSales.reduce((s, r) => s + r.items.reduce((x, i) => x + num(i.costPrice) * i.qty, 0), 0);
+  const deliveryCost = periodSales.reduce((s, r) => s + num(r.shippingCost), 0);
+  const grossProfit = periodRevenue - cogs - deliveryCost;
+  const expensesTotal = periodExpenses.reduce((s, e) => s + num(e.amount), 0);
+  const adSpend = adsOf(periodExpenses);
+  const collected = periodSales.reduce((s, r) => s + Math.min(num(r.amountPaid), num(r.totalPrice)), 0);
+  // What a kwacha of advertising has brought in lately, to judge this period's spend against.
+  const recentAds = months.reduce((s, m) => s + m.adSpend, 0);
+  const recentRevenuePerAdKwacha = recentAds > 0 ? months.reduce((s, m) => s + m.revenue, 0) / recentAds : null;
+
+  return {
+    thisMonthRevenue: revenueOf(thisMonthSales), thisMonthOrders: thisMonthSales.length,
+    lastMonthRevenue: months[0].revenue, lastMonthOrders: months[0].orders,
+    periodRevenue, periodOrders, periodStart, periodEnd, periodTotalDays, periodDayIdx,
+    activeTarget: activeTarget ? { id: activeTarget.id, label: activeTarget.label, periodStart: activeTarget.periodStart, periodEnd: activeTarget.periodEnd, revenueTarget: activeTarget.revenueTarget, savingsRate: activeTarget.savingsRate } : null,
+    targetBasis: activeTarget ? null : { month: best.month, revenue: best.revenue, upliftPercent: TRACKER_UPLIFT * 100 },
+    recentMonths: months,
+    growthTarget, growthProgress: growthTarget > 0 ? Math.min(100, (periodRevenue / growthTarget) * 100) : 0,
+    remainingToTarget, daysLeft, dailyRevenueRate,
+    dailyTargetNeeded: daysLeft > 0 ? remainingToTarget / daysLeft : remainingToTarget,
+    projectedMonthRevenue: dailyRevenueRate * periodTotalDays,
+    projectedMonthOrders: Math.round((periodOrders / periodDayIdx) * periodTotalDays),
+    profit: {
+      grossProfit: r2(grossProfit), expenses: r2(expensesTotal), netProfit: r2(grossProfit - expensesTotal),
+      adSpend: r2(adSpend), wages: r2(periodExpenses.filter(e => e.category === 'Salaries & Wages').reduce((s, e) => s + num(e.amount), 0)),
+      collected: r2(collected), unpaid: r2(periodRevenue - collected),
+      adShareOfGrossProfit: grossProfit > 0 ? r2((adSpend / grossProfit) * 100) : null,
+      revenuePerAdKwacha: adSpend > 0 ? r2(periodRevenue / adSpend) : null,
+      recentRevenuePerAdKwacha: recentRevenuePerAdKwacha === null ? null : r2(recentRevenuePerAdKwacha),
+      adsToCloseGap: recentRevenuePerAdKwacha && remainingToTarget > 0 ? r2(remainingToTarget / recentRevenuePerAdKwacha) : 0,
+    },
+  };
+}
+
 router.get('/', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
@@ -181,38 +280,7 @@ router.get('/', requireAdmin, async (req, res) => {
     const thisMonthOrders = currentMonthSales.length;
     const thisMonthCOGS2 = currentMonthSales.reduce((s, r) => s + saleCOGS(r), 0);
 
-    const growthTarget = activeTarget ? parseFloat(activeTarget.revenueTarget) : lastMonthRevenue * 3;
-    const growthProgress = growthTarget > 0 ? (periodRevenue / growthTarget) * 100 : 0;
-    const remainingToTarget = Math.max(0, growthTarget - periodRevenue);
-    const MS_PER_DAY = 24 * 60 * 60 * 1000;
-    const periodTotalDays = Math.max(1, Math.ceil((periodEnd - periodStart) / MS_PER_DAY));
-    const periodDayIdx = Math.min(periodTotalDays, Math.max(1, Math.ceil((now - periodStart) / MS_PER_DAY)));
-    const daysLeft = Math.max(0, periodTotalDays - periodDayIdx);
-    const dailyRevenueRate = periodDayIdx > 0 ? periodRevenue / periodDayIdx : 0;
-    const dailyTargetNeeded = daysLeft > 0 ? remainingToTarget / daysLeft : remainingToTarget;
-    const projectedMonthRevenue = dailyRevenueRate * periodTotalDays;
-    const projectedMonthOrders = periodDayIdx > 0 ? Math.round((periodOrders / periodDayIdx) * periodTotalDays) : 0;
-
-    const avgProfitPerSale = thisMonthOrders > 0 ? (thisMonthRevenue2 - thisMonthCOGS2) / thisMonthOrders : 0;
-    const currentRoas = adSpend > 0 ? totalRevenue / adSpend : 2;
-    const monthlyAdBudget = growthTarget > 0 ? growthTarget / Math.max(currentRoas, 1) : 0;
-    const avgCostPerItem = thisMonthOrders > 0 ? thisMonthCOGS2 / thisMonthOrders : 0;
-    const monthlyInventory = avgCostPerItem * thisMonthOrders * 3;
-    const totalMonthlyReinvestment = monthlyAdBudget + monthlyInventory;
-    const reinvestmentPerSale = thisMonthOrders > 0 ? totalMonthlyReinvestment / (thisMonthOrders * 3) : 0;
-    const percentOfProfit = avgProfitPerSale > 0 ? (reinvestmentPerSale / avgProfitPerSale) * 100 : 0;
-
-    const growth = {
-      thisMonthRevenue: thisMonthRevenue2, thisMonthOrders, lastMonthRevenue, lastMonthOrders,
-      periodRevenue, periodOrders, periodStart, periodEnd, periodTotalDays, periodDayIdx,
-      activeTarget: activeTarget ? { id: activeTarget.id, label: activeTarget.label, periodStart: activeTarget.periodStart, periodEnd: activeTarget.periodEnd, revenueTarget: activeTarget.revenueTarget, savingsRate: activeTarget.savingsRate } : null,
-      growthTarget, growthProgress: Math.min(growthProgress, 100), remainingToTarget, dailyTargetNeeded, daysLeft,
-      dailyRevenueRate, projectedMonthRevenue, projectedMonthOrders,
-      reinvestment: {
-        perSale: reinvestmentPerSale, avgProfitPerSale, percentOfProfit, roas: currentRoas,
-        monthlyAdBudget, monthlyInventory, totalMonthly: totalMonthlyReinvestment,
-      },
-    };
+    const growth = await dashboard_targetTracker(prisma, companyId);
 
     // ---- DAILY SAVINGS (rate from active target, fallback 25% of daily gross profit) ----
     const SAVINGS_RATE = activeTarget ? parseFloat(activeTarget.savingsRate) : 0.25;

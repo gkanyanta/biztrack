@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   getPayRun, finalisePayRun, reopenPayRun, payPayslip, deletePayslipPayment,
   createPayAdjustment, deletePayAdjustment, releasePayAdjustment,
-  getLoans, createLoan, updateLoan, deleteLoan, setLoanInstalment,
+  getLoans, createLoan, updateLoan, deleteLoan, setLoanInstalment, setConsultantTarget, deleteConsultantTarget,
   getStaffMembers, createStaffMember, updateStaffMember, deleteStaffMember,
   getStaffPayments, payStaffMember, deleteStaffPayment, getRiders,
 } from '../services/api';
@@ -96,6 +96,8 @@ export default function Payroll() {
   const [loanForm, setLoanForm] = useState(null);
   const [instalmentFor, setInstalmentFor] = useState(null);
   const [instalmentAmount, setInstalmentAmount] = useState('');
+  const [targetFor, setTargetFor] = useState(null);
+  const [targetForm, setTargetForm] = useState({ target: '', bonus: '', bonusRate: '' });
 
   const load = () => {
     setLoading(true);
@@ -234,6 +236,21 @@ export default function Payroll() {
     if (ok) setInstalmentFor(null);
   };
 
+  // A new target starts from ten percent above the consultant's recent cycles, with the bonus
+  // most often used; all three are the admin's to change.
+  const openTarget = (slip) => {
+    setTargetFor(slip);
+    setTargetForm(slip.target
+      ? { target: String(slip.target.target), bonus: String(slip.target.bonus), bonusRate: String(slip.target.bonusRate) }
+      : { target: slip.suggestedTarget ? String(slip.suggestedTarget) : '', bonus: '500', bonusRate: '2' });
+  };
+
+  const submitTarget = async (e) => {
+    e.preventDefault();
+    const ok = await act(() => setConsultantTarget({ consultantId: targetFor.personId, period: run.period.label, ...targetForm }), 'Target set');
+    if (ok) setTargetFor(null);
+  };
+
   const printSlip = async (slip) => {
     if (submitting) return;
     setSubmitting(true);
@@ -325,6 +342,32 @@ export default function Payroll() {
             </>
           )}
         </div>
+
+        {isDraft && slip.kind === 'commission' && (
+          <div className="mt-2 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+            {slip.target ? (
+              <>
+                <div className="flex items-center justify-between gap-2 text-blue-900">
+                  <span>
+                    Target {formatMoney(slip.target.target)} · {formatMoney(slip.target.collected)} collected
+                    {slip.target.reached
+                      ? <span className="text-emerald-700 font-medium"> · reached, bonus {formatMoney(slip.target.bonusNow)}</span>
+                      : <span> · {formatMoney(slip.target.toGo)} to go</span>}
+                  </span>
+                  <button onClick={() => openTarget(slip)} className="text-blue-600 hover:underline shrink-0">Change</button>
+                </div>
+                <div className="w-full bg-white rounded-full h-1.5 mt-1.5">
+                  <div className={`h-1.5 rounded-full ${slip.target.reached ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${slip.target.progress}%` }} />
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between gap-2 text-blue-900">
+                <span>No target for this cycle · {formatMoney(slip.collected)} collected so far</span>
+                <button onClick={() => openTarget(slip)} className="text-blue-600 hover:underline shrink-0">Set target</button>
+              </div>
+            )}
+          </div>
+        )}
 
         {isDraft && slip.loans.map(l => (
           <div key={l.id} className="mt-2 text-xs text-gray-500 flex items-center justify-between gap-2 bg-gray-50 rounded-lg px-3 py-2">
@@ -785,6 +828,46 @@ export default function Payroll() {
             </p>
             <div className="flex justify-end gap-2 pt-1">
               <button type="button" onClick={() => setLoanForm(null)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+              <button type="submit" disabled={submitting} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {submitting ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* ---- CONSULTANT TARGET ---- */}
+      <Modal isOpen={!!targetFor} onClose={() => setTargetFor(null)} title={targetFor ? `${targetFor.name}: target for ${run.period.name}` : ''}>
+        {targetFor && (
+          <form onSubmit={submitTarget} className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Target for the cycle</label>
+              <input required type="number" min="1" step="1" value={targetForm.target}
+                onChange={e => setTargetForm({ ...targetForm, target: e.target.value })} className={inputClass} />
+              <p className="text-xs text-gray-400 mt-1">
+                Counted the way commission is: goods value customers have actually paid for, without delivery fees.
+                {targetFor.suggestedTarget > 0 && ` Ten percent above their recent cycles is ${formatMoney(targetFor.suggestedTarget)}.`}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bonus for reaching it</label>
+                <input type="number" min="0" step="0.01" value={targetForm.bonus}
+                  onChange={e => setTargetForm({ ...targetForm, bonus: e.target.value })} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Plus % of sales above it</label>
+                <input type="number" min="0" max="100" step="0.1" value={targetForm.bonusRate}
+                  onChange={e => setTargetForm({ ...targetForm, bonusRate: e.target.value })} className={inputClass} />
+              </div>
+            </div>
+            <p className="text-xs text-gray-400">
+              The bonus is added to this cycle's payslip by itself once the target is reached, and is fixed when the cycle is finalised.
+            </p>
+            <div className="flex justify-between gap-2 pt-1">
+              <button type="button" disabled={submitting || !targetFor.target}
+                onClick={async () => { if (await act(() => deleteConsultantTarget(targetFor.target.id), 'Target removed')) setTargetFor(null); }}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm disabled:opacity-40">Remove target</button>
               <button type="submit" disabled={submitting} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
                 {submitting ? 'Saving…' : 'Save'}
               </button>

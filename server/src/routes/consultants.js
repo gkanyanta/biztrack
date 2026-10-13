@@ -493,6 +493,8 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       + await prisma.payslip.count({ where: { consultantId: req.params.id } })
       + await prisma.loan.count({ where: { consultantId: req.params.id } })
       + await prisma.payAdjustment.count({ where: { consultantId: req.params.id } });
+    // A target nobody was paid on is not history, so it goes with the consultant.
+    if (salesCount === 0) await prisma.consultantTarget.deleteMany({ where: { consultantId: req.params.id } });
     if (salesCount > 0) {
       await prisma.consultant.update({ where: { id: req.params.id }, data: { isActive: false } });
       return res.json({ message: 'Consultant deactivated (has existing sales)' });

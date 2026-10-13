@@ -209,6 +209,8 @@ export const createLoan = (data) => api.post('/payroll/loans', data);
 export const updateLoan = (id, data) => api.put(`/payroll/loans/${id}`, data);
 export const deleteLoan = (id) => api.delete(`/payroll/loans/${id}`);
 export const setLoanInstalment = (id, data) => api.put(`/payroll/loans/${id}/instalment`, data);
+export const setConsultantTarget = (data) => api.put('/payroll/targets', data);
+export const deleteConsultantTarget = (id) => api.delete(`/payroll/targets/${id}`);
 
 // The rider's own money — what he collects, what he lays out, and his daily account
 export const getMyRiderAccount = () => api.get('/deliveries/my/account');

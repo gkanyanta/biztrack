@@ -158,5 +158,21 @@ module.exports = {
     annie = slip(await run(L0), 'Annie');
     eq('nothing brought forward, no late commission, no loan', [annie.broughtForward, line(annie, 'arrears').length, annie.loans.length], [0, 0, 0]);
     near('just this cycle\'s commission', annie.netPay, 10, 0.01);
+
+    section('a target pays a bonus when it is reached');
+    eq('what has been collected is counted the way commission is', annie.collected, 200);
+    const goal = { consultantId: annieId, period: L0 };
+    eq('a target can be set for the running cycle', (await api('PUT', '/payroll/targets', { ...goal, target: 500, bonus: 50, bonusRate: 10 })).status, 200);
+    annie = slip(await run(L0), 'Annie');
+    eq('short of it there is no bonus, only how far there is to go', [annie.target.reached, annie.target.toGo, annie.target.progress, annie.netPay], [false, 300, 40, 10]);
+    await api('PUT', '/payroll/targets', { ...goal, target: 150, bonus: 50, bonusRate: 10 });
+    annie = slip(await run(L0), 'Annie');
+    // The flat K50, plus 10% of the K50 collected beyond the K150 target.
+    eq('reached, it pays the bonus and a share of what is above it', [annie.target.reached, annie.target.bonusNow, annie.netPay], [true, 55, 65]);
+    eq('as its own line on the payslip', line(annie, 'bonus').length, 1);
+    eq('and the consultant can see where she stands', (await (await loginAs(base, 'annie'))('GET', '/dashboard/consultant')).body.payslip.target.bonusNow, 55);
+    eq('a finalised cycle\'s target cannot be changed', (await api('PUT', '/payroll/targets', { consultantId: annieId, period: L2, target: 100 })).status, 400);
+    eq('a target can be removed again', (await api('DELETE', `/payroll/targets/${annie.target.id}`)).status, 200);
+    eq('taking the bonus with it', slip(await run(L0), 'Annie').netPay, 10);
   },
 };

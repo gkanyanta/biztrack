@@ -49,6 +49,7 @@ model Company {
   payRuns            PayRun[]
   payslips           Payslip[]
   payslipLines       PayslipLine[]
+  consultantTargets  ConsultantTarget[]
 }
 
 model User {
@@ -397,6 +398,7 @@ model Consultant {
   loans                Loan[]
   payAdjustments       PayAdjustment[]
   payslips             Payslip[]
+  targets              ConsultantTarget[]
 }
 
 model CommissionPayment {
@@ -549,6 +551,27 @@ model PayAdjustment {
   @@index([companyId, period])
   @@index([consultantId])
   @@index([staffId])
+}
+
+// What a consultant is asked to bring in over one pay cycle, and what reaching it pays.
+// Measured the way commission is: goods value actually collected on the cycle's orders. The
+// bonus is the flat amount plus a share of whatever is collected beyond the target, and it
+// reaches the consultant as a line on that cycle's payslip.
+model ConsultantTarget {
+  id           String     @id @default(cuid())
+  consultantId String
+  consultant   Consultant @relation(fields: [consultantId], references: [id])
+  period       String
+  target       Decimal    @db.Decimal(12, 2)
+  bonus        Decimal    @default(0) @db.Decimal(10, 2)
+  // Percent of the collected goods value above the target.
+  bonusRate    Decimal    @default(0) @db.Decimal(5, 2)
+  companyId    String
+  company      Company    @relation(fields: [companyId], references: [id])
+  createdAt    DateTime   @default(now())
+
+  @@unique([consultantId, period])
+  @@index([companyId, period])
 }
 
 // A finalised pay cycle. A row exists only once the cycle is finalised: until then the run is

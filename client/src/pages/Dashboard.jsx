@@ -77,7 +77,7 @@ export default function Dashboard() {
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-5 text-white shadow-lg">
           <div className="flex items-center gap-2 mb-4">
             <FiTarget size={20} />
-            <h3 className="font-bold text-lg">{at ? 'Target Tracker' : '200% Growth Tracker'}</h3>
+            <h3 className="font-bold text-lg">{at ? 'Target Tracker' : 'Monthly Target Tracker'}</h3>
             <span className="ml-auto text-blue-100 text-xs font-medium bg-white/15 px-2 py-1 rounded-full">{periodLabel}</span>
             <Link to="/reports?tab=growth" className="text-blue-100 text-xs hover:text-white hover:underline">Details →</Link>
           </div>
@@ -89,9 +89,9 @@ export default function Dashboard() {
               <p className="text-blue-200 text-xs">{orders} orders</p>
             </div>
             <div className="bg-white/15 rounded-lg p-3">
-              <p className="text-blue-100 text-xs">{at ? 'Target' : 'Target (3x Last Month)'}</p>
+              <p className="text-blue-100 text-xs">{at ? 'Target' : `Target (best recent month + ${g.targetBasis.upliftPercent}%)`}</p>
               <p className="text-xl font-bold">{formatMoney(g.growthTarget)}</p>
-              <p className="text-blue-200 text-xs">{at ? `${(parseFloat(at.savingsRate) * 100).toFixed(1)}% savings rate` : `Last month: ${formatMoney(g.lastMonthRevenue)}`}</p>
+              <p className="text-blue-200 text-xs">{at ? `${(parseFloat(at.savingsRate) * 100).toFixed(1)}% savings rate` : `Best: ${formatMoney(g.targetBasis.revenue)} in ${g.targetBasis.month} · last month ${formatMoney(g.lastMonthRevenue)}`}</p>
             </div>
             <div className="bg-white/15 rounded-lg p-3">
               <p className="text-blue-100 text-xs">Projected (end of period)</p>
@@ -132,6 +132,28 @@ export default function Dashboard() {
               <p className="font-semibold">{formatMoney(g.dailyRevenueRate)}/day</p>
             </div>
           </div>
+
+          {/* Selling more is only good news if more is kept and collected. */}
+          {g.profit && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mt-3 pt-3 border-t border-white/20">
+              <div>
+                <span className="text-blue-200">Net profit so far</span>
+                <p className="font-semibold">{formatMoney(g.profit.netProfit)}</p>
+              </div>
+              <div>
+                <span className="text-blue-200">Cash collected</span>
+                <p className="font-semibold">{formatMoney(g.profit.collected)}</p>
+              </div>
+              <div>
+                <span className="text-blue-200">Not yet paid</span>
+                <p className="font-semibold">{formatMoney(g.profit.unpaid)}</p>
+              </div>
+              <div>
+                <span className="text-blue-200">Expenses so far</span>
+                <p className="font-semibold">{formatMoney(g.profit.expenses)}</p>
+              </div>
+            </div>
+          )}
         </div>
         );
       })()}
@@ -195,72 +217,52 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Reinvestment Guide */}
-      {g && g.reinvestment && (
+      {/* What the advertising is costing and returning, in place of a budget for tripling. */}
+      {g && g.profit && (
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
           <div className="flex items-center gap-2 mb-4">
             <FiZap className="text-amber-500" size={18} />
-            <h3 className="text-sm font-bold text-gray-800">Reinvestment Guide — How to Hit 200% Growth</h3>
+            <h3 className="text-sm font-bold text-gray-800">Advertising Check — What You Can Afford</h3>
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Per Sale Breakdown */}
-            <div>
-              <p className="text-xs text-gray-500 mb-3 uppercase font-medium">Per Sale Action</p>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-sm text-gray-600">Avg profit per sale</span>
-                  <span className="font-bold text-green-600">{formatMoney(g.reinvestment.avgProfitPerSale)}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-sm text-gray-600">Set aside per sale for growth</span>
-                  <span className="font-bold text-blue-600">{formatMoney(g.reinvestment.perSale)}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-sm text-gray-600">% of profit to reinvest</span>
-                  <span className="font-bold text-amber-600">{g.reinvestment.percentOfProfit.toFixed(0)}%</span>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <span className="text-sm text-gray-600">Keep as take-home</span>
-                  <span className="font-bold text-gray-800">{formatMoney(Math.max(0, g.reinvestment.avgProfitPerSale - g.reinvestment.perSale))}</span>
-                </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-600">Ads recorded this period</span>
+                <span className="font-bold text-pink-600">{formatMoney(g.profit.adSpend)}</span>
               </div>
-
-              {g.reinvestment.avgProfitPerSale > 0 && data.savings && (
-                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-600">As a share of gross profit</span>
+                <span className="font-bold text-amber-600">{g.profit.adShareOfGrossProfit === null ? '—' : `${g.profit.adShareOfGrossProfit.toFixed(0)}%`}</span>
+              </div>
+              <div className="flex justify-between items-center py-2">
+                <div>
+                  <span className="text-sm text-gray-600">Revenue per K1 of ads</span>
+                  <p className="text-xs text-gray-400">
+                    {g.profit.recentRevenuePerAdKwacha === null ? 'No ads recorded in the last three months' : `Last three months: K${g.profit.recentRevenuePerAdKwacha.toFixed(1)}`}
+                  </p>
+                </div>
+                <span className="font-bold text-blue-600">{g.profit.revenuePerAdKwacha === null ? '—' : `K${g.profit.revenuePerAdKwacha.toFixed(1)}`}</span>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-600">Still needed to reach the target</span>
+                <span className="font-bold text-gray-800">{formatMoney(g.remainingToTarget)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                <div>
+                  <span className="text-sm text-gray-600">Ads that would take, at your recent return</span>
+                  <p className="text-xs text-gray-400">A guide, not a promise: more spend rarely returns at the same rate</p>
+                </div>
+                <span className="font-bold text-pink-600">{g.profit.adsToCloseGap > 0 ? formatMoney(g.profit.adsToCloseGap) : '—'}</span>
+              </div>
+              {g.profit.adSpend === 0 && g.periodRevenue > 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-xs text-amber-800">
-                    <strong>Rule of thumb:</strong> For every sale averaging {formatMoney(g.reinvestment.avgProfitPerSale)} profit
-                    — save {formatMoney(g.reinvestment.avgProfitPerSale * data.savings.rate)} (25%),
-                    reinvest {formatMoney(g.reinvestment.perSale)} into ads + inventory,
-                    and take home {formatMoney(Math.max(0, g.reinvestment.avgProfitPerSale - (g.reinvestment.avgProfitPerSale * data.savings.rate) - g.reinvestment.perSale))}.
+                    No advertising is recorded for this period. If ads were paid for, enter them under Expenses, or the profit shown is higher than the truth.
                   </p>
                 </div>
               )}
-            </div>
-
-            {/* Monthly Budget */}
-            <div>
-              <p className="text-xs text-gray-500 mb-3 uppercase font-medium">Monthly Reinvestment Budget</p>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <div>
-                    <span className="text-sm text-gray-600">Facebook Ads budget</span>
-                    <p className="text-xs text-gray-400">Based on {g.reinvestment.roas.toFixed(1)}x ROAS</p>
-                  </div>
-                  <span className="font-bold text-pink-600">{formatMoney(g.reinvestment.monthlyAdBudget)}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <div>
-                    <span className="text-sm text-gray-600">Inventory investment</span>
-                    <p className="text-xs text-gray-400">Stock for 3x orders</p>
-                  </div>
-                  <span className="font-bold text-purple-600">{formatMoney(g.reinvestment.monthlyInventory)}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 bg-gray-50 rounded-lg px-3">
-                  <span className="text-sm font-medium text-gray-700">Total monthly reinvestment</span>
-                  <span className="font-bold text-gray-800 text-lg">{formatMoney(g.reinvestment.totalMonthly)}</span>
-                </div>
-              </div>
             </div>
           </div>
         </div>

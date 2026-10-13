@@ -439,6 +439,22 @@ function payroll_entitlement(consultant, sales, cycle) {
   };
 }
 
+// Goods value actually collected on one cycle's orders: the figure commission is paid on, and
+// so the figure a consultant's target is measured in. Delivery fees and unpaid money are out.
+function payroll_collectedGoods(consultant, sales, cycle) {
+  const eff = getEffectivePeriod(cycle.periodFrom, cycle.periodTo, consultant.startDate);
+  if (!eff) return 0;
+  let collected = 0;
+  for (const s of sales) {
+    if (s.consultantId !== consultant.id || new Date(s.date) < eff.effectiveFrom || new Date(s.date) >= cycle.periodTo) continue;
+    const total = payroll_num(s.totalPrice);
+    if (!(total > 0)) continue;
+    const goods = Math.max(0, total - payroll_num(s.shippingCharge));
+    collected += goods * Math.min(1, Math.max(0, payroll_num(s.amountPaid) / total));
+  }
+  return round2(collected);
+}
+
 // The person a loan or adjustment is for, checked against the company.
 async function payroll_resolvePerson(prisma, companyId, { personKind, personId }) {
   if (!personId) return null;
@@ -492,6 +508,9 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
       },
     }),
   ]);
+
+  const targets = existing ? [] : await prisma.consultantTarget.findMany({ where: { companyId, period } });
+  const kwacha = (n) => `K${Math.round(n).toLocaleString('en-US')}`;
 
   const paymentsOf = (slip) => (slip.consultantId ? cPayments : sPayments).filter(p => p.payslipId === slip.id);
   const paidOn = (slip) => round2(paymentsOf(slip).reduce((s, p) => s + payroll_num(p.amount), 0));
@@ -651,6 +670,29 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
         });
       }
 
+      // A target for the cycle pays its bonus once what has been collected reaches it.
+      const collected = payroll_collectedGoods(c, sales, cycle);
+      const goal = targets.find(t => t.consultantId === c.id) || null;
+      let target = null;
+      if (goal) {
+        const aim = payroll_num(goal.target), flat = payroll_num(goal.bonus), rate = payroll_num(goal.bonusRate);
+        const reached = collected >= aim;
+        const bonusNow = reached ? round2(flat + ((collected - aim) * rate) / 100) : 0;
+        if (bonusNow > 0) earning.push({ kind: 'bonus', label: `Target bonus: ${kwacha(collected)} collected against a target of ${kwacha(aim)}`, amount: bonusNow });
+        target = {
+          id: goal.id, target: aim, bonus: flat, bonusRate: rate, collected, reached, bonusNow,
+          toGo: round2(Math.max(0, aim - collected)), progress: aim > 0 ? Math.min(100, round2((collected / aim) * 100)) : 0,
+        };
+      }
+      // Offered when a target is being set: ten percent above their recent cycles, so it asks
+      // for more than usual without asking for their best month ever.
+      const recentCycles = [1, 2, 3]
+        .map(back => payroll_collectedGoods(c, sales, payPeriodFromLabel(payroll_shiftLabel(period, -back), payDay)))
+        .filter(v => v > 0);
+      const suggestedTarget = recentCycles.length
+        ? Math.round(((recentCycles.reduce((a, b) => a + b, 0) / recentCycles.length) * 1.1) / 1000) * 1000
+        : 0;
+
       const slip = build(key, {
         kind: 'commission', personId: c.id, name: c.name,
         jobTitle: c.payType === 'revenue_pct' ? 'Sales consultant (% of revenue)' : 'Sales consultant (per unit)',
@@ -673,7 +715,7 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
         })
         .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-      return { ...slip, unpaidOrders, onRun: activeNow };
+      return { ...slip, unpaidOrders, onRun: activeNow, target, collected, suggestedTarget };
     });
 
     // Someone who has left still gets a payslip while there is anything on it.
@@ -739,6 +781,7 @@ async function payroll_consultantPay(prisma, companyId, period) {
       balance: run.status === 'draft' ? p.netPay : (p.carried ? 0 : p.outstanding),
       lines: p.lines.filter(l => l.kind !== 'baseline').map(l => ({ kind: l.kind, label: l.label, amount: l.amount })),
       payments: p.payments, loans: p.loans, held: p.held, finalisedAt: run.finalisedAt,
+      target: p.target || null,
     });
   }
   return { status: run.status, period: run.period, slips };
@@ -994,6 +1037,46 @@ router.post('/adjustments/:id/release', async (req, res) => {
       if (await payroll_periodIsClosed(prisma, companyId, period)) return res.status(400).json({ error: 'That cycle is finalised. Release it on the cycle that is still open.' });
     }
     res.json(await prisma.payAdjustment.update({ where: { id: adjustment.id }, data: { refundPeriod: period } }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- CONSULTANT TARGETS ----
+
+// Set, or change, what a consultant is asked to collect in a cycle and what reaching it pays.
+router.put('/targets', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const { consultantId, period } = req.body;
+    if (!payroll_isLabel(period)) return res.status(400).json({ error: 'Period must look like 2026-11' });
+    const consultant = await prisma.consultant.findFirst({ where: { id: consultantId || '', companyId, isStockLocation: false } });
+    if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
+    const target = round2(parseFloat(req.body.target));
+    if (!Number.isFinite(target) || target <= 0) return res.status(400).json({ error: 'Target must be more than zero' });
+    const bonus = req.body.bonus === undefined || req.body.bonus === '' ? 0 : round2(parseFloat(req.body.bonus));
+    const bonusRate = req.body.bonusRate === undefined || req.body.bonusRate === '' ? 0 : round2(parseFloat(req.body.bonusRate));
+    if (!Number.isFinite(bonus) || bonus < 0) return res.status(400).json({ error: 'Bonus must be zero or more' });
+    if (!Number.isFinite(bonusRate) || bonusRate < 0 || bonusRate > 100) return res.status(400).json({ error: 'The share above target must be between 0 and 100 percent' });
+    if (await payroll_periodIsClosed(prisma, companyId, period)) return res.status(400).json({ error: 'That cycle is finalised, so its target can no longer change.' });
+
+    const saved = await prisma.consultantTarget.upsert({
+      where: { consultantId_period: { consultantId: consultant.id, period } },
+      create: { consultantId: consultant.id, period, target, bonus, bonusRate, companyId },
+      update: { target, bonus, bonusRate },
+    });
+    res.json(saved);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.delete('/targets/:id', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const companyId = req.user.companyId;
+    const target = await prisma.consultantTarget.findFirst({ where: { id: req.params.id, companyId } });
+    if (!target) return res.status(404).json({ error: 'Target not found' });
+    if (await payroll_periodIsClosed(prisma, companyId, target.period)) return res.status(400).json({ error: 'That cycle is finalised, so its target can no longer change.' });
+    await prisma.consultantTarget.delete({ where: { id: target.id } });
+    res.json({ success: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
