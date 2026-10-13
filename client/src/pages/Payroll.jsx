@@ -242,7 +242,7 @@ export default function Payroll() {
     setTargetFor(slip);
     setTargetForm(slip.target
       ? { target: String(slip.target.target), bonus: String(slip.target.bonus), bonusRate: String(slip.target.bonusRate) }
-      : { target: slip.suggestedTarget ? String(slip.suggestedTarget) : '', bonus: '500', bonusRate: '2' });
+      : { target: slip.suggestedTarget ? String(slip.suggestedTarget) : '', bonus: '600', bonusRate: '2' });
   };
 
   const submitTarget = async (e) => {
