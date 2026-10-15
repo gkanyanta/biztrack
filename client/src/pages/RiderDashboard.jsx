@@ -107,13 +107,18 @@ export default function RiderDashboard() {
   if (!data) return <p className="text-red-500">Could not load your runs.</p>;
 
   const { open, completedToday, today, rider } = data;
+  const courierRuns = data.courierRuns || [];
+  const runsToTake = courierRuns.filter(r => r.status === 'Open');
 
   return (
     <div className="space-y-5 pb-24 max-w-2xl mx-auto">
       <div className="bg-gradient-to-r from-slate-800 to-slate-700 rounded-xl p-4 text-white">
         <h2 className="text-lg font-bold">{rider?.name || 'My runs'}</h2>
         <p className="text-slate-300 text-sm">
-          {today.outstanding > 0 ? `${today.outstanding} still to deliver` : 'Nothing outstanding — well done'}
+          {[
+            today.outstanding > 0 && `${today.outstanding} still to deliver`,
+            runsToTake.length > 0 && `${runsToTake.length} courier run${runsToTake.length === 1 ? '' : 's'} to take`,
+          ].filter(Boolean).join(' · ') || 'Nothing outstanding — well done'}
         </p>
       </div>
 
@@ -158,6 +163,55 @@ export default function RiderDashboard() {
         <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
           <FiDollarSign className="mt-0.5 shrink-0" size={16} />
           <span>You are holding <strong>{formatMoney(today.cashToRemit)}</strong> in customer payments. Hand it in before the end of the day.</span>
+        </div>
+      )}
+
+      {/* Parcels he takes to the courier rather than to the customer. The office books them onto a
+          run and records the fees and receipts when it goes out; this is his list of what to carry. */}
+      {courierRuns.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Courier runs</h3>
+          <div className="space-y-3">
+            {courierRuns.map(run => (
+              <div key={run.id} className={`bg-white rounded-xl border p-4 space-y-3 ${run.overdue ? 'border-amber-300' : 'border-gray-200'}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-gray-800">{run.courier} · {run.slotLabel} ({run.slot})</div>
+                    <div className="text-xs text-gray-400">
+                      {run.overdue ? `Booked for ${formatDate(run.scheduledFor)} · ` : ''}
+                      {run.parcelCount} parcel{run.parcelCount === 1 ? '' : 's'}{run.towns.length ? ` to ${run.towns.join(', ')}` : ''}
+                    </div>
+                  </div>
+                  <span className={`px-2 py-1 rounded-full text-[11px] font-medium shrink-0 ${run.status === 'Open' ? (run.overdue ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600') : 'bg-emerald-100 text-emerald-700'}`}>
+                    {run.status === 'Open' ? (run.overdue ? 'Not gone out yet' : 'To take') : 'Gone out'}
+                  </span>
+                </div>
+                {run.overdue && (
+                  <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
+                    This run was never marked as gone out. If you took it, tell the office so they can record the receipts.
+                  </p>
+                )}
+                <div className="divide-y divide-gray-50">
+                  {run.parcels.map(p => (
+                    <div key={p.deliveryId} className="py-2 first:pt-0 last:pb-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-gray-700 truncate">{p.customerName || 'Customer'}</div>
+                          <div className="text-xs text-gray-400">{p.orderNumber}{p.town ? ` · ${p.town}` : ''}</div>
+                        </div>
+                        {p.receiptNo && <span className="text-xs text-gray-500 shrink-0">Receipt {p.receiptNo}</span>}
+                      </div>
+                      <div className="flex items-start gap-2 text-xs text-gray-500 mt-1">
+                        <FiPackage className="mt-0.5 shrink-0 text-gray-400" size={12} />
+                        <span>{p.items.map(i => `${i.qty} × ${i.name}`).join(', ') || 'Items not listed'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {run.notes && <p className="text-xs text-gray-500">Note: {run.notes}</p>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -244,7 +298,7 @@ export default function RiderDashboard() {
       </div>
       )}
 
-      {completedToday.length === 0 && !data.isToday && (
+      {completedToday.length === 0 && courierRuns.length === 0 && !data.isToday && (
         <div className="text-center py-10 bg-white rounded-xl border border-gray-100">
           <FiCalendar className="mx-auto mb-2 text-gray-300" size={28} />
           <p className="text-gray-500 text-sm">Nothing recorded on this day.</p>

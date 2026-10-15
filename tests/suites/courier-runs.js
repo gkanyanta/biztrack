@@ -66,6 +66,16 @@ module.exports = {
     const pulled = await bea('DELETE', `/deliveries/runs/${three.body.id}/parcels/${three.body.parcels.find(p => p.orderNumber === 'ORD-KATETE').deliveryId}`);
     eq('and one can be pulled back', pulled.body.parcelCount, 2);
 
+    section('the rider sees the run he is taking');
+    // The parcels name no rider, the run does — his page used to look only at the parcels.
+    const mine = (await greg('GET', '/deliveries/my/runs')).body;
+    const myRun = (mine.courierRuns || []).find(r => r.id === added.body.id);
+    eq('the morning run is on his page', !!myRun, true);
+    eq('with both parcels on it', myRun?.parcelCount, 2);
+    eq('and what is in each', myRun?.parcels.find(p => p.orderNumber === 'ORD-SOLWEZI').items.length, 3);
+    eq('marked as still to take', myRun?.status, 'Open');
+    eq('and not overdue', myRun?.overdue, false);
+
     section('dispatching it: a fee and a receipt for each parcel');
     const runId = added.body.id;
     const list = (await bea('GET', '/deliveries/runs')).body.sessions.find(s => s.slot === '09:00');
@@ -92,6 +102,10 @@ module.exports = {
     const solwaziSale = await prisma.sale.findUnique({ where: { id: a.id }, select: { shippingCost: true, status: true } });
     eq('the fee is the order\'s delivery cost', Number(solwaziSale.shippingCost), 180);
     eq('and the order is not delivered — it is with Platinum', solwaziSale.status !== 'Delivered', true);
+
+    const goneOut = ((await greg('GET', '/deliveries/my/runs')).body.courierRuns || []).find(r => r.id === runId);
+    eq('his page shows the run has gone out', goneOut?.status, 'Dispatched');
+    eq('with the receipt numbers', goneOut?.parcels.map(p => p.receiptNo).sort(), ['PLT-00412', 'PLT-00413']);
 
     section('the rider is credited what he paid out');
     const acct = (await greg('GET', '/deliveries/my/account')).body;

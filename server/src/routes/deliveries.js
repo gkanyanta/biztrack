@@ -296,6 +296,21 @@ router.get('/my/runs', async (req, res) => {
       prisma.rider.findUnique({ where: { id: req.user.riderId }, select: { id: true, name: true } }),
     ]);
 
+    // Courier runs he is taking to Platinum. The parcels on a run carry no rider of their own —
+    // the run names him — so the delivery lists above never found them and his page showed no
+    // runs at all. A run not yet gone out is still his to take whatever day it was booked for;
+    // one that has gone out belongs to the day it was booked.
+    const courierRuns = await prisma.courierRun.findMany({
+      where: {
+        companyId, riderId: req.user.riderId,
+        OR: [
+          { scheduledFor: { gte: day.start, lte: day.end } },
+          ...(isToday ? [{ status: 'Open' }] : []),
+        ],
+      },
+      include: runInclude, orderBy: { scheduledFor: 'asc' },
+    });
+
     // Once the office has checked the day's report, his finished drops are theirs to correct.
     const checkedReport = await prisma.riderDailyReport.findFirst({
       where: {
@@ -318,6 +333,9 @@ router.get('/my/runs', async (req, res) => {
       // Whether he can still fix a mistake on this day's finished drops himself.
       dayChecked,
       open: open.map(shapeDelivery),
+      courierRuns: courierRuns
+        .filter(r => r.deliveries.length > 0)
+        .map(r => ({ ...shapeRun(r), overdue: r.status === 'Open' && r.scheduledFor < day.start })),
       completedToday: todayDone.map(shapeDelivery),
       today: {
         assigned: open.length + todayDone.length,
