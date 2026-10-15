@@ -836,6 +836,12 @@ function requireRider(req, res) {
 // it therefore raises no further expense; doing so would charge the same kwacha twice.
 const RIDER_COURIER_CATEGORIES = ['Platinum courier', 'Other courier'];
 
+// Which of the rider's expense categories a courier run's fee is. Platinum is the only run courier
+// today; any other is booked as 'Other courier'.
+function runFeeCategory(courier) {
+  return courier === 'Platinum' ? 'Platinum courier' : 'Other courier';
+}
+
 // Nudge an order's delivery cost by what the rider paid, never below zero.
 async function shiftSaleShippingCost(tx, saleId, companyId, delta) {
   const sale = await tx.sale.findFirst({ where: { id: saleId, companyId }, select: { id: true, shippingCost: true } });
@@ -923,6 +929,21 @@ router.post('/my/expenses', async (req, res) => {
     }
     // A courier drop-off against a known order is a delivery cost on that order, so it goes
     // there rather than waiting for somebody to decide what it was.
+    // A parcel on a courier run has that courier's fee entered on the run, which credits him then.
+    // Taking it here as well paid him twice for one parcel. A second leg with another courier is
+    // still his to log here.
+    if (saleId && RIDER_COURIER_CATEGORIES.includes(category)) {
+      const onRun = await prisma.delivery.findFirst({
+        where: { saleId, companyId, courierRunId: { not: null } },
+        select: { courierRun: { select: { status: true, courier: true, slot: true } } },
+      });
+      const run = onRun?.courierRun;
+      if (run && category === runFeeCategory(run.courier)) {
+        return res.status(400).json({ error: run.status === 'Open'
+          ? `That parcel is on the ${run.slot} ${run.courier} run — enter its fee on the run when you drop it off`
+          : `That parcel went on the ${run.slot} ${run.courier} run, and its fee was recorded then` });
+      }
+    }
     const onSaleShipping = !!saleId && RIDER_COURIER_CATEGORIES.includes(category);
     const expense = await prisma.$transaction(async (tx) => {
       const created = await tx.riderExpense.create({
@@ -1509,7 +1530,7 @@ router.delete('/runs/:id/parcels/:deliveryId', requireAdminOrInventory, async (r
 // The run went out. Each parcel carries what Platinum charged for it and the receipt number that
 // becomes the customer's proof of dispatch — and the fee both lands on the order and credits the
 // rider who paid it.
-router.put('/runs/:id/dispatch', requireAdminOrInventory, async (req, res) => {
+router.put('/runs/:id/dispatch', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -1518,6 +1539,13 @@ router.put('/runs/:id/dispatch', requireAdminOrInventory, async (req, res) => {
       include: { deliveries: { select: { id: true, saleId: true } } },
     });
     if (!run) return res.status(404).json({ error: 'Run not found' });
+    // The rider taking the run holds the receipts and paid the fees, so he can record it going out
+    // himself — his own run only. Everyone else outside the office and warehouse is refused.
+    const isOffice = ['admin', 'superadmin', 'inventory'].includes(req.user.role);
+    const isItsRider = req.user.role === 'rider' && !!req.user.riderId && run.riderId === req.user.riderId;
+    if (!isOffice && !isItsRider) {
+      return res.status(403).json({ error: req.user.role === 'rider' ? 'That run is not yours' : 'Admin or inventory access required' });
+    }
     if (run.status !== 'Open') return res.status(400).json({ error: 'That run has already gone out' });
     if (!run.deliveries.length) return res.status(400).json({ error: 'There is nothing on this run' });
 
@@ -1529,6 +1557,19 @@ router.put('/runs/:id/dispatch', requireAdminOrInventory, async (req, res) => {
       const fee = e.fee === undefined || e.fee === '' ? 0 : parseFloat(e.fee);
       if (!Number.isFinite(fee) || fee < 0) return res.status(400).json({ error: 'Every fee must be zero or more' });
       byDelivery[e.deliveryId] = { fee, receiptNo: e.receiptNo ? String(e.receiptNo).trim() : null };
+    }
+
+    // A fee the rider already logged for one of these parcels under his own money has credited him
+    // once; taking it again here would pay him twice. The fee goes in one place, so say where.
+    const charged = Object.entries(byDelivery).filter(([, e]) => e.fee > 0).map(([id]) => run.deliveries.find(d => d.id === id).saleId);
+    if (charged.length && run.riderId) {
+      const already = await prisma.riderExpense.findFirst({
+        where: { companyId, riderId: run.riderId, saleId: { in: charged }, category: runFeeCategory(run.courier) },
+        select: { amount: true, sale: { select: { orderNumber: true } } },
+      });
+      if (already) {
+        return res.status(400).json({ error: `${already.sale?.orderNumber || 'One parcel'} already has a courier fee of K${parseFloat(already.amount)} logged under the rider's money — leave its fee blank here` });
+      }
     }
 
     const now = new Date();
@@ -1546,7 +1587,7 @@ router.put('/runs/:id/dispatch', requireAdminOrInventory, async (req, res) => {
           if (run.riderId) {
             await tx.riderExpense.create({
               data: {
-                riderId: run.riderId, category: 'Platinum courier', amount: entry.fee,
+                riderId: run.riderId, category: runFeeCategory(run.courier), amount: entry.fee,
                 description: `${run.courier} drop on the ${run.slot} run`,
                 saleId: d.saleId, rechargeable: true, onSaleShipping: true, companyId,
               },

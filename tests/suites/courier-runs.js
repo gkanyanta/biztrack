@@ -149,6 +149,43 @@ module.exports = {
     eq('and stays with the courier until it is settled', partSale.status !== 'Delivered', true);
     eq('so it is still on the list', (await admin('GET', '/deliveries/awaiting-payment')).body.parcels.length, 1);
 
+    section('the rider can record his own run going out');
+    const k1 = await order('ORD-KASAMA', 'Kasama', 600);
+    const k2 = await order('ORD-MANSA', 'Mansa', 400);
+    const his13 = (await bea('POST', '/deliveries/runs/parcels', { slot: '13:00', saleIds: [k1.id], riderId: seed.gregRiderId })).body;
+    const nobody16 = (await bea('POST', '/deliveries/runs/parcels', { slot: '16:00', saleIds: [k2.id] })).body;
+    eq('a run with no rider is not his to send',
+       (await greg('PUT', `/deliveries/runs/${nobody16.id}/dispatch`, { parcels: [] })).status, 403);
+    const sent = await greg('PUT', `/deliveries/runs/${his13.id}/dispatch`, {
+      parcels: [{ deliveryId: his13.parcels[0].deliveryId, fee: 150, receiptNo: 'PLT-00500' }],
+    });
+    eq('his own run he can send', sent.status, 200);
+    eq('and it is marked dispatched', sent.body.status, 'Dispatched');
+    eq('with his receipt on the parcel', sent.body.parcels[0].receiptNo, 'PLT-00500');
+    eq('and the fee owed back to him', (await greg('GET', '/deliveries/my/account')).body.owedToRider, 450);
+
+    section('a courier fee is paid to him once, not twice');
+    const twice = await greg('POST', '/deliveries/my/expenses', { category: 'Platinum courier', amount: 150, saleId: k1.id, rechargeable: true });
+    eq('a fee already entered on the run cannot be logged again under his money', twice.status, 400);
+    const k3 = await order('ORD-CHIPATA', 'Chipata', 500);
+    const first = await greg('POST', '/deliveries/my/expenses', { category: 'Platinum courier', amount: 90, saleId: k3.id, rechargeable: true });
+    eq('a fee for a parcel on no run is logged under his money', first.status, 201);
+    eq('a second leg by another courier is still his to log',
+       (await greg('POST', '/deliveries/my/expenses', { category: 'Other courier', amount: 50, saleId: k1.id })).status, 201);
+    const later = (await bea('POST', '/deliveries/runs/parcels', { slot: '16:00', saleIds: [k3.id], riderId: seed.gregRiderId })).body;
+    const k3parcel = later.parcels.find(p => p.orderNumber === 'ORD-CHIPATA');
+    const k2parcel = later.parcels.find(p => p.orderNumber === 'ORD-MANSA');
+    const dup = await greg('PUT', `/deliveries/runs/${later.id}/dispatch`, {
+      parcels: [{ deliveryId: k3parcel.deliveryId, fee: 90, receiptNo: 'PLT-00600' }, { deliveryId: k2parcel.deliveryId, fee: 70, receiptNo: 'PLT-00601' }],
+    });
+    eq('so the run refuses a fee for it again', dup.status, 400);
+    eq('and says which parcel', dup.body.error.includes('ORD-CHIPATA'), true);
+    const ok = await greg('PUT', `/deliveries/runs/${later.id}/dispatch`, {
+      parcels: [{ deliveryId: k3parcel.deliveryId, fee: '', receiptNo: 'PLT-00600' }, { deliveryId: k2parcel.deliveryId, fee: 70, receiptNo: 'PLT-00601' }],
+    });
+    eq('with its fee left blank the run goes out', ok.status, 200);
+    eq('and he is owed each fee exactly once', (await greg('GET', '/deliveries/my/account')).body.owedToRider, 450 + 50 + 90 + 70);
+
     section('who may touch any of this');
     eq('a rider cannot see the runs', (await greg('GET', '/deliveries/runs')).status, 403);
     eq('nor the awaiting-payment list', (await greg('GET', '/deliveries/awaiting-payment')).status, 403);

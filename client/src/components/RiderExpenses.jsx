@@ -156,6 +156,9 @@ export default function RiderExpenses() {
                   ? 'The fee goes on this order as its delivery cost, and the company owes it back to you.'
                   : 'Pick the order if you can — the fee then lands on it as the delivery cost.'}
               </p>
+              <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-2.5 py-2 mt-2">
+                The Platinum fee for a parcel on a courier run is not logged here. Enter it on the run, under Runs, when you drop it off — logging it here as well would pay you twice.
+              </p>
             </div>
           )}
           <div>

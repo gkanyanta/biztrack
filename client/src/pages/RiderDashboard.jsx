@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getMyRuns, updateDeliveryStatus } from '../services/api';
+import { getMyRuns, updateDeliveryStatus, dispatchCourierRun } from '../services/api';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -58,6 +58,9 @@ export default function RiderDashboard() {
   const [tab, setTab] = useState('runs');
   const [form, setForm] = useState({ recipientName: '', cashCollected: '' });
   const [failForm, setFailForm] = useState({ failureReason: FAILURE_REASONS[0], notes: '' });
+  // A courier run he is marking as gone out, with what Platinum charged and the receipt for each parcel.
+  const [sending, setSending] = useState(null);
+  const [fees, setFees] = useState({});
 
   // Which day he is looking at. Today unless he steps back, and stepping back is the point:
   // his own record used to end at midnight, so a day he had not settled was gone by morning.
@@ -97,6 +100,36 @@ export default function RiderDashboard() {
       notes: d.notes || '',
     });
     setFailing(d);
+  };
+
+  const openSend = (run) => {
+    const seed = {};
+    for (const p of run.parcels) seed[p.deliveryId] = { fee: '', receiptNo: '' };
+    setFees(seed);
+    setSending(run);
+  };
+
+  const sendRun = async () => {
+    if (busyId) return;
+    const missing = sending.parcels.filter(p => !(fees[p.deliveryId]?.receiptNo || '').trim());
+    if (missing.length) { toast.error('Enter the receipt number for every parcel'); return; }
+    setBusyId(sending.id);
+    try {
+      await dispatchCourierRun(sending.id, {
+        parcels: sending.parcels.map(p => ({
+          deliveryId: p.deliveryId,
+          fee: fees[p.deliveryId]?.fee || 0,
+          receiptNo: fees[p.deliveryId]?.receiptNo || null,
+        })),
+      });
+      await load();
+      setSending(null);
+      toast.success('Run recorded as gone out');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not record the run');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   // He can fix his own finished work until the office has acted on it — banked the cash or checked
@@ -188,7 +221,7 @@ export default function RiderDashboard() {
                 </div>
                 {run.overdue && (
                   <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
-                    This run was never marked as gone out. If you took it, tell the office so they can record the receipts.
+                    This run was never marked as gone out. If you took it, record the receipts below.
                   </p>
                 )}
                 <div className="divide-y divide-gray-50">
@@ -199,7 +232,15 @@ export default function RiderDashboard() {
                           <div className="text-sm font-medium text-gray-700 truncate">{p.customerName || 'Customer'}</div>
                           <div className="text-xs text-gray-400">{p.orderNumber}{p.town ? ` · ${p.town}` : ''}</div>
                         </div>
-                        {p.receiptNo && <span className="text-xs text-gray-500 shrink-0">Receipt {p.receiptNo}</span>}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {p.receiptNo && <span className="text-xs text-gray-500">Receipt {p.receiptNo}</span>}
+                          {p.customerPhone && (
+                            <a href={`tel:${p.customerPhone}`} aria-label={`Call ${p.customerName || 'customer'}`}
+                              className="p-2 border border-gray-200 rounded-lg text-gray-600 active:bg-gray-50">
+                              <FiPhone size={14} />
+                            </a>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-start gap-2 text-xs text-gray-500 mt-1">
                         <FiPackage className="mt-0.5 shrink-0 text-gray-400" size={12} />
@@ -209,6 +250,12 @@ export default function RiderDashboard() {
                   ))}
                 </div>
                 {run.notes && <p className="text-xs text-gray-500">Note: {run.notes}</p>}
+                {run.status === 'Open' && (
+                  <button onClick={() => openSend(run)} disabled={busyId === run.id}
+                    className="w-full py-3 bg-slate-800 text-white rounded-xl text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-1.5">
+                    <FiTruck size={15} /> Dropped at {run.courier}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -374,6 +421,48 @@ export default function RiderDashboard() {
               <button onClick={() => { const d = completing; setCompleting(null); openFail(d); }}
                 className="w-full text-xs text-red-600 underline">It did not actually arrive</button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Record a courier run as dropped off */}
+      {sending && (
+        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={() => setSending(null)}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="font-semibold text-gray-800">Dropped at {sending.courier}</h3>
+            <p className="text-sm text-gray-500">
+              Enter what {sending.courier} charged for each parcel and the receipt number. The receipt is sent to the customer, and what you paid is owed back to you.
+            </p>
+            <div className="space-y-3">
+              {sending.parcels.map(p => (
+                <div key={p.deliveryId} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                  <div className="text-sm font-medium text-gray-700">{p.customerName || 'Customer'} <span className="text-xs text-gray-400">· {p.orderNumber}{p.town ? ` · ${p.town}` : ''}</span></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="number" inputMode="decimal" min="0" step="0.01" placeholder="Fee paid"
+                      value={fees[p.deliveryId]?.fee || ''}
+                      onChange={e => setFees({ ...fees, [p.deliveryId]: { ...fees[p.deliveryId], fee: e.target.value } })}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+                    <input placeholder="Receipt no."
+                      value={fees[p.deliveryId]?.receiptNo || ''}
+                      onChange={e => setFees({ ...fees, [p.deliveryId]: { ...fees[p.deliveryId], receiptNo: e.target.value } })}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-slate-800" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Total you paid</span>
+              <span className="font-bold text-gray-800">
+                {formatMoney(sending.parcels.reduce((t, p) => t + (parseFloat(fees[p.deliveryId]?.fee) || 0), 0))}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setSending(null)} className="flex-1 py-3 border border-gray-200 rounded-xl text-sm font-medium">Cancel</button>
+              <button onClick={sendRun} disabled={busyId === sending.id}
+                className="flex-1 py-3 bg-emerald-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50">
+                {busyId === sending.id ? 'Saving…' : 'Confirm'}
+              </button>
+            </div>
           </div>
         </div>
       )}

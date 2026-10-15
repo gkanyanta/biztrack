@@ -41,6 +41,8 @@ const RIDER_ALLOWED_PATHS = [
   /^\/api\/v1\/deliveries\/my(\/|$)/,
   // Moving one of his own deliveries along; the handler scopes it to his riderId.
   /^\/api\/v1\/deliveries\/[^/]+\/status$/,
+  // Recording a courier run he took as gone out; the handler refuses any run that is not his.
+  /^\/api\/v1\/deliveries\/runs\/[^/]+\/dispatch$/,
 ];
 
 function enforceRiderScope(req, res, next) {
