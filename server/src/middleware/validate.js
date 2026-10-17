@@ -64,6 +64,7 @@ function validateProduct(req, res, next) {
   if (req.body.description) req.body.description = sanitizeString(req.body.description, 1000);
   if (req.body.category) req.body.category = sanitizeString(req.body.category, 100);
   if (req.body.supplier) req.body.supplier = sanitizeString(req.body.supplier, 200);
+  if (req.body.brand !== undefined) req.body.brand = typeof req.body.brand === 'string' && req.body.brand.trim() ? sanitizeString(req.body.brand, 100) : null;
   if (req.body.variantLabel) req.body.variantLabel = sanitizeString(req.body.variantLabel, 100);
   next();
 }
