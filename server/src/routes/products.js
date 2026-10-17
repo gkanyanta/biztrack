@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, requireAdmin, requireAdminOrInventory } = require('../middleware/auth');
 const { validateProduct } = require('../middleware/validate');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
+const { metaOrigins, loadFeedSettings, buildMetaFeed } = require('../utils/metaFeed');
 
 router.use(authenticate);
 
@@ -14,7 +15,7 @@ function stripForInventory(products) {
   return products.map(({ costPrice, supplier, ...rest }) => rest);
 }
 
-const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
+const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, brand: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
 const PRODUCT_SORT_FIELDS = ['name', 'sku', 'category', 'costPrice', 'sellingPrice', 'stock', 'createdAt'];
 
 async function attachImages(prisma, companyId, products) {
@@ -23,6 +24,27 @@ async function attachImages(prisma, companyId, products) {
   const imageIds = new Set(withImages.map(p => p.id));
   return products.map(p => ({ ...p, imageUrl: imageIds.has(p.id) ? `/api/v1/store/product-image/${p.id}` : null }));
 }
+
+// What the Meta catalogue feed would publish right now, and every active product it leaves out with
+// the reason — the place to look when Commerce Manager shows fewer items than the store.
+router.get('/meta-feed', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const company = await prisma.company.findUnique({ where: { id: req.user.companyId } });
+    const settings = await loadFeedSettings(prisma, company.id);
+    const origins = metaOrigins(company.slug, req);
+    const feed = await buildMetaFeed(prisma, company, settings, origins);
+    const token = settings.secret ? `?token=${encodeURIComponent(settings.secret)}` : '';
+    res.json({
+      enabled: settings.enabled,
+      fallbackBrand: settings.fallbackBrand || null,
+      feedUrl: `${origins.origin}/api/v1/store/${company.slug}/meta-feed.csv${token}`,
+      included: feed.rows.length,
+      excluded: feed.excluded,
+      outOfStock: feed.rows.filter(r => r.availability === 'out of stock').length,
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
 
 router.get('/meta/categories', async (req, res) => {
   try {

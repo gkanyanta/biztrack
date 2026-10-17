@@ -74,6 +74,8 @@ model Product {
   sku             String
   description     String?
   category        String?
+  // Manufacturer brand, for the Meta catalogue feed. Blank means the store-wide fallback applies.
+  brand           String?
   costPrice       Decimal           @db.Decimal(10, 2)
   sellingPrice    Decimal           @db.Decimal(10, 2)
   originalPrice   Decimal?          @db.Decimal(10, 2)

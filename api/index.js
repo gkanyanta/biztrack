@@ -6,6 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const XLSX = require('xlsx');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -54,6 +55,9 @@ app.use(rateLimit({
   // Right for real traffic. A full test run makes thousands of calls across seven suites and
   // two backends, so it raises this rather than the suites being written around the ceiling.
   max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 200,
+  // Product images are read-only and public. Meta's crawler fetches one per catalogue item in a
+  // burst from the same few addresses, which would otherwise hit the ceiling and get images rejected.
+  skip: (req) => req.method === 'GET' && req.path.startsWith('/api/v1/store/product-image/'),
   message: { error: 'Too many requests, please try again later' }
 }));
 
@@ -299,6 +303,7 @@ function validateProduct(req, res, next) {
   if (req.body.description) req.body.description = sanitizeString(req.body.description, 1000);
   if (req.body.category) req.body.category = sanitizeString(req.body.category, 100);
   if (req.body.variantLabel) req.body.variantLabel = sanitizeString(req.body.variantLabel, 100);
+  if (req.body.brand !== undefined) req.body.brand = typeof req.body.brand === 'string' && req.body.brand.trim() ? sanitizeString(req.body.brand, 100) : null;
   next();
 }
 
@@ -439,6 +444,26 @@ app.get('/api/v1/auth/me', authenticate, async (req, res) => {
 });
 
 // ---- PRODUCTS ----
+// What the Meta catalogue feed would publish right now, and every active product it leaves out with
+// the reason — the place to look when Commerce Manager shows fewer items than the store.
+app.get('/api/v1/products/meta-feed', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const company = await prisma.company.findUnique({ where: { id: req.user.companyId } });
+    const settings = await loadFeedSettings(prisma, company.id);
+    const origins = metaOrigins(company.slug, req);
+    const feed = await buildMetaFeed(prisma, company, settings, origins);
+    const token = settings.secret ? `?token=${encodeURIComponent(settings.secret)}` : '';
+    res.json({
+      enabled: settings.enabled,
+      fallbackBrand: settings.fallbackBrand || null,
+      feedUrl: `${origins.origin}/api/v1/store/${company.slug}/meta-feed.csv${token}`,
+      included: feed.rows.length,
+      excluded: feed.excluded,
+      outOfStock: feed.rows.filter(r => r.availability === 'out of stock').length,
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/products/meta/categories', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
@@ -493,7 +518,7 @@ app.get('/api/v1/products/broken-images', authenticate, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
-const PRODUCT_SELECT_LIST = { id: true, name: true, sku: true, description: true, category: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
+const PRODUCT_SELECT_LIST = { id: true, name: true, sku: true, description: true, category: true, brand: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
 const PRODUCT_SORT_FIELDS = ['name', 'sku', 'category', 'costPrice', 'sellingPrice', 'stock', 'createdAt'];
 
 async function attachProductImages(companyId, products) {
@@ -2663,6 +2688,165 @@ app.get('/api/v1/store/:slug/products', async (req, res) => {
     const categories = sections.filter(s => s.title !== 'More').map(s => s.title);
     res.json({ products: productsWithUrls, categories, sections, popularIds });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- Meta catalogue feed ----
+// The Meta (Facebook / WhatsApp) catalogue feed: one CSV row per sellable product, which Commerce
+// Manager fetches on a schedule. (mirrored in server/src/utils/metaFeed.js)
+//
+// Everything here only reads. A product that is missing something Meta requires is left out and
+// reported with the reason, rather than padded with invented data — Meta rejects bad rows anyway,
+// and an honest gap is easier to fix from the validation report than a made-up brand is to notice.
+
+const META_FEED_COLUMNS = ['id', 'title', 'description', 'availability', 'condition', 'price', 'link', 'image_link', 'brand', 'product_type', 'item_group_id', 'sale_price'];
+
+// Stores with their own shopper-facing domain. Mirrors STORE_DOMAINS in client/src/App.jsx; a store
+// without one is served at /store/:slug on whichever host the feed was fetched from.
+const STORE_ORIGINS = { 'privtech-solutions': 'https://store.privtech.net' };
+
+function metaOrigins(slug, req) {
+  if (STORE_ORIGINS[slug]) return { origin: STORE_ORIGINS[slug], storePath: '/' };
+  return { origin: `https://${req.get('host')}`, storePath: `/store/${encodeURIComponent(slug)}` };
+}
+
+// Settings that switch the feed on and shape it. Opt-in per company, so no other tenant's catalogue
+// starts appearing at a public URL because this shipped.
+async function loadFeedSettings(prisma, companyId) {
+  const rows = await prisma.setting.findMany({ where: { companyId, key: { in: ['metaFeedEnabled', 'metaFeedBrand', 'metaFeedSecret', 'currency'] } } });
+  const s = {};
+  rows.forEach(r => { s[r.key] = r.value; });
+  return {
+    enabled: s.metaFeedEnabled === 'true',
+    fallbackBrand: (s.metaFeedBrand || '').trim(),
+    secret: (s.metaFeedSecret || '').trim(),
+    currency: /^[A-Z]{3}$/.test(s.currency || '') ? s.currency : 'ZMW',
+  };
+}
+
+function feedTokenMatches(secret, token) {
+  if (!secret) return true;
+  const a = crypto.createHash('sha256').update(String(token || '')).digest();
+  const b = crypto.createHash('sha256').update(secret).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+const plain = (s, max) => String(s ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+const money = (n, currency) => `${Number(n).toFixed(2)} ${currency}`;
+
+function csvField(v) {
+  const s = v == null ? '' : String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// A variant whose own name already carries its label ("T-Shirt Red") keeps it once.
+function metaTitle(p) {
+  const name = plain(p.name, 200);
+  const label = plain(p.variantLabel, 100);
+  if (!label || name.toLowerCase().includes(label.toLowerCase())) return name;
+  return `${name} - ${label}`.slice(0, 200);
+}
+
+// Images are stored as base64 in the row and served by /store/product-image/:id. Meta only accepts
+// JPEG or PNG, and only re-downloads an image whose URL changed, so the URL carries the product's
+// updatedAt.
+function metaImage(p, imageRef, origin) {
+  if (!imageRef) return { error: 'no image' };
+  const data = imageRef.match(/^data:image\/([\w.+-]+);base64,/i);
+  if (data) {
+    if (!/^(jpeg|jpg|png)$/i.test(data[1])) return { error: `image is ${data[1]}; Meta accepts JPEG or PNG` };
+    return { url: `${origin}/api/v1/store/product-image/${p.id}?v=${new Date(p.updatedAt).getTime()}` };
+  }
+  if (/^https:\/\/\S+$/i.test(imageRef) && imageRef.length <= 2000) return { url: imageRef };
+  return { error: 'image is not a public HTTPS URL' };
+}
+
+// Turns the company's active products into feed rows, plus the list of products left out and why.
+// Only active products are read; Meta drops anything missing from a scheduled feed, so
+// deactivating a product in BizTrack removes it from the catalogue on the next fetch.
+async function buildMetaFeed(prisma, company, settings, { origin, storePath }) {
+  const products = await prisma.product.findMany({
+    where: { companyId: company.id, isActive: true },
+    select: { id: true, name: true, sku: true, description: true, category: true, brand: true, sellingPrice: true, originalPrice: true, stock: true, groupId: true, variantLabel: true, updatedAt: true },
+    orderBy: [{ groupId: 'asc' }, { name: 'asc' }],
+  });
+  // Only the first few characters of a base64 image are needed to know its type; pulling the whole
+  // thing for every product would move megabytes to write a URL.
+  const imageRows = products.length ? await prisma.$queryRaw`
+    SELECT "id", CASE WHEN "imageUrl" LIKE 'data:%' THEN left("imageUrl", 40) ELSE "imageUrl" END AS "ref"
+    FROM "Product" WHERE "companyId" = ${company.id} AND "isActive" = true AND "imageUrl" IS NOT NULL AND "imageUrl" <> ''` : [];
+  const imageRef = new Map(imageRows.map(r => [r.id, r.ref]));
+
+  const rows = [];
+  const excluded = [];
+  for (const p of products) {
+    const errors = [];
+    const title = metaTitle(p);
+    if (!title) errors.push('no name');
+    const description = plain(p.description, 9999);
+    if (!description) errors.push('no description');
+    const brand = plain(p.brand, 100) || plain(settings.fallbackBrand, 100);
+    if (!brand) errors.push('no brand, and no fallback brand set');
+    const selling = parseFloat(p.sellingPrice);
+    if (!(selling > 0)) errors.push('selling price is not above zero');
+    const image = metaImage(p, imageRef.get(p.id), origin);
+    if (image.error) errors.push(image.error);
+    if (errors.length) { excluded.push({ id: p.id, name: p.name, sku: p.sku, errors }); continue; }
+
+    // A struck-through original price is the full price and the selling price is the sale, which is
+    // how the store shows it. Meta requires sale_price to be below price.
+    const original = p.originalPrice != null ? parseFloat(p.originalPrice) : null;
+    const onSale = original != null && original > selling;
+    rows.push({
+      id: p.id,
+      title,
+      description,
+      availability: p.stock > 0 ? 'in stock' : 'out of stock',
+      condition: 'new',
+      price: money(onSale ? original : selling, settings.currency),
+      link: `${origin}${storePath}?product=${encodeURIComponent(p.id)}`,
+      image_link: image.url,
+      brand,
+      product_type: plain(p.category, 750),
+      item_group_id: p.groupId || '',
+      sale_price: onSale ? money(selling, settings.currency) : '',
+    });
+  }
+  const csv = [META_FEED_COLUMNS.join(','), ...rows.map(r => META_FEED_COLUMNS.map(c => csvField(r[c])).join(','))].join('\n') + '\n';
+  return { rows, excluded, csv };
+}
+
+// Meta catalogue feed, fetched by Commerce Manager on a schedule. Anything short of a real feed is
+// a non-200 with no-store: Meta keeps the catalogue it has when a fetch fails, whereas a 200 with
+// no rows would empty the Facebook and WhatsApp catalogues after a database blip.
+app.get('/api/v1/store/:slug/meta-feed.csv', async (req, res) => {
+  const started = Date.now();
+  const slug = req.params.slug;
+  const log = (level, fields) => console[level](JSON.stringify({ event: 'meta_feed', slug, ms: Date.now() - started, ...fields }));
+  const refuse = (status, message, headers = {}) => res.status(status).set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', ...headers }).send(message);
+  try {
+    const company = await prisma.company.findUnique({ where: { slug } });
+    if (!company || !company.isActive) return refuse(404, 'Store not found');
+    const settings = await loadFeedSettings(prisma, company.id);
+    // Disabled and wrong-token look the same from outside, so the URL can't be probed for which.
+    if (!settings.enabled || !feedTokenMatches(settings.secret, req.query.token)) return refuse(404, 'Store not found');
+    const feed = await buildMetaFeed(prisma, company, settings, metaOrigins(slug, req));
+    if (!feed.rows.length) {
+      log('warn', { outcome: 'refused_empty', excluded: feed.excluded.length });
+      return refuse(503, 'No products are eligible for the catalogue; refusing to publish an empty feed.', { 'Retry-After': '3600' });
+    }
+    log('log', { outcome: 'ok', included: feed.rows.length, excluded: feed.excluded.length });
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      // The CDN answers repeat fetches for 15 minutes, so an hourly Meta schedule sees changes
+      // within the hour without every fetch reaching the database.
+      'Cache-Control': 'public, max-age=0, s-maxage=900, stale-while-revalidate=300',
+      'X-Robots-Tag': 'noindex',
+    });
+    res.send(feed.csv);
+  } catch (err) {
+    log('error', { outcome: 'error', error: err.message });
+    refuse(503, 'Feed temporarily unavailable', { 'Retry-After': '600' });
+  }
 });
 
 app.post('/api/v1/store/:slug/order', async (req, res) => {

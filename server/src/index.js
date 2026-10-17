@@ -37,6 +37,9 @@ app.use(rateLimit({
   // Right for real traffic. A full test run makes thousands of calls across seven suites and
   // two backends, so it raises this rather than the suites being written around the ceiling.
   max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 200,
+  // Product images are read-only and public. Meta's crawler fetches one per catalogue item in a
+  // burst from the same few addresses, which would otherwise hit the ceiling and get images rejected.
+  skip: (req) => req.method === 'GET' && req.path.startsWith('/api/v1/store/product-image/'),
   message: { error: 'Too many requests, please try again later' }
 }));
 

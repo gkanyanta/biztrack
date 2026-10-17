@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { metaOrigins, loadFeedSettings, feedTokenMatches, buildMetaFeed } = require('../utils/metaFeed');
 
 // Public store routes - no auth required
 
@@ -180,6 +181,41 @@ router.get('/:slug/products', async (req, res) => {
     const categories = sections.filter(s => s.title !== 'More').map(s => s.title);
     res.json({ products: productsWithUrls, categories, sections, popularIds });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// Meta catalogue feed, fetched by Commerce Manager on a schedule. Anything short of a real feed is
+// a non-200 with no-store: Meta keeps the catalogue it has when a fetch fails, whereas a 200 with
+// no rows would empty the Facebook and WhatsApp catalogues after a database blip.
+router.get('/:slug/meta-feed.csv', async (req, res) => {
+  const started = Date.now();
+  const slug = req.params.slug;
+  const log = (level, fields) => console[level](JSON.stringify({ event: 'meta_feed', slug, ms: Date.now() - started, ...fields }));
+  const refuse = (status, message, headers = {}) => res.status(status).set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8', ...headers }).send(message);
+  try {
+    const prisma = req.app.locals.prisma;
+    const company = await prisma.company.findUnique({ where: { slug } });
+    if (!company || !company.isActive) return refuse(404, 'Store not found');
+    const settings = await loadFeedSettings(prisma, company.id);
+    // Disabled and wrong-token look the same from outside, so the URL can't be probed for which.
+    if (!settings.enabled || !feedTokenMatches(settings.secret, req.query.token)) return refuse(404, 'Store not found');
+    const feed = await buildMetaFeed(prisma, company, settings, metaOrigins(slug, req));
+    if (!feed.rows.length) {
+      log('warn', { outcome: 'refused_empty', excluded: feed.excluded.length });
+      return refuse(503, 'No products are eligible for the catalogue; refusing to publish an empty feed.', { 'Retry-After': '3600' });
+    }
+    log('log', { outcome: 'ok', included: feed.rows.length, excluded: feed.excluded.length });
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      // The CDN answers repeat fetches for 15 minutes, so an hourly Meta schedule sees changes
+      // within the hour without every fetch reaching the database.
+      'Cache-Control': 'public, max-age=0, s-maxage=900, stale-while-revalidate=300',
+      'X-Robots-Tag': 'noindex',
+    });
+    res.send(feed.csv);
+  } catch (err) {
+    log('error', { outcome: 'error', error: err.message });
+    refuse(503, 'Feed temporarily unavailable', { 'Retry-After': '600' });
+  }
 });
 
 // Place order

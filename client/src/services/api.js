@@ -144,6 +144,7 @@ export const deleteStaff = (id) => api.delete(`/staff/${id}`);
 
 // Store (public)
 export const getStoreInfo = (slug) => api.get(`/store/${slug}/info`);
+export const getMetaFeedReport = () => api.get('/products/meta-feed');
 export const getStoreProducts = (slug, params) => api.get(`/store/${slug}/products`, { params });
 export const placeStoreOrder = (slug, data) => api.post(`/store/${slug}/order`, data);
 export const verifyStorePayment = (slug, data) => api.post(`/store/${slug}/verify-payment`, data);

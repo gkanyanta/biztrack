@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { getSettings, updateSettings, getStockLocations, createStockLocation, getStaff, createStaff, resetStaffPassword, deleteStaff } from '../services/api';
+import { getSettings, updateSettings, getMetaFeedReport, getStockLocations, createStockLocation, getStaff, createStaff, resetStaffPassword, deleteStaff } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import toast from 'react-hot-toast';
-import { FiUpload, FiTrash2, FiTruck, FiPlus, FiKey, FiUsers } from 'react-icons/fi';
+import { FiUpload, FiTrash2, FiTruck, FiPlus, FiKey, FiUsers, FiShoppingBag, FiCopy } from 'react-icons/fi';
 
 export default function Settings() {
   const [settings, setSettings] = useState({});
@@ -24,9 +24,12 @@ export default function Settings() {
 
   const loadStockLocations = () => getStockLocations().then(res => setLocations(res.data)).catch(() => {});
   const loadStaff = () => getStaff().then(res => setStaff(res.data)).catch(() => {});
+  const [feedReport, setFeedReport] = useState(null);
+  const loadFeedReport = () => getMetaFeedReport().then(res => setFeedReport(res.data)).catch(() => {});
 
   useEffect(() => {
     getSettings().then(res => setSettings(res.data)).finally(() => setLoading(false));
+    loadFeedReport();
     loadStockLocations();
     loadStaff();
   }, []);
@@ -95,6 +98,7 @@ export default function Settings() {
         setLogoChanged(false);
       }
       toast.success('Settings saved');
+      loadFeedReport();
     } catch { toast.error('Error saving settings'); }
   };
 
@@ -253,6 +257,71 @@ export default function Settings() {
             className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
             Save Settings
           </button>
+        </div>
+      </div>
+
+      {/* Meta catalogue — the feed Facebook and WhatsApp read the store's products from */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2"><FiShoppingBag size={16} /> Facebook &amp; WhatsApp Catalogue</h3>
+        <p className="text-xs text-gray-400 mb-4">
+          Publishes the store's active products as a feed that Meta Commerce Manager fetches on a schedule,
+          so prices, stock and new products reach the Facebook and WhatsApp catalogue without re-entering them.
+        </p>
+        <div className="space-y-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={settings.metaFeedEnabled === 'true'}
+              onChange={e => setSettings({...settings, metaFeedEnabled: e.target.checked ? 'true' : 'false'})} />
+            Publish the catalogue feed
+          </label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Fallback brand</label>
+            <input type="text" value={settings.metaFeedBrand || ''}
+              onChange={e => setSettings({...settings, metaFeedBrand: e.target.value})}
+              placeholder="e.g. Privtech"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            <p className="text-xs text-gray-400 mt-1">Meta requires a brand on every product. Used for products whose own Brand is blank — meant for unbranded goods you sell under your own name.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Feed access token <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input type="password" value={settings.metaFeedSecret || ''}
+              onChange={e => setSettings({...settings, metaFeedSecret: e.target.value})}
+              placeholder="Leave blank for an open feed"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
+            <p className="text-xs text-gray-400 mt-1">When set, the feed only answers when the URL carries it. The feed URL below includes it.</p>
+          </div>
+          <button onClick={handleSave}
+            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            Save Settings
+          </button>
+          {feedReport && (
+            <div className="border-t border-gray-100 pt-4 space-y-3">
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Feed URL — paste this into Commerce Manager as a scheduled feed</p>
+                <div className="flex gap-2">
+                  <input readOnly value={feedReport.feedUrl} onFocus={e => e.target.select()}
+                    className="flex-1 min-w-0 border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-xs font-mono" />
+                  <button type="button" onClick={() => navigator.clipboard?.writeText(feedReport.feedUrl).then(() => toast.success('Copied'))}
+                    className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50" title="Copy"><FiCopy size={14} /></button>
+                </div>
+                {!feedReport.enabled && <p className="text-xs text-amber-600 mt-1">The feed is switched off, so this URL answers "not found" until you tick the box above and save.</p>}
+              </div>
+              <p className="text-sm text-gray-700">
+                <span className="font-semibold">{feedReport.included}</span> products in the feed
+                {feedReport.outOfStock > 0 && <> ({feedReport.outOfStock} listed as out of stock)</>}
+                {' · '}<span className={feedReport.excluded.length ? 'font-semibold text-amber-700' : ''}>{feedReport.excluded.length}</span> left out
+              </p>
+              {feedReport.excluded.length > 0 && (
+                <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100">
+                  {feedReport.excluded.map(p => (
+                    <div key={p.id} className="px-3 py-2 text-xs">
+                      <span className="font-medium text-gray-700">{p.name}</span> <span className="text-gray-400">{p.sku}</span>
+                      <div className="text-amber-700">{p.errors.join(' · ')}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

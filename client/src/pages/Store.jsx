@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { getStoreInfo, getStoreProducts, placeStoreOrder, verifyStorePayment, getPaymentStatus } from '../services/api';
 import { FiShoppingCart, FiPlus, FiMinus, FiTrash2, FiX, FiPackage, FiCheck, FiPhone, FiMapPin, FiSearch, FiCreditCard, FiChevronRight, FiShield, FiTruck, FiZap } from 'react-icons/fi';
@@ -81,6 +81,21 @@ export default function Store() {
       .catch(err => setError(err.response?.status === 404 ? 'Store not found' : 'Failed to load store'))
       .finally(() => setLoading(false));
   }, [slug]);
+
+  // A product link from the Facebook/WhatsApp catalogue lands as ?product=<id>, which may be one
+  // variant of a grouped tile: select that variant and bring its tile into view, once.
+  const [linkedTileId, setLinkedTileId] = useState(null);
+  const linkHandled = useRef(false);
+  useEffect(() => {
+    const linkedId = searchParams.get('product');
+    if (!linkedId || linkHandled.current || !products.length) return;
+    linkHandled.current = true;
+    const tile = products.find(p => p.variants.some(v => v.id === linkedId));
+    if (!tile) return;
+    setSelectedVariants(prev => ({ ...prev, [tile.id]: linkedId }));
+    setLinkedTileId(tile.id);
+    requestAnimationFrame(() => document.querySelector(`[data-tile="${tile.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  }, [products]);
 
   const loadProducts = (cat, q) => {
     getStoreProducts(slug, { category: cat || undefined, search: q || undefined })
@@ -310,7 +325,7 @@ export default function Store() {
     const onSale = activeVariant.originalPrice && parseFloat(activeVariant.originalPrice) > parseFloat(activeVariant.sellingPrice);
     const discountPct = onSale ? Math.round(((parseFloat(activeVariant.originalPrice) - parseFloat(activeVariant.sellingPrice)) / parseFloat(activeVariant.originalPrice)) * 100) : 0;
     return (
-      <div key={p.id} className={`bg-white rounded-2xl border overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group ${onSale ? 'border-rose-200 ring-1 ring-rose-100' : 'border-slate-100'}`}>
+      <div key={p.id} data-tile={p.id} className={`bg-white rounded-2xl border overflow-hidden hover:shadow-lg hover:shadow-slate-200/50 transition-all duration-200 group ${p.id === linkedTileId ? 'border-blue-400 ring-2 ring-blue-200' : onSale ? 'border-rose-200 ring-1 ring-rose-100' : 'border-slate-100'}`}>
         <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden relative">
           {cartLineProduct.imageUrl ? (
             <img

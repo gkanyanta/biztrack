@@ -36,7 +36,7 @@ export default function Products() {
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
     costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5',
-    supplier: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: ''
+    supplier: '', brand: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: ''
   });
   const imageInputRef = useRef(null);
 
@@ -87,7 +87,7 @@ export default function Products() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: '' });
+    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', brand: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: '' });
     setShowForm(true);
   };
 
@@ -96,7 +96,7 @@ export default function Products() {
     setForm({
       name: p.name, sku: p.sku, description: p.description || '', category: p.category || '',
       costPrice: p.costPrice, sellingPrice: p.sellingPrice, originalPrice: p.originalPrice || '', stock: String(p.stock), reorderLevel: String(p.reorderLevel),
-      supplier: p.supplier || '', imageUrl: p.imageUrl || '', imageChanged: false,
+      supplier: p.supplier || '', brand: p.brand || '', imageUrl: p.imageUrl || '', imageChanged: false,
       groupId: p.groupId || '', variantLabel: p.variantLabel || ''
     });
     setShowForm(true);
@@ -135,6 +135,7 @@ export default function Products() {
         sku: form.sku || undefined,
         groupId: form.groupId || null,
         variantLabel: form.variantLabel ? form.variantLabel.trim() : null,
+        brand: form.brand ? form.brand.trim() : null,
       };
       if (editing && !form.imageChanged) delete data.imageUrl;
       delete data.imageChanged;
@@ -327,6 +328,12 @@ export default function Products() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
               <input type="text" value={form.supplier} onChange={e => setForm({...form, supplier: e.target.value})}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Brand <span className="text-gray-400 font-normal">(for the Facebook/WhatsApp catalogue)</span></label>
+              <input type="text" value={form.brand} onChange={e => setForm({...form, brand: e.target.value})}
+                placeholder="Leave blank to use the store's fallback brand"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
