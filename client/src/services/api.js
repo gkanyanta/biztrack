@@ -206,6 +206,13 @@ export const createPayAdjustment = (data) => api.post('/payroll/adjustments', da
 export const deletePayAdjustment = (id) => api.delete(`/payroll/adjustments/${id}`);
 export const releasePayAdjustment = (id, period) => api.post(`/payroll/adjustments/${id}/release`, { period });
 export const getLoans = () => api.get('/payroll/loans');
+export const getMyAdvances = () => api.get('/advances/mine');
+export const requestAdvance = (data) => api.post('/advances/mine', data);
+export const withdrawAdvance = (id) => api.post(`/advances/mine/${id}/withdraw`);
+export const getAdvanceRequests = () => api.get('/advances');
+export const approveAdvance = (id, data) => api.post(`/advances/${id}/approve`, data);
+export const declineAdvance = (id, data) => api.post(`/advances/${id}/decline`, data);
+export const payAdvance = (id, data) => api.post(`/advances/${id}/pay`, data);
 export const createLoan = (data) => api.post('/payroll/loans', data);
 export const updateLoan = (id, data) => api.put(`/payroll/loans/${id}`, data);
 export const deleteLoan = (id) => api.delete(`/payroll/loans/${id}`);

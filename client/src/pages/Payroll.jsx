@@ -5,7 +5,10 @@ import {
   getLoans, createLoan, updateLoan, deleteLoan, setLoanInstalment, setConsultantTarget, deleteConsultantTarget,
   getStaffMembers, createStaffMember, updateStaffMember, deleteStaffMember,
   getStaffPayments, payStaffMember, deleteStaffPayment, getRiders,
+  getAdvanceRequests, approveAdvance, declineAdvance, payAdvance,
 } from '../services/api';
+import { ADVANCE_STATUS } from '../utils/advances';
+import AdvanceSchedule from '../components/AdvanceSchedule';
 import { formatMoney, formatDate, PAYMENT_METHODS } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -98,11 +101,14 @@ export default function Payroll() {
   const [instalmentAmount, setInstalmentAmount] = useState('');
   const [targetFor, setTargetFor] = useState(null);
   const [targetForm, setTargetForm] = useState({ target: '', bonus: '', bonusRate: '' });
+  const [advances, setAdvances] = useState([]);
+  // { mode: 'approve' | 'decline' | 'pay', request, amount, instalments, note, paidAt, paymentMethod }
+  const [advanceForm, setAdvanceForm] = useState(null);
 
   const load = () => {
     setLoading(true);
-    Promise.all([getPayRun({ period: period || undefined }), getLoans(), getStaffMembers()])
-      .then(([r, l, s]) => { setRun(r.data); setLoans(l.data); setStaff(s.data); })
+    Promise.all([getPayRun({ period: period || undefined }), getLoans(), getStaffMembers(), getAdvanceRequests()])
+      .then(([r, l, s, a]) => { setRun(r.data); setLoans(l.data); setStaff(s.data); setAdvances(a.data); })
       .catch(() => toast.error('Could not load payroll'))
       .finally(() => setLoading(false));
   };
@@ -282,6 +288,19 @@ export default function Payroll() {
     ...staff.filter(s => s.isActive).map(s => ({ key: `salaried:${s.id}`, name: s.name })),
     ...payslips.filter(p => p.kind === 'commission').map(p => ({ key: `commission:${p.personId}`, name: p.name })),
   ];
+  const submitAdvance = async (e) => {
+    e.preventDefault();
+    const { mode, request, amount, instalments, note, paidAt, paymentMethod } = advanceForm;
+    const ok = await act(() => (
+      mode === 'approve' ? approveAdvance(request.id, { amount: parseFloat(amount), instalments: parseInt(instalments, 10), note })
+        : mode === 'decline' ? declineAdvance(request.id, { note })
+          : payAdvance(request.id, { paidAt, paymentMethod })
+    ), mode === 'approve' ? 'Advance approved' : mode === 'decline' ? 'Advance declined' : 'Payout recorded. Repayments start on the next pay day.');
+    if (ok) setAdvanceForm(null);
+  };
+  const openAdvances = advances.filter(a => a.status === 'pending' || a.status === 'approved');
+  const settledAdvances = advances.filter(a => a.status !== 'pending' && a.status !== 'approved').slice(0, 8);
+
   const newLoan = () => setLoanForm({
     person: people[0]?.key || '', description: '', principal: '', terms: 'count', instalments: '2', instalmentAmount: '',
     firstPeriod: openPeriod, notes: '',
@@ -504,6 +523,47 @@ export default function Payroll() {
         {payslips.length === 0
           ? <p className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-500">Nobody is on this pay run.</p>
           : <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">{payslips.map(renderSlip)}</div>}
+      </div>
+
+      {/* ---- SALARY ADVANCE REQUESTS ---- */}
+      <div>
+        <h2 className="text-sm font-semibold text-gray-700 mb-2">
+          Advance requests {openAdvances.length > 0 && <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{openAdvances.length} open</span>}
+        </h2>
+        <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-100">
+          {openAdvances.length === 0 && settledAdvances.length === 0 && (
+            <p className="p-6 text-center text-sm text-gray-500">No requests. Staff ask for an advance from their own login, under Salary Advance.</p>
+          )}
+          {[...openAdvances, ...settledAdvances].map(a => {
+            const st = ADVANCE_STATUS[a.status] || ADVANCE_STATUS.pending;
+            return (
+              <div key={a.id} className="p-3 flex flex-wrap items-center gap-3 text-sm">
+                <div className="flex-1 min-w-[12rem]">
+                  <p className="font-medium text-gray-800">{a.name}: {formatMoney(a.agreed.amount)} over {a.agreed.instalments} pay day{a.agreed.instalments === 1 ? '' : 's'}</p>
+                  <p className="text-xs text-gray-500">
+                    {a.reason} · asked {formatDate(a.createdAt)}
+                    {a.termsChanged && <> · asked for {formatMoney(a.requested.amount)} over {a.requested.instalments}</>}
+                    {a.status === 'paid' && <> · paid {formatDate(a.paidAt)}, {formatMoney(a.outstanding)} outstanding, first deduction {a.firstPeriod} cycle</>}
+                    {(a.status === 'pending' || a.status === 'approved') && a.schedule[0] && <> · if paid today, {formatMoney(a.instalmentAmount)} a pay day from {formatDate(a.schedule[0].payDate)}</>}
+                  </p>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full border whitespace-nowrap ${st.className}`}>{st.label}</span>
+                {a.status === 'pending' && (
+                  <button onClick={() => setAdvanceForm({ mode: 'approve', request: a, amount: String(a.requested.amount), instalments: String(a.requested.instalments), note: '' })}
+                    className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700">Approve</button>
+                )}
+                {a.status === 'approved' && (
+                  <button onClick={() => setAdvanceForm({ mode: 'pay', request: a, paidAt: new Date().toLocaleDateString('en-CA'), paymentMethod: 'Mobile Money' })}
+                    className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700">Record payout</button>
+                )}
+                {(a.status === 'pending' || a.status === 'approved') && (
+                  <button onClick={() => setAdvanceForm({ mode: 'decline', request: a, note: '' })}
+                    className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50">Decline</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* ---- LOANS ---- */}
@@ -963,6 +1023,61 @@ export default function Payroll() {
               </div>
             ))}
           </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={!!advanceForm} onClose={() => setAdvanceForm(null)}
+        title={advanceForm ? `${advanceForm.request.name}: ${advanceForm.mode === 'approve' ? 'approve advance' : advanceForm.mode === 'decline' ? 'decline advance' : 'record payout'}` : ''}>
+        {advanceForm && (
+          <form onSubmit={submitAdvance} className="space-y-3">
+            <p className="text-sm text-gray-600">
+              Asked for {formatMoney(advanceForm.request.requested.amount)} over {advanceForm.request.requested.instalments} pay day{advanceForm.request.requested.instalments === 1 ? '' : 's'}: {advanceForm.request.reason}
+            </p>
+            {advanceForm.mode === 'approve' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount (K)</label>
+                  <input required type="number" min="0.01" step="0.01" value={advanceForm.amount} onChange={e => setAdvanceForm({ ...advanceForm, amount: e.target.value })} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Instalments</label>
+                  <select value={advanceForm.instalments} onChange={e => setAdvanceForm({ ...advanceForm, instalments: e.target.value })} className={inputClass}>
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {advanceForm.mode === 'pay' && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Date handed over</label>
+                    <input required type="date" max={new Date().toLocaleDateString('en-CA')} value={advanceForm.paidAt} onChange={e => setAdvanceForm({ ...advanceForm, paidAt: e.target.value })} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Paid by</label>
+                    <select value={advanceForm.paymentMethod} onChange={e => setAdvanceForm({ ...advanceForm, paymentMethod: e.target.value })} className={inputClass}>
+                      {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">This becomes a loan of {formatMoney(advanceForm.request.agreed.amount)}. The first instalment comes off the first pay day after this date, or the next open cycle if that one is already finalised.</p>
+                {advanceForm.paidAt === new Date().toLocaleDateString('en-CA') && <AdvanceSchedule schedule={advanceForm.request.schedule} />}
+              </>
+            )}
+            {advanceForm.mode !== 'pay' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Note to {advanceForm.request.name} <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input value={advanceForm.note} onChange={e => setAdvanceForm({ ...advanceForm, note: e.target.value })} className={inputClass} />
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setAdvanceForm(null)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button type="submit" disabled={submitting} className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50 ${advanceForm.mode === 'decline' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                {advanceForm.mode === 'approve' ? 'Approve' : advanceForm.mode === 'decline' ? 'Decline' : 'Record payout'}
+              </button>
+            </div>
+          </form>
         )}
       </Modal>
 
