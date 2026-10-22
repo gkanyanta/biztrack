@@ -23,6 +23,7 @@ something else.
 
 | Suite | What it protects |
 |---|---|
+| `advances` | Salary advances staff ask for themselves: the instalments they state, the office approving on its own terms or declining, and repayments starting on the first pay day after the money is handed over, never a finalised cycle, with one loan per payout |
 | `delivery-cash` | Cash a rider collects reaching the order's ledger only when the office confirms it, and coming back out when that is undone |
 | `meta-feed` | The Facebook/WhatsApp catalogue feed: ZMW pricing and sale prices, variants, stock, image URLs, CSV escaping, one company's products never in another's feed, no cost or supplier data, and a database failure or empty catalogue never published as an empty feed |
 | `payroll` | Salary accrual and proration, the allowance cap, advances netting off what is owed, and staff pay reaching the P&L |

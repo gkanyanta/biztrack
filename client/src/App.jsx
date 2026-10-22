@@ -28,6 +28,7 @@ import StockAllocations from './pages/StockAllocations';
 import Deliveries from './pages/Deliveries';
 import Payroll from './pages/Payroll';
 import RiderDashboard from './pages/RiderDashboard';
+import MyAdvances from './pages/MyAdvances';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -127,6 +128,7 @@ function AppRoutes() {
         <Route path="targets" element={<AdminOnly><Targets /></AdminOnly>} />
         <Route path="money-splits" element={<AdminOnly><MoneySplits /></AdminOnly>} />
         <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
+        <Route path="my-advances" element={<MyAdvances />} />
       </Route>
     </Routes>
   );
