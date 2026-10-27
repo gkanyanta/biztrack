@@ -3,6 +3,7 @@ import { pdf } from '@react-pdf/renderer';
 import { FiDownload } from 'react-icons/fi';
 import ReceiptPDF from './ReceiptPDF';
 import { getSaleReceipt } from '../services/api';
+import { zraInvoice } from '../utils/zra';
 
 export default function ReceiptButton({ saleId, sale: saleProp, settings: settingsProp, size = 16, className = '' }) {
   const [loading, setLoading] = useState(false);
@@ -19,7 +20,10 @@ export default function ReceiptButton({ saleId, sale: saleProp, settings: settin
         sale = data.sale;
         settings = data.settings;
       }
-      const blob = await pdf(<ReceiptPDF sale={sale} settings={settings} />).toBlob();
+      // ZRA's QR code, drawn here because the PDF cannot draw one itself.
+      const qrUrl = zraInvoice(sale)?.qrCodeUrl;
+      const zraQr = qrUrl ? await import('qrcode').then(m => m.default.toDataURL(qrUrl, { margin: 1, width: 240 })).catch(() => null) : null;
+      const blob = await pdf(<ReceiptPDF sale={sale} settings={settings} zraQr={zraQr} />).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

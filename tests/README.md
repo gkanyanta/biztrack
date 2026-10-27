@@ -30,6 +30,7 @@ something else.
 | `rider-finance` | The rider's balance, expenses settled as company cost or recharged, partial recharges, and the delivery finances figures |
 | `rider-scope` | Who may reach what — every endpoint closed to a rider, the inventory role able to dispatch but not touch money, and the payment secret withheld from non-admins |
 | `sale-status` | An order that still has to travel cannot be recorded as already delivered, while a counter collection can |
+| `zra` | ZRA Smart Invoice: off until the superadmin switches it on, only approved VSDC hosts, items registered once, TOT invoices with discounts that add up, credit notes on cancellation, an invoiced sale's figures fixed, a VSDC that is down or refusing never costing a sale, and one company never touching another's |
 
 Every assertion goes over HTTP against a real backend and a real Postgres, because what is worth
 protecting here lives in the route handlers and the database — authorisation, money arithmetic,

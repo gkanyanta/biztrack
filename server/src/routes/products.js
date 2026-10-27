@@ -15,7 +15,7 @@ function stripForInventory(products) {
   return products.map(({ costPrice, supplier, ...rest }) => rest);
 }
 
-const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, brand: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
+const PRODUCT_SELECT = { id: true, name: true, sku: true, description: true, category: true, brand: true, zraClassCode: true, zraTaxCategory: true, zraRegisteredAt: true, costPrice: true, sellingPrice: true, originalPrice: true, stock: true, reorderLevel: true, supplier: true, isActive: true, createdAt: true, updatedAt: true, companyId: true, groupId: true, variantLabel: true, group: { select: { id: true, name: true } } };
 const PRODUCT_SORT_FIELDS = ['name', 'sku', 'category', 'costPrice', 'sellingPrice', 'stock', 'createdAt'];
 
 async function attachImages(prisma, companyId, products) {
@@ -229,6 +229,9 @@ router.put('/:id', requireAdmin, validateProduct, async (req, res) => {
       const group = await prisma.productGroup.findFirst({ where: { id: data.groupId, companyId } });
       if (!group) return res.status(400).json({ error: 'Invalid product group' });
     }
+    // ZRA knows the item by its code, classification and tax category; change one and it is
+    // registered again before it next appears on an invoice.
+    if (['sku', 'zraClassCode', 'zraTaxCategory'].some(k => data[k] !== undefined && (data[k] || null) !== (existing[k] || null))) data.zraRegisteredAt = null;
     const stockChange = data.stock !== undefined ? data.stock - existing.stock : 0;
     const product = await prisma.product.update({ where: { id: req.params.id }, data });
     if (stockChange !== 0 && req.body.stock !== undefined) {

@@ -2,12 +2,15 @@ const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { validateSale, sanitizeString } = require('../middleware/validate');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
+const { zra_recordSale, zra_refuseChange, zra_afterSave, ZRA_DOC_SELECT } = require('../utils/zra');
 
 router.use(authenticate);
 
 const saleInclude = { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true,
   // Where the order physically is, so the office can answer "where is it" from the sales list.
-  delivery: { select: { id: true, status: true, cashCollected: true, cashRemitted: true, rider: { select: { name: true } } } } };
+  delivery: { select: { id: true, status: true, cashCollected: true, cashRemitted: true, rider: { select: { name: true } } } },
+  // ZRA Smart Invoice documents, for companies that have it; an empty list for everyone else.
+  fiscalDocuments: { select: ZRA_DOC_SELECT, orderBy: { createdAt: 'asc' } } };
 const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerName', totalPrice: 'totalPrice', status: 'status', paymentStatus: 'paymentStatus', date: 'date' };
 
 function calcSaleProfit(s) {
@@ -86,6 +89,24 @@ async function refundStockForItem(prisma, item, sale, companyId, reason) {
   await prisma.stockLog.create({
     data: { productId: item.productId, change: item.qty, reason, saleId: sale.id, companyId }
   });
+}
+
+// Whether an edit would change what a ZRA invoice says: the lines, the discount, the delivery
+// charge, or the day of the sale. Anything else (notes, payment, contact details) can change.
+function saleDay(d) {
+  const day = new Date(d);
+  return [day.toISOString().slice(0, 10), day.toLocaleDateString('en-CA', { timeZone: 'Africa/Lusaka' })];
+}
+function changesInvoiceFigures(existing, raw, newSaleItems) {
+  const money = (v) => Math.round((parseFloat(v) || 0) * 100);
+  if (raw.discount !== undefined && money(raw.discount) !== money(existing.discount)) return true;
+  if (raw.shippingCharge !== undefined && money(raw.shippingCharge) !== money(existing.shippingCharge)) return true;
+  if (raw.date && !saleDay(existing.date).includes(String(raw.date).slice(0, 10))) return true;
+  if (newSaleItems) {
+    const lines = (items) => items.map(i => `${i.productId}|${i.qty}|${money(i.unitPrice)}`).sort().join(',');
+    if (lines(existing.items) !== lines(newSaleItems)) return true;
+  }
+  return false;
 }
 
 // Consultants can only select their own stock or Main (null). Admins can select any.
@@ -374,8 +395,14 @@ router.post('/', validateSale, async (req, res) => {
           }
         }
         await tx.orderStatusLog.create({ data: { saleId: created.id, fromStatus: 'New', toStatus: created.status, byUserId: req.user.id, companyId } });
-        return created;
+        const recorded = await zra_recordSale(tx, companyId, created.id);
+        return recorded ? { ...created, recorded } : created;
       }, { timeout: 20000 });
+      // The sale is saved whatever ZRA says; this only adds the receipt details when it answers.
+      if (sale.recorded) {
+        await zra_afterSave(prisma, companyId, sale.id);
+        return res.status(201).json(await prisma.sale.findUnique({ where: { id: sale.id }, include: saleInclude }));
+      }
       res.status(201).json(sale);
     } catch (e) {
       console.error(e);
@@ -439,6 +466,11 @@ router.put('/:id', async (req, res) => {
       const discount = data.discount !== undefined ? data.discount : parseFloat(existing.discount);
       const shippingCharge = data.shippingCharge !== undefined ? data.shippingCharge : parseFloat(existing.shippingCharge);
       data.totalPrice = itemsTotal + shippingCharge - discount;
+    }
+
+    if (changesInvoiceFigures(existing, raw, newSaleItems)) {
+      const refusal = await zra_refuseChange(prisma, companyId, existing.id, { figures: true });
+      if (refusal) return res.status(409).json({ error: refusal });
     }
 
     // Recalculate payment when paymentType changes
@@ -510,6 +542,10 @@ router.put('/:id/status', async (req, res) => {
     const sale = await prisma.sale.findFirst({ where, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const oldStatus = sale.status;
+    if (status !== oldStatus) {
+      const refusal = await zra_refuseChange(prisma, companyId, sale.id, { status });
+      if (refusal) return res.status(409).json({ error: refusal });
+    }
     const stockDeductStatuses = ['Confirmed', 'Shipped', 'Delivered'];
     const wasDeducted = stockDeductStatuses.includes(oldStatus);
     const shouldDeduct = stockDeductStatuses.includes(status);
@@ -528,8 +564,13 @@ router.put('/:id/status', async (req, res) => {
         }
         const result = await tx.sale.update({ where: { id: req.params.id }, data: { status }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } } } });
         await tx.orderStatusLog.create({ data: { saleId: sale.id, fromStatus: oldStatus, toStatus: status, byUserId: req.user.id, companyId } });
-        return result;
+        const recorded = await zra_recordSale(tx, companyId, sale.id);
+        return recorded ? { ...result, recorded } : result;
       }, { timeout: 20000 });
+      if (updated.recorded) {
+        await zra_afterSave(prisma, companyId, sale.id);
+        return res.json(await prisma.sale.findUnique({ where: { id: sale.id }, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } } } }));
+      }
       res.json(updated);
     } catch (e) {
       console.error(e);
@@ -589,6 +630,8 @@ router.delete('/:id', async (req, res) => {
     const companyId = req.user.companyId;
     const sale = await prisma.sale.findFirst({ where: { id: req.params.id, companyId }, include: { items: true } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
+    const refusal = await zra_refuseChange(prisma, companyId, sale.id, { delete: true });
+    if (refusal) return res.status(409).json({ error: refusal });
 
     await prisma.$transaction(async (tx) => {
       if (['Confirmed', 'Shipped', 'Delivered'].includes(sale.status)) {

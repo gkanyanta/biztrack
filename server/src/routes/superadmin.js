@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { authenticate, requireSuperadmin } = require('../middleware/auth');
+const { zra_configProblems, zra_post, ZRA_TAX_CATEGORIES } = require('../utils/zra');
 
 router.use(authenticate);
 router.use(requireSuperadmin);
@@ -159,6 +160,8 @@ router.delete('/companies/:id', async (req, res) => {
     await prisma.creditPayment.deleteMany({ where: { companyId } });
     await prisma.orderStatusLog.deleteMany({ where: { companyId } });
     await prisma.stockLog.deleteMany({ where: { companyId } });
+    await prisma.fiscalDocument.deleteMany({ where: { companyId } });
+    await prisma.zraConfig.deleteMany({ where: { companyId } });
     await prisma.sale.deleteMany({ where: { companyId } });
     await prisma.product.deleteMany({ where: { companyId } });
     await prisma.customer.deleteMany({ where: { companyId } });
@@ -170,6 +173,107 @@ router.delete('/companies/:id', async (req, res) => {
 
     res.json({ message: `Company "${company.name}" and all data deleted` });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// ---- ZRA Smart Invoice, per company ----
+// Only the superadmin switches it on and says where the company's VSDC is: that address is
+// where BizTrack's server sends requests, so it is not something a company admin may change.
+
+const ZRA_DEFAULTS = { enabled: false, environment: 'sandbox', vsdcUrl: null, tpin: null, branchId: '000', deviceSerial: null, defaultTaxCategory: null, startDate: null, qtyUnitCode: 'U', pkgUnitCode: 'NT', originCountry: null, deliveryClassCode: null, refundReasonCode: null, initialisedAt: null };
+
+function zraView(config) {
+  const c = config || ZRA_DEFAULTS;
+  const { id, companyId, createdAt, updatedAt, deliveryRegisteredAt, ...rest } = c;
+  return { ...ZRA_DEFAULTS, ...rest, problems: zra_configProblems(config ? c : null), allowedHosts: (process.env.ZRA_ALLOWED_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean) };
+}
+
+router.get('/companies/:id/zra', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const company = await prisma.company.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+    res.json(zraView(await prisma.zraConfig.findUnique({ where: { companyId: company.id } })));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.put('/companies/:id/zra', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const company = await prisma.company.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!company) return res.status(404).json({ error: 'Company not found' });
+    const existing = await prisma.zraConfig.findUnique({ where: { companyId: company.id } });
+    const b = req.body || {};
+    const text = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+    const data = {};
+    if (b.environment !== undefined) {
+      if (!['sandbox', 'production'].includes(b.environment)) return res.status(400).json({ error: 'Environment must be sandbox or production' });
+      data.environment = b.environment;
+    }
+    if (b.vsdcUrl !== undefined) data.vsdcUrl = text(b.vsdcUrl, 300);
+    if (b.tpin !== undefined) {
+      data.tpin = text(b.tpin, 10);
+      if (data.tpin && !/^\d{10}$/.test(data.tpin)) return res.status(400).json({ error: 'A TPIN is 10 digits' });
+    }
+    if (b.branchId !== undefined) {
+      if (!/^\d{3}$/.test(String(b.branchId || ''))) return res.status(400).json({ error: 'The branch ID is 3 digits, e.g. 000' });
+      data.branchId = String(b.branchId);
+    }
+    if (b.deviceSerial !== undefined) data.deviceSerial = text(b.deviceSerial, 100);
+    if (b.defaultTaxCategory !== undefined) {
+      data.defaultTaxCategory = text(b.defaultTaxCategory, 5);
+      if (data.defaultTaxCategory && !ZRA_TAX_CATEGORIES.hasOwnProperty(data.defaultTaxCategory)) return res.status(400).json({ error: `Tax category must be one of ${Object.keys(ZRA_TAX_CATEGORIES).join(', ')}` });
+    }
+    if (b.startDate !== undefined) {
+      data.startDate = b.startDate ? new Date(`${String(b.startDate).slice(0, 10)}T00:00:00+02:00`) : null;
+      if (data.startDate && isNaN(data.startDate)) return res.status(400).json({ error: 'Start date is not a date' });
+    }
+    if (b.originCountry !== undefined) {
+      data.originCountry = text(b.originCountry, 2)?.toUpperCase() || null;
+      if (data.originCountry && !/^[A-Z]{2}$/.test(data.originCountry)) return res.status(400).json({ error: 'Country of origin is a two-letter code, e.g. CN' });
+    }
+    for (const k of ['qtyUnitCode', 'pkgUnitCode']) if (b[k] !== undefined) data[k] = text(b[k], 10) || ZRA_DEFAULTS[k];
+    for (const k of ['deliveryClassCode', 'refundReasonCode']) if (b[k] !== undefined) data[k] = text(b[k], 20);
+
+    // Pointing at a different VSDC or taxpayer means starting again with ZRA: the device is
+    // initialised afresh, every item is registered afresh, and nothing goes out until then.
+    const merged = { ...ZRA_DEFAULTS, ...(existing || {}), ...data };
+    const rekeyed = existing && ['vsdcUrl', 'tpin', 'branchId', 'deviceSerial'].some(k => data[k] !== undefined && data[k] !== existing[k]);
+    if (rekeyed) {
+      data.initialisedAt = null; data.deliveryRegisteredAt = null; merged.initialisedAt = null;
+      await prisma.product.updateMany({ where: { companyId: company.id }, data: { zraRegisteredAt: null } });
+    }
+    if (b.enabled !== undefined) {
+      if (b.enabled === true) {
+        const problems = zra_configProblems(merged);
+        if (problems.length) return res.status(400).json({ error: `Before switching it on, add ${problems.join(', ')}` });
+      }
+      data.enabled = b.enabled === true;
+    } else if (rekeyed) data.enabled = false;
+
+    const saved = await prisma.zraConfig.upsert({ where: { companyId: company.id }, update: data, create: { ...data, companyId: company.id } });
+    console.log(JSON.stringify({ event: 'zra_config', companyId: company.id, by: req.user.id, enabled: saved.enabled, environment: saved.environment }));
+    res.json(zraView(saved));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+// One-time hand-shake with ZRA for this TPIN, branch and device. Also the "test connection".
+router.post('/companies/:id/zra/initialise', async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const config = await prisma.zraConfig.findUnique({ where: { companyId: req.params.id } });
+    if (!config) return res.status(404).json({ error: 'Save the Smart Invoice settings first' });
+    const missing = zra_configProblems(config).filter(p => p !== 'initialising the device with ZRA');
+    if (missing.length) return res.status(400).json({ error: `Add ${missing.join(', ')} first` });
+    const r = await zra_post(config, '/initializer/selectInitInfo', { tpin: config.tpin, bhfId: config.branchId, dvcSrlNo: config.deviceSerial });
+    // 902 is ZRA's "this device is already initialised", which is as good as a fresh one.
+    const ok = r.ok || (r.reached && r.code === '902');
+    if (!ok) return res.status(502).json({ error: r.error });
+    const saved = await prisma.zraConfig.update({ where: { id: config.id }, data: { initialisedAt: new Date() } });
+    res.json(zraView(saved));
+  } catch (err) {
+    if (err.constructor?.name === 'ZraProblem') return res.status(400).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'Something went wrong' });
+  }
 });
 
 // Upload company logo (saves to settings)
