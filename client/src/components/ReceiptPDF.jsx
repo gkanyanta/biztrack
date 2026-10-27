@@ -1,4 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
+import { zraInvoice, zraCreditNote } from '../utils/zra';
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: 'Helvetica' },
@@ -26,6 +27,10 @@ const styles = StyleSheet.create({
   creditLabel: { fontFamily: 'Helvetica-Bold', color: '#92400e' },
   footer: { position: 'absolute', bottom: 30, left: 40, right: 40, textAlign: 'center', color: '#999', fontSize: 8, borderTop: '0.5 solid #ddd', paddingTop: 8 },
   paymentBadge: { padding: '3 8', borderRadius: 3, fontSize: 9, alignSelf: 'flex-start' },
+  zraBox: { flexDirection: 'row', gap: 12, border: '0.5 solid #ccc', borderRadius: 4, padding: 10, marginBottom: 15 },
+  zraQr: { width: 80, height: 80 },
+  zraLine: { fontSize: 8, color: '#333', marginBottom: 2 },
+  zraNote: { fontSize: 9, color: '#92400e', backgroundColor: '#fef3c7', padding: 8, borderRadius: 4, marginBottom: 15 },
   paidBadge: { backgroundColor: '#d1fae5', color: '#065f46' },
   unpaidBadge: { backgroundColor: '#fee2e2', color: '#991b1b' },
   partialBadge: { backgroundColor: '#fef3c7', color: '#92400e' },
@@ -41,7 +46,37 @@ function formatDate(date) {
   return new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export default function ReceiptPDF({ sale, settings = {} }) {
+// ZRA dates come back as 20261027120000.
+const zraWhen = (v) => (/^\d{14}$/.test(v || '') ? `${v.slice(6, 8)}/${v.slice(4, 6)}/${v.slice(0, 4)} ${v.slice(8, 10)}:${v.slice(10, 12)}:${v.slice(12, 14)}` : v);
+
+// What ZRA gave back for this sale, which a Smart Invoice receipt has to carry.
+function ZraBlock({ sale, qr }) {
+  const invoice = zraInvoice(sale);
+  if (!invoice) return null;
+  if (invoice.status !== 'issued') {
+    return <Text style={styles.zraNote}>Not yet confirmed by ZRA. A Smart Invoice receipt with ZRA's details follows once it has been accepted.</Text>;
+  }
+  const credit = zraCreditNote(sale);
+  const line = (label, value) => value ? <Text style={styles.zraLine}><Text style={styles.bold}>{label}:</Text> {value}</Text> : null;
+  return (
+    <View style={styles.zraBox} wrap={false}>
+      {qr && <Image style={styles.zraQr} src={qr} />}
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.zraLine, styles.bold, { fontSize: 9 }]}>ZRA SMART INVOICE</Text>
+        {line('Invoice No', invoice.invoiceNo)}
+        {line('Receipt No', invoice.rcptNo)}
+        {line('SDC ID', invoice.sdcId)}
+        {line('MRC No', invoice.mrcNo)}
+        {line('Date', zraWhen(invoice.receiptDate))}
+        {line('Internal Data', invoice.intrlData)}
+        {line('Receipt Signature', invoice.rcptSign)}
+        {credit?.status === 'issued' && line('Cancelled by credit note', `${credit.invoiceNo} (receipt ${credit.rcptNo})`)}
+      </View>
+    </View>
+  );
+}
+
+export default function ReceiptPDF({ sale, settings = {}, zraQr = null }) {
   const currency = settings.currencySymbol || settings.currency || 'K';
   const businessName = settings.businessName || 'BizTrack';
   const items = sale.items || [];
@@ -182,6 +217,8 @@ export default function ReceiptPDF({ sale, settings = {} }) {
             )}
           </View>
         )}
+
+        <ZraBlock sale={sale} qr={zraQr} />
 
         {sale.notes && (
           <View style={[styles.section, { marginTop: 10 }]}>

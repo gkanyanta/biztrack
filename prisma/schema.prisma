@@ -50,6 +50,8 @@ model Company {
   payslips           Payslip[]
   payslipLines       PayslipLine[]
   consultantTargets  ConsultantTarget[]
+  zraConfig          ZraConfig?
+  fiscalDocuments    FiscalDocument[]
 }
 
 model User {
@@ -76,6 +78,12 @@ model Product {
   category        String?
   // Manufacturer brand, for the Meta catalogue feed. Blank means the store-wide fallback applies.
   brand           String?
+  // ZRA Smart Invoice: the item classification code ZRA assigns this kind of goods, and a tax
+  // category when it differs from the company's default. Only read when Smart Invoice is on.
+  zraClassCode    String?
+  zraTaxCategory  String?
+  // When the item was registered on the company's VSDC; a sale cannot be reported before that.
+  zraRegisteredAt DateTime?
   costPrice       Decimal           @db.Decimal(10, 2)
   sellingPrice    Decimal           @db.Decimal(10, 2)
   originalPrice   Decimal?          @db.Decimal(10, 2)
@@ -170,6 +178,7 @@ model Sale {
   delivery        Delivery?
   riderExpenses   RiderExpense[]
   payAdjustments  PayAdjustment[]
+  fiscalDocuments FiscalDocument[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -882,4 +891,71 @@ model Delivery {
   @@index([dispatchedFromConsultantId])
   @@index([assignedById])
   @@index([courierRunId])
+}
+
+// ZRA Smart Invoice, per company. No row, or enabled false, and BizTrack never talks to ZRA for
+// that company. Only the platform superadmin edits this: it holds where BizTrack sends invoices,
+// and a company admin must not be able to point that somewhere else.
+model ZraConfig {
+  id                       String    @id @default(cuid())
+  companyId                String    @unique
+  company                  Company   @relation(fields: [companyId], references: [id])
+  enabled                  Boolean   @default(false)
+  // sandbox | production — shown on screen so nobody mistakes test invoices for real ones.
+  environment              String    @default("sandbox")
+  // The company's VSDC, e.g. https://vsdc.example.com/zravsdc. Its host must also be listed in
+  // the ZRA_ALLOWED_HOSTS environment variable.
+  vsdcUrl                  String?
+  tpin                     String?
+  branchId                 String    @default("000")
+  deviceSerial             String?
+  // A | C1 | C2 | C3 | D | E | TOT — what a product with no category of its own is taxed under.
+  defaultTaxCategory       String?
+  // Sales dated before this are history and are never sent.
+  startDate                DateTime?
+  qtyUnitCode              String    @default("U")
+  pkgUnitCode              String    @default("NT")
+  originCountry            String?
+  deliveryClassCode        String?
+  deliveryRegisteredAt     DateTime?
+  refundReasonCode         String?
+  initialisedAt            DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+}
+
+// One invoice, or one credit note, as reported to ZRA. The sale is the source of the figures;
+// this records what was sent and what ZRA gave back to print on the receipt.
+model FiscalDocument {
+  id            String    @id @default(cuid())
+  saleId        String
+  sale          Sale      @relation(fields: [saleId], references: [id])
+  // invoice | credit_note
+  kind          String
+  // pending (not sent yet, or the VSDC could not be reached) | failed (ZRA refused it, or
+  // something has to be fixed first) | issued
+  status        String    @default("pending")
+  invoiceNo     String
+  attempts      Int       @default(0)
+  lastError     String?
+  lastAttemptAt DateTime?
+  // Held while one request is sending it, so two cannot report the same invoice twice.
+  lockedUntil   DateTime?
+  request       Json?
+  issuedAt      DateTime?
+  rcptNo        Int?
+  sdcId         String?
+  mrcNo         String?
+  intrlData     String?
+  rcptSign      String?
+  receiptDate   String?
+  qrCodeUrl     String?
+  companyId     String
+  company       Company   @relation(fields: [companyId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([saleId, kind])
+  @@unique([companyId, invoiceNo])
+  @@index([companyId, status])
 }
