@@ -71,17 +71,22 @@ export const EXPENSE_CATEGORIES = [
 export const DEFAULT_ALLOCATION_TARGETS = {
   stock: 47,
   ads: 12,
+  staff: 0,
+  delivery: 0,
   otherOps: 3,
   ownerDraw: 12,
   taxReserve: 5,
   profit: 21,
 };
 
-// Categories that roll up into each money-split bucket
+// Categories that roll up into each money-split bucket (mirrors the server's money splits).
+// Delivery also takes the fare on each order, which is not an expense.
 export const BUCKET_CATEGORIES = {
   stock: ['Stock Purchase', 'Supplier Payments', 'Packaging'],
   ads: ['Facebook Ads', 'WhatsApp Business'],
-  otherOps: ['Shipping', 'Data/Internet', 'Transport', 'Storage', 'Other'],
+  staff: ['Salaries & Wages'],
+  delivery: ['Delivery Costs', 'Shipping'],
+  otherOps: ['Data/Internet', 'Transport', 'Storage', 'Other'],
   ownerDraw: ['Owner Draw'],
   taxReserve: ['Tax Reserve'],
 };
