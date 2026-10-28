@@ -5,11 +5,20 @@ const XLSX = require('xlsx');
 router.use(authenticate);
 router.use(requireAdmin);
 
+// Money splits: where a month's revenue went, bucket by bucket, against the owner's targets.
+// (mirrored in api/index.js)
+//
+// Expenses are bucketed by category. Two buckets also take money the rest of the system records
+// in its own way: staff pay is the Salaries & Wages that Payroll raises for every salary,
+// commission, allowance and bonus paid; delivery is the fare on each order (what the rider or
+// courier was paid, held as the order's shippingCost) plus the rider costs the company carries.
 // Category → bucket mapping (mirrors client's format.js BUCKET_CATEGORIES)
 const BUCKETS = {
   stock: ['Stock Purchase', 'Supplier Payments', 'Packaging'],
   ads: ['Facebook Ads', 'WhatsApp Business'],
-  otherOps: ['Shipping', 'Data/Internet', 'Transport', 'Storage', 'Other'],
+  staff: ['Salaries & Wages'],
+  delivery: ['Delivery Costs', 'Shipping'],
+  otherOps: ['Data/Internet', 'Transport', 'Storage', 'Other'],
   ownerDraw: ['Owner Draw'],
   taxReserve: ['Tax Reserve'],
 };
@@ -17,18 +26,24 @@ const CATEGORY_TO_BUCKET = {};
 for (const [bucket, cats] of Object.entries(BUCKETS)) {
   for (const c of cats) CATEGORY_TO_BUCKET[c] = bucket;
 }
-const DEFAULT_TARGETS = { stock: 47, ads: 12, otherOps: 3, ownerDraw: 12, taxReserve: 5, profit: 21 };
+// Staff pay and delivery came later; a company that set its targets before then has none for
+// them, which is shown as "no target yet" rather than as being over a target of nothing.
+const DEFAULT_TARGETS = { stock: 47, ads: 12, staff: 0, delivery: 0, otherOps: 3, ownerDraw: 12, taxReserve: 5, profit: 21 };
+const SPLIT_COSTS = ['ads', 'staff', 'delivery', 'otherOps', 'ownerDraw', 'taxReserve', 'uncategorized'];
+const r2 = (n) => Math.round(n * 100) / 100;
 
 // Money splits for a given month: how revenue was allocated vs targets
 router.get('/money-splits', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { month } = req.query; // YYYY-MM, defaults to current month
-    const now = new Date();
-    const [y, m] = (month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`).split('-').map(Number);
-    const start = new Date(Date.UTC(y, m - 1, 1));
-    const end = new Date(Date.UTC(y, m, 1));
+    const { month } = req.query; // YYYY-MM, defaults to the current month in Zambia
+    const lusakaNow = new Date(Date.now() + 2 * 3600 * 1000);
+    const fallback = `${lusakaNow.getUTCFullYear()}-${String(lusakaNow.getUTCMonth() + 1).padStart(2, '0')}`;
+    const [y, m] = (/^\d{4}-\d{2}$/.test(month || '') ? month : fallback).split('-').map(Number);
+    // Zambia is UTC+2 all year: the month starts at midnight there, 22:00 the evening before in UTC.
+    const start = new Date(Date.UTC(y, m - 1, 1) - 2 * 3600 * 1000);
+    const end = new Date(Date.UTC(y, m, 1) - 2 * 3600 * 1000);
 
     const [sales, expenses, settings] = await Promise.all([
       prisma.sale.findMany({
@@ -41,8 +56,10 @@ router.get('/money-splits', async (req, res) => {
 
     const revenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const cogs = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + parseFloat(i.costPrice) * i.qty, 0), 0);
+    const collected = sales.reduce((s, r) => s + Math.min(parseFloat(r.amountPaid), parseFloat(r.totalPrice)), 0);
+    const fares = sales.reduce((s, r) => s + parseFloat(r.shippingCost || 0), 0);
 
-    const actual = { stock: 0, ads: 0, otherOps: 0, ownerDraw: 0, taxReserve: 0, uncategorized: 0 };
+    const actual = { stock: 0, ads: 0, staff: 0, delivery: fares, otherOps: 0, ownerDraw: 0, taxReserve: 0, uncategorized: 0 };
     const byCategory = {};
     for (const e of expenses) {
       const amt = parseFloat(e.amount);
@@ -51,27 +68,23 @@ router.get('/money-splits', async (req, res) => {
       if (bucket) actual[bucket] += amt;
       else actual.uncategorized += amt;
     }
+    for (const k of Object.keys(actual)) actual[k] = r2(actual[k]);
 
     const targets = { ...DEFAULT_TARGETS };
+    const targetsSet = new Set();
     for (const s of settings) {
       const key = s.key.replace(/^alloc_/, '');
       const val = parseFloat(s.value);
-      if (!isNaN(val) && targets[key] !== undefined) targets[key] = val;
+      if (!isNaN(val) && targets[key] !== undefined) { targets[key] = val; targetsSet.add(key); }
     }
-
-    const targetAmounts = {
-      stock: revenue * targets.stock / 100,
-      ads: revenue * targets.ads / 100,
-      otherOps: revenue * targets.otherOps / 100,
-      ownerDraw: revenue * targets.ownerDraw / 100,
-      taxReserve: revenue * targets.taxReserve / 100,
-      profit: revenue * targets.profit / 100,
-    };
+    const targetAmounts = {};
+    for (const k of Object.keys(DEFAULT_TARGETS)) targetAmounts[k] = revenue * targets[k] / 100;
+    const noTarget = ['staff', 'delivery'].filter(k => !targetsSet.has(k) || !targets[k]);
 
     // Profit actual (left over after everything else accounted for)
-    const spentTotal = actual.stock + actual.ads + actual.otherOps + actual.ownerDraw + actual.taxReserve + actual.uncategorized;
+    const spentTotal = actual.stock + SPLIT_COSTS.reduce((s, k) => s + actual[k], 0);
     // Use COGS as stock "consumed" proxy (what was actually sold out of stock) for a more accurate profit view
-    const profitActual = revenue - cogs - actual.ads - actual.otherOps - actual.ownerDraw - actual.taxReserve - actual.uncategorized;
+    const profitActual = revenue - cogs - SPLIT_COSTS.reduce((s, k) => s + actual[k], 0);
 
     // Owner owed-back: if draws exceed target, the excess is treated as a loan from the business
     const ownerOwedBack = Math.max(0, actual.ownerDraw - targetAmounts.ownerDraw);
@@ -79,10 +92,14 @@ router.get('/money-splits', async (req, res) => {
     res.json({
       month: `${y}-${String(m).padStart(2, '0')}`,
       revenue,
+      collected: r2(collected),
+      uncollected: r2(revenue - collected),
       cogs,
       targets,
       targetAmounts,
+      noTarget,
       actual,
+      deliveryBreakdown: { fares: r2(fares), carried: r2(actual.delivery - fares) },
       byCategory,
       profitActual,
       ownerOwedBack,

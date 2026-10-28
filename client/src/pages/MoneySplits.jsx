@@ -8,7 +8,9 @@ import { FiAlertTriangle, FiSettings, FiX, FiTrendingUp, FiTrendingDown } from '
 const BUCKETS = [
   { key: 'stock', label: 'Stock (COGS)', bar: 'bg-blue-500', overIsBad: false, note: 'Money sunk into inventory' },
   { key: 'ads', label: 'Ads & Marketing', bar: 'bg-purple-500', overIsBad: false, note: 'Facebook, WhatsApp ads' },
-  { key: 'otherOps', label: 'Other Operations', bar: 'bg-gray-500', overIsBad: true, note: 'Shipping, data, transport, misc' },
+  { key: 'staff', label: 'Staff Pay', bar: 'bg-teal-500', overIsBad: true, note: 'Salaries, commission, allowances and bonuses paid through Payroll' },
+  { key: 'delivery', label: 'Delivery', bar: 'bg-orange-500', overIsBad: true, note: 'Rider and courier fares on orders, and rider costs the business carries' },
+  { key: 'otherOps', label: 'Other Operations', bar: 'bg-gray-500', overIsBad: true, note: 'Data, transport, storage, misc' },
   { key: 'ownerDraw', label: 'Owner Draw (You)', bar: 'bg-amber-500', overIsBad: true, note: 'Personal withdrawals' },
   { key: 'taxReserve', label: 'Tax Reserve', bar: 'bg-indigo-500', overIsBad: false, note: 'Set aside for compliance' },
   { key: 'profit', label: 'Profit / Growth Reserve', bar: 'bg-green-500', overIsBad: false, isProfit: true, note: 'Left over — keep for growth' },
@@ -78,6 +80,7 @@ export default function MoneySplits() {
   if (loading || !data) return <LoadingSpinner />;
 
   const { revenue, cogs, targets, targetAmounts, actual, profitActual, ownerOwedBack } = data;
+  const noTarget = data.noTarget || [];
 
   const valueFor = (b) => {
     if (b.isProfit) return profitActual;
@@ -110,6 +113,9 @@ export default function MoneySplits() {
           <div>
             <p className="text-xs text-blue-100">Confirmed revenue — {monthLabel(data.month)}</p>
             <p className="text-3xl font-bold mt-1">{formatMoney(revenue)}</p>
+            {data.uncollected > 0 && (
+              <p className="text-xs text-blue-100 mt-0.5">{formatMoney(data.collected)} collected · {formatMoney(data.uncollected)} still to collect</p>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs text-blue-100">Net profit so far</p>
@@ -143,13 +149,14 @@ export default function MoneySplits() {
           const targetPct = targets[b.key] || 0;
           const actualPct = revenue > 0 ? (actualAmt / revenue) * 100 : 0;
           const pctOfTarget = targetAmt > 0 ? Math.min(200, (actualAmt / targetAmt) * 100) : 0;
-          const over = actualAmt > targetAmt;
+          const unset = noTarget.includes(b.key);
+          const over = !unset && actualAmt > targetAmt;
           const barColor = b.isProfit
             ? (actualAmt >= targetAmt ? 'bg-green-500' : 'bg-amber-500')
             : b.overIsBad && over
               ? 'bg-red-500'
               : over ? 'bg-blue-400' : b.bar;
-          const status = b.isProfit
+          const status = unset ? 'No target yet' : b.isProfit
             ? (actualAmt >= targetAmt ? 'On track' : 'Below target')
             : over
               ? (b.overIsBad ? 'Over budget' : 'Above plan')
@@ -163,23 +170,26 @@ export default function MoneySplits() {
                   <h4 className="font-semibold text-gray-800 text-sm">{b.label}</h4>
                   <p className="text-xs text-gray-400">{b.note}</p>
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${over && b.overIsBad ? 'bg-red-100 text-red-700' : b.isProfit && actualAmt < targetAmt ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${unset ? 'bg-gray-100 text-gray-600' : over && b.overIsBad ? 'bg-red-100 text-red-700' : b.isProfit && actualAmt < targetAmt ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
                   {status}
                 </span>
               </div>
               <div className="flex items-baseline justify-between">
                 <span className="text-lg font-bold text-gray-800">{formatMoney(actualAmt)}</span>
-                <span className="text-xs text-gray-500">of {formatMoney(targetAmt)}</span>
+                <span className="text-xs text-gray-500">{unset ? `${actualPct.toFixed(1)}% of revenue` : `of ${formatMoney(targetAmt)}`}</span>
               </div>
               <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className={`h-full ${barColor} transition-all`} style={{ width: `${Math.min(100, pctOfTarget)}%` }} />
+                <div className={`h-full ${barColor} transition-all`} style={{ width: `${unset ? Math.min(100, actualPct) : Math.min(100, pctOfTarget)}%` }} />
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500">Target {targetPct}% · Actual {actualPct.toFixed(1)}%</span>
+                <span className="text-gray-500">{unset ? <button onClick={openTargets} className="text-blue-600 hover:underline">Set a target</button> : `Target ${targetPct}% · Actual ${actualPct.toFixed(1)}%`}</span>
                 <span className={`flex items-center gap-0.5 ${over && b.overIsBad ? 'text-red-600' : 'text-gray-500'}`}>
-                  <StatusIcon size={12} /> {pctOfTarget.toFixed(0)}%
+                  {!unset && <><StatusIcon size={12} /> {pctOfTarget.toFixed(0)}%</>}
                 </span>
               </div>
+              {b.key === 'delivery' && data.deliveryBreakdown && actualAmt > 0 && (
+                <p className="text-xs text-gray-400">{formatMoney(data.deliveryBreakdown.fares)} fares on orders · {formatMoney(data.deliveryBreakdown.carried)} other delivery costs</p>
+              )}
             </div>
           );
         })}
