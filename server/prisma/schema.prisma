@@ -50,6 +50,7 @@ model Company {
   payslips           Payslip[]
   payslipLines       PayslipLine[]
   consultantTargets  ConsultantTarget[]
+  advanceRequests    AdvanceRequest[]
 }
 
 model User {
@@ -401,6 +402,7 @@ model Consultant {
   payAdjustments       PayAdjustment[]
   payslips             Payslip[]
   targets              ConsultantTarget[]
+  advanceRequests      AdvanceRequest[]
 }
 
 model CommissionPayment {
@@ -434,27 +436,28 @@ model CommissionPayment {
 // Deliberately NOT the Consultant table: a Consultant row is selectable as the source of a
 // sale and as a stock location, and an inventory clerk or a rider must never appear there.
 model Staff {
-  id               String          @id @default(cuid())
+  id               String           @id @default(cuid())
   name             String
   phone            String?
   jobTitle         String?
-  monthlySalary    Decimal         @default(0) @db.Decimal(10, 2)
+  monthlySalary    Decimal          @default(0) @db.Decimal(10, 2)
   // Communication allowance, paid monthly and capped the way a consultant's is.
-  monthlyAllowance Decimal         @default(100) @db.Decimal(10, 2)
-  isActive         Boolean         @default(true)
+  monthlyAllowance Decimal          @default(100) @db.Decimal(10, 2)
+  isActive         Boolean          @default(true)
   startDate        DateTime?
   notes            String?
   // The login they use, and the rider profile if this person also makes deliveries.
-  userId           String?         @unique
-  riderId          String?         @unique
+  userId           String?          @unique
+  riderId          String?          @unique
   companyId        String
-  company          Company         @relation(fields: [companyId], references: [id])
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  company          Company          @relation(fields: [companyId], references: [id])
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
   payments         StaffPayment[]
   loans            Loan[]
   payAdjustments   PayAdjustment[]
   payslips         Payslip[]
+  advanceRequests  AdvanceRequest[]
 
   @@index([companyId])
 }
@@ -512,6 +515,7 @@ model Loan {
   createdAt        DateTime        @default(now())
   adjustments      PayAdjustment[]
   lines            PayslipLine[]
+  advanceRequest   AdvanceRequest?
 
   @@index([companyId])
   @@index([consultantId])
@@ -882,4 +886,39 @@ model Delivery {
   @@index([dispatchedFromConsultantId])
   @@index([assignedById])
   @@index([courierRunId])
+}
+
+// A salary advance someone asks for themselves, with how many pay days it is to come back over.
+// Paying it out turns it into a Loan, which the pay run already deducts; the first instalment
+// comes from the first pay day after the money was handed over, never one before.
+model AdvanceRequest {
+  id                  String      @id @default(cuid())
+  consultantId        String?
+  consultant          Consultant? @relation(fields: [consultantId], references: [id])
+  staffId             String?
+  staff               Staff?      @relation(fields: [staffId], references: [id])
+  // The login that asked, which is the person themselves.
+  requestedById       String
+  amount              Decimal     @db.Decimal(10, 2)
+  instalments         Int
+  reason              String
+  // pending | approved | declined | withdrawn | paid
+  status              String      @default("pending")
+  // What the admin agreed to, if it differs from what was asked.
+  approvedAmount      Decimal?    @db.Decimal(10, 2)
+  approvedInstalments Int?
+  decisionNote        String?
+  decidedAt           DateTime?
+  paidAt              DateTime?
+  paymentMethod       String?
+  loanId              String?     @unique
+  loan                Loan?       @relation(fields: [loanId], references: [id])
+  companyId           String
+  company             Company     @relation(fields: [companyId], references: [id])
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@index([companyId, status])
+  @@index([consultantId])
+  @@index([staffId])
 }

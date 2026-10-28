@@ -43,6 +43,8 @@ const RIDER_ALLOWED_PATHS = [
   /^\/api\/v1\/deliveries\/[^/]+\/status$/,
   // Recording a courier run he took as gone out; the handler refuses any run that is not his.
   /^\/api\/v1\/deliveries\/runs\/[^/]+\/dispatch$/,
+  // Asking for a salary advance and following it; the handlers scope it to his own pay profile.
+  /^\/api\/v1\/advances\/mine(\/|$)/,
 ];
 
 function enforceRiderScope(req, res, next) {

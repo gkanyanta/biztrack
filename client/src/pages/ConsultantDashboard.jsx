@@ -5,7 +5,7 @@ import { getConsultantDashboard } from '../services/api';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge, PaymentBadge } from '../components/StatusBadge';
-import { FiShoppingCart, FiDollarSign, FiTrendingUp, FiPlus, FiCreditCard } from 'react-icons/fi';
+import { FiShoppingCart, FiDollarSign, FiTrendingUp, FiPlus, FiCreditCard, FiInbox } from 'react-icons/fi';
 
 export default function ConsultantDashboard() {
   const [data, setData] = useState(null);
@@ -48,9 +48,14 @@ export default function ConsultantDashboard() {
               <p className="text-blue-200 text-xs mt-1">Current cycle: {cycleFrom} – {cycleTo} · Pay date: {cyclePayDate}</p>
             )}
           </div>
-          <Link to="/sales" className="flex items-center gap-1.5 px-4 py-2 bg-white text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50">
-            <FiPlus size={16} /> Record Sale
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/sales" className="flex items-center gap-1.5 px-4 py-2 bg-white text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50">
+              <FiPlus size={16} /> Record Sale
+            </Link>
+            <Link to="/my-advances" className="flex items-center gap-1.5 px-4 py-2 bg-white/15 text-white border border-white/40 rounded-lg text-sm font-medium hover:bg-white/25">
+              <FiInbox size={16} /> Ask for an advance
+            </Link>
+          </div>
         </div>
       </div>
 
