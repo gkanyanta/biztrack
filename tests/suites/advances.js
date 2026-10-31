@@ -43,6 +43,9 @@ module.exports = {
     eq("another company's admin sees none of it", (await otherboss('GET', '/advances')).body, []);
     eq("…and cannot approve it", (await otherboss('POST', `/advances/${asked.body.id}/approve`)).status, 404);
     eq('the admin sees every request', (await boss('GET', '/advances')).body.length, 3);
+    eq('the office is told how many are waiting on it', (await boss('GET', '/advances/summary')).body, { pending: 3, approved: 0 });
+    eq('staff cannot read that count', (await annie('GET', '/advances/summary')).status, 403);
+    eq("another company's admin is told nothing is waiting", (await otherboss('GET', '/advances/summary')).body, { pending: 0, approved: 0 });
 
     section('approving on different terms');
     const approved = await boss('POST', `/advances/${asked.body.id}/approve`, { amount: 800, instalments: 4, note: 'K800 is what we can do' });
@@ -92,5 +95,16 @@ module.exports = {
     eq('she can withdraw her own request while it waits', (await bea('POST', `/advances/mine/${changedMind.body.id}/withdraw`)).status, 200);
     eq('and then ask again', (await bea('POST', '/advances/mine', { amount: 100, instalments: 1, reason: 'Airtime' })).status, 201);
     eq('a paid advance cannot be declined', (await boss('POST', `/advances/${asked.body.id}/decline`)).status, 400);
+
+    section('linking a staff record to its login');
+    eq("another company's login cannot be linked", (await boss('POST', '/payroll/staff', { name: 'Stranger', userId: seed.otherClerkUserId })).status, 400);
+    eq('nor an admin login', (await boss('POST', '/payroll/staff', { name: 'Boss', userId: seed.bossUserId })).status, 400);
+    eq('nor a consultant login, which has its own pay profile', (await boss('POST', '/payroll/staff', { name: 'Annie', userId: seed.annieUserId })).status, 400);
+    const sharon = await boss('POST', '/payroll/staff', { name: 'Sharon', monthlySalary: 2000 });
+    eq('a linked login is refused on edit too', (await boss('PUT', `/payroll/staff/${sharon.body.id}`, { userId: seed.otherClerkUserId })).status, 400);
+    eq('her own login can be linked', (await boss('PUT', `/payroll/staff/${sharon.body.id}`, { userId: seed.looseUserId })).status, 200);
+    const sharonAsked = await loose('POST', '/advances/mine', { amount: 400, instalments: 2, reason: 'Clinic' });
+    eq('once linked, she can ask for an advance', [sharonAsked.status, sharonAsked.body.name], [201, 'Sharon']);
+    eq('and the office sees it waiting', (await boss('GET', '/advances/summary')).body.pending, 2);
   },
 };

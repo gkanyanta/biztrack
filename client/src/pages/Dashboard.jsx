@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getDashboard, getDeliveryPerformance } from '../services/api';
+import AdvanceRequestsAlert from '../components/AdvanceRequestsAlert';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import DateRangePicker from '../components/DateRangePicker';
@@ -66,6 +67,8 @@ export default function Dashboard() {
         <DateRangePicker from={range.from} to={range.to} onChange={setRange} />
         {loading && <span className="text-xs text-gray-400">Updating...</span>}
       </div>
+
+      <AdvanceRequestsAlert />
 
       {/* Growth Tracker - Top Priority */}
       {g && (() => {

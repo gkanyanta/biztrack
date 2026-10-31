@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import AdvanceShortcut from '../components/AdvanceShortcut';
 import { getExpenses, createExpense, updateExpense, deleteExpense, getMoneySplits } from '../services/api';
 import { formatMoney, formatDate, EXPENSE_CATEGORIES, PAYMENT_METHODS } from '../utils/format';
 import Modal from '../components/Modal';
@@ -123,6 +124,7 @@ export default function Expenses() {
 
   return (
     <div className="space-y-4 pb-20 lg:pb-0">
+      {user?.role === 'purchasing' && <AdvanceShortcut />}
       <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
         <div className="flex gap-2 items-center flex-wrap">
           <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}

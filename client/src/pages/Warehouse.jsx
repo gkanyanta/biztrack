@@ -6,6 +6,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { formatDate } from '../utils/format';
 import CounterSale from '../components/CounterSale';
 import OrderTracker from '../components/OrderTracker';
+import AdvanceShortcut from '../components/AdvanceShortcut';
 
 // Searchable product picker — filters by name/SKU as you type instead of scrolling a long <select>.
 function ProductSearchPicker({ products, value, onChange, placeholder = 'Search product by name or SKU...' }) {
@@ -160,6 +161,8 @@ export default function Warehouse() {
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       <h1 className="text-2xl font-bold text-gray-800">Warehouse</h1>
+
+      <AdvanceShortcut />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-5">

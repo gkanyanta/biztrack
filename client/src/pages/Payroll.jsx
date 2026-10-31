@@ -4,7 +4,7 @@ import {
   createPayAdjustment, deletePayAdjustment, releasePayAdjustment,
   getLoans, createLoan, updateLoan, deleteLoan, setLoanInstalment, setConsultantTarget, deleteConsultantTarget,
   getStaffMembers, createStaffMember, updateStaffMember, deleteStaffMember,
-  getStaffPayments, payStaffMember, deleteStaffPayment, getRiders,
+  getStaffPayments, payStaffMember, deleteStaffPayment, getRiders, getStaff,
   getAdvanceRequests, approveAdvance, declineAdvance, payAdvance,
 } from '../services/api';
 import { ADVANCE_STATUS } from '../utils/advances';
@@ -84,7 +84,8 @@ export default function Payroll() {
   const [showStaffForm, setShowStaffForm] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
   const [riders, setRiders] = useState([]);
-  const emptyStaff = { name: '', phone: '', jobTitle: '', monthlySalary: '', monthlyAllowance: '100', startDate: '', riderId: '' };
+  const [logins, setLogins] = useState([]);
+  const emptyStaff = { name: '', phone: '', jobTitle: '', monthlySalary: '', monthlyAllowance: '100', startDate: '', riderId: '', userId: '' };
   const [staffForm, setStaffForm] = useState(emptyStaff);
 
   const [directFor, setDirectFor] = useState(null);
@@ -117,6 +118,14 @@ export default function Payroll() {
   // Linking a staff record to a rider profile is what lets the delivery finances read the wage
   // actually being paid rather than the fallback figure in Settings.
   useEffect(() => { getRiders().then(res => setRiders(res.data)).catch(() => setRiders([])); }, []);
+  // Linking a staff record to the person's own login is what lets them ask for an advance.
+  useEffect(() => { getStaff().then(res => setLogins(res.data)).catch(() => setLogins([])); }, []);
+  // Arriving from the dashboard alert, go straight to the requests once the page has drawn.
+  useEffect(() => {
+    if (!loading && window.location.hash === '#advance-requests') {
+      document.getElementById('advance-requests')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [loading]);
 
   // Every write goes through here so no button can fire twice while its request is in flight.
   const act = async (fn, done) => {
@@ -140,7 +149,7 @@ export default function Payroll() {
         name: s.name, phone: s.phone || '', jobTitle: s.jobTitle || '',
         monthlySalary: String(s.monthlySalary ?? ''), monthlyAllowance: String(s.monthlyAllowance ?? ''),
         startDate: s.startDate ? new Date(s.startDate).toISOString().slice(0, 10) : '',
-        riderId: s.riderId || '',
+        riderId: s.riderId || '', userId: s.userId || '',
       });
     } else {
       setEditingStaff(null);
@@ -526,7 +535,7 @@ export default function Payroll() {
       </div>
 
       {/* ---- SALARY ADVANCE REQUESTS ---- */}
-      <div>
+      <div id="advance-requests" className="scroll-mt-4">
         <h2 className="text-sm font-semibold text-gray-700 mb-2">
           Advance requests {openAdvances.length > 0 && <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{openAdvances.length} open</span>}
         </h2>
@@ -643,6 +652,11 @@ export default function Payroll() {
                     <td className="p-3">
                       <div className="font-medium text-gray-800">{s.name}</div>
                       <div className="text-xs text-gray-400">{s.jobTitle || 'Staff'}{!s.isActive && ' · inactive'}</div>
+                      {s.isActive && !s.userId && !s.riderId && (
+                        <button onClick={() => openStaffForm(s)} className="text-xs text-amber-600 hover:underline">
+                          No login linked, so they can't ask for an advance
+                        </button>
+                      )}
                     </td>
                     <td className="p-3 text-right">{formatMoney(s.monthlySalary)}</td>
                     <td className="p-3 text-right hidden sm:table-cell text-gray-500">{formatMoney(s.monthlyAllowance)}</td>
@@ -698,6 +712,17 @@ export default function Payroll() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
               <p className="text-xs text-gray-400 mt-1">Capped per cycle, prorated if they joined mid-cycle.</p>
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Their login</label>
+            <select value={staffForm.userId} onChange={e => setStaffForm({ ...staffForm, userId: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">No login</option>
+              {logins.map(u => <option key={u.id} value={u.id}>{u.name} ({u.username}, {u.role})</option>)}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              Lets them ask for a salary advance from their own login. Riders are linked through their rider profile below.
+            </p>
           </div>
           {riders.length > 0 && (
             <div>

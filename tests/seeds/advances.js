@@ -31,6 +31,10 @@ module.exports = async function seed(prisma) {
 
   const other = await prisma.company.create({ data: { name: 'Other Co', slug: 'other-co' } });
   await user('otherboss', 'admin', other.id);
+  const otherClerk = await user('otherclerk', 'inventory', other.id);
 
-  return { companyId: company.id, annieId: annie.id, beaId: bea.id, musaId: musa.id };
+  const looseUser = await prisma.user.findFirst({ where: { username: 'loose' } });
+  const boss = await prisma.user.findFirst({ where: { username: 'boss' } });
+  return { companyId: company.id, annieId: annie.id, beaId: bea.id, musaId: musa.id,
+           looseUserId: looseUser.id, bossUserId: boss.id, annieUserId: annieUser.id, otherClerkUserId: otherClerk.id };
 };
