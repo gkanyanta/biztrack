@@ -134,6 +134,23 @@ router.get('/staff', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// A staff record may only point at a login or rider profile of the same company: the link is
+// what decides whose pay an advance request comes out of. Admin and consultant logins have
+// their own pay paths, so they are never linked here.
+const PAYROLL_LINKABLE_ROLES = ['inventory', 'purchasing', 'rider'];
+async function payroll_linkProblem(prisma, companyId, userId, riderId) {
+  if (userId) {
+    const u = await prisma.user.findFirst({ where: { id: userId, companyId }, select: { role: true } });
+    if (!u) return 'That login was not found';
+    if (!PAYROLL_LINKABLE_ROLES.includes(u.role)) return 'Only an inventory, purchasing or rider login can be linked to a staff record';
+  }
+  if (riderId) {
+    const r = await prisma.rider.findFirst({ where: { id: riderId, companyId }, select: { id: true } });
+    if (!r) return 'That rider was not found';
+  }
+  return null;
+}
+
 router.post('/staff', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
@@ -143,6 +160,8 @@ router.post('/staff', async (req, res) => {
     const allowance = monthlyAllowance === undefined || monthlyAllowance === '' ? 100 : parseFloat(monthlyAllowance);
     if (!Number.isFinite(salary) || salary < 0) return res.status(400).json({ error: 'Monthly salary must be zero or more' });
     if (!Number.isFinite(allowance) || allowance < 0) return res.status(400).json({ error: 'Monthly allowance must be zero or more' });
+    const linkProblem = await payroll_linkProblem(prisma, req.user.companyId, userId, riderId);
+    if (linkProblem) return res.status(400).json({ error: linkProblem });
 
     const staff = await prisma.staff.create({
       data: {
@@ -186,6 +205,8 @@ router.put('/staff/:id', async (req, res) => {
       if (!Number.isFinite(v) || v < 0) return res.status(400).json({ error: 'Monthly allowance must be zero or more' });
       data.monthlyAllowance = v;
     }
+    const linkProblem = await payroll_linkProblem(prisma, req.user.companyId, data.userId, data.riderId);
+    if (linkProblem) return res.status(400).json({ error: linkProblem });
     res.json(await prisma.staff.update({ where: { id: existing.id }, data }));
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'That login or rider is already linked to another staff record' });

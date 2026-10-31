@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import { FiPhone, FiMapPin, FiPackage, FiCheck, FiX, FiTruck, FiDollarSign, FiNavigation, FiChevronLeft, FiChevronRight, FiCalendar, FiEdit2, FiLock } from 'react-icons/fi';
 import RiderExpenses from '../components/RiderExpenses';
 import RiderDayReport from '../components/RiderDayReport';
+import AdvanceShortcut from '../components/AdvanceShortcut';
 
 // Three screens rather than a nav: the runs he is on, the money passing through his hands, and
 // his account of the day. Still one page, still big targets.
@@ -154,6 +155,8 @@ export default function RiderDashboard() {
           ].filter(Boolean).join(' · ') || 'Nothing outstanding — well done'}
         </p>
       </div>
+
+      <AdvanceShortcut />
 
       <div className="grid grid-cols-3 gap-2">
         {RIDER_TABS.map(t => (

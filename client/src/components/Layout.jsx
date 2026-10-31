@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { getAdvanceSummary } from '../services/api';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import useDarkMode from '../hooks/useDarkMode';
@@ -66,6 +67,12 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dark, toggleDark] = useDarkMode();
   const { count: newOrderCount, acknowledge: acknowledgeNewOrders } = useNewOrderNotifications(user?.role === 'admin');
+  // Advance requests waiting on the office, shown against Payroll and refreshed as the admin moves around.
+  const [advancesWaiting, setAdvancesWaiting] = useState(0);
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    getAdvanceSummary().then(res => setAdvancesWaiting(res.data.pending + res.data.approved)).catch(() => {});
+  }, [user?.role, location.pathname]);
   const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'rider' ? riderNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
 
   return (
@@ -106,6 +113,12 @@ export default function Layout() {
               >
                 <item.icon size={18} />
                 {item.label}
+                {item.path === '/payroll' && advancesWaiting > 0 && (
+                  <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold min-w-[1.25rem] h-5 px-1 rounded-full flex items-center justify-center"
+                    title="Advance requests waiting">
+                    {advancesWaiting > 9 ? '9+' : advancesWaiting}
+                  </span>
+                )}
               </Link>
             );
           })}

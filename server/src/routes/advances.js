@@ -194,6 +194,18 @@ router.post('/mine/:id/withdraw', async (req, res) => {
 
 // ---- the office ----
 
+// How many requests are waiting on the office, for the dashboard alert and the menu badge.
+router.get('/summary', requireAdmin, async (req, res) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const groups = await prisma.advanceRequest.groupBy({
+      by: ['status'], where: { companyId: req.user.companyId, status: { in: ['pending', 'approved'] } }, _count: { _all: true },
+    });
+    const count = (st) => groups.find(g => g.status === st)?._count._all || 0;
+    res.json({ pending: count('pending'), approved: count('approved') });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 router.get('/', requireAdmin, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
