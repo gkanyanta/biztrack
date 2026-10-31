@@ -12,7 +12,8 @@ const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerNa
 
 function calcSaleProfit(s) {
   const cogs = (s.items || []).reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
-  return parseFloat(s.totalPrice) - cogs - parseFloat(s.shippingCost) + parseFloat(s.shippingCharge) - parseFloat(s.discount);
+  // totalPrice already has the delivery charge added and the discount taken off.
+  return parseFloat(s.totalPrice) - cogs - parseFloat(s.shippingCost);
 }
 
 // ---- Stock source helpers ----
@@ -234,11 +235,11 @@ router.get('/', async (req, res) => {
       return res.json(sales);
     }
 
-    // Profit isn't a DB column (it's derived from item COGS + shipping/discount), so it can't be
+    // Profit isn't a DB column (it's the order total less item COGS and the rider's fare), so it can't be
     // pushed into orderBy. Compute it for the whole filtered set once, then slice the requested page.
     if (sortBy === 'profit') {
       const all = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
-      all.sort((a, b) => (sortDir === 'asc' ? 1 : -1) * (calcSaleProfit(b) - calcSaleProfit(a)));
+      all.sort((a, b) => (sortDir === 'asc' ? -1 : 1) * (calcSaleProfit(b) - calcSaleProfit(a)));
       const page = all.slice(pagination.skip, pagination.skip + pagination.take);
       return res.json(paginatedResponse(page, all.length, pagination));
     }

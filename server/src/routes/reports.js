@@ -122,7 +122,9 @@ router.get('/pnl', async (req, res) => {
     const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const shippingCharge = sales.reduce((s, r) => s + parseFloat(r.shippingCharge), 0);
     const discount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
-    const grossProfit = revenue - cogs - shippingCost + shippingCharge - discount;
+    // Revenue is each order's total, which already has the delivery charge added and the discount
+    // taken off, so only the fare paid to the rider or courier comes off here.
+    const grossProfit = revenue - cogs - shippingCost;
     const expensesByCategory = {}; let totalExpenses = 0;
     expenses.forEach(e => { const amt = parseFloat(e.amount); if (!expensesByCategory[e.category]) expensesByCategory[e.category] = 0; expensesByCategory[e.category] += amt; totalExpenses += amt; });
     const netProfit = grossProfit - totalExpenses;
@@ -144,7 +146,7 @@ router.get('/sales', async (req, res) => {
     const summary = {
       totalSales: sales.length,
       totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0),
-      totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0)
+      totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost), 0)
     };
     res.json({ sales, summary });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }

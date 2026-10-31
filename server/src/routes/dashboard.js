@@ -170,9 +170,8 @@ router.get('/', requireAdmin, async (req, res) => {
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
     const totalCOGS = sales.reduce((sum, s) => sum + saleCOGS(s), 0);
     const totalShippingCost = sales.reduce((sum, s) => sum + parseFloat(s.shippingCost), 0);
-    const totalShippingCharge = sales.reduce((sum, s) => sum + parseFloat(s.shippingCharge), 0);
-    const totalDiscount = sales.reduce((sum, s) => sum + parseFloat(s.discount), 0);
-    const grossProfit = totalRevenue - totalCOGS - totalShippingCost + totalShippingCharge - totalDiscount;
+    // totalPrice already carries the delivery charge and the discount; only the fare comes off.
+    const grossProfit = totalRevenue - totalCOGS - totalShippingCost;
 
     // 'Stock Purchase' expenses are cash-outflow tracking only — COGS above already
     // accounts for cost of goods at time of sale, so including both would double-count.
@@ -188,9 +187,9 @@ router.get('/', requireAdmin, async (req, res) => {
     const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
-    sales.forEach(s => { const month = s.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[month].revenue += parseFloat(s.totalPrice); monthlyData[month].cogs += saleCOGS(s); monthlyData[month].orders += 1; });
-    expenses.forEach(e => { const month = e.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[month].expenses += parseFloat(e.amount); });
-    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, data]) => ({ month, revenue: data.revenue, profit: data.revenue - data.cogs - data.expenses, expenses: data.expenses, orders: data.orders }));
+    sales.forEach(s => { const month = s.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[month].revenue += parseFloat(s.totalPrice); monthlyData[month].cogs += saleCOGS(s); monthlyData[month].fares += parseFloat(s.shippingCost); monthlyData[month].orders += 1; });
+    expenses.forEach(e => { const month = e.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[month].expenses += parseFloat(e.amount); });
+    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, data]) => ({ month, revenue: data.revenue, profit: data.revenue - data.cogs - data.fares - data.expenses, expenses: data.expenses, orders: data.orders }));
 
     const expenseByCategory = {};
     expenses.forEach(e => { if (!expenseByCategory[e.category]) expenseByCategory[e.category] = 0; expenseByCategory[e.category] += parseFloat(e.amount); });

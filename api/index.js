@@ -842,7 +842,8 @@ const SALE_INCLUDE = { items: { include: { product: true, stockSourceConsultant:
 const SALE_SORT_FIELDS = { orderNumber: 'orderNumber', customerName: 'customerName', totalPrice: 'totalPrice', status: 'status', paymentStatus: 'paymentStatus', date: 'date' };
 function calcSaleProfit(s) {
   const cogs = (s.items || []).reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
-  return parseFloat(s.totalPrice) - cogs - parseFloat(s.shippingCost) + parseFloat(s.shippingCharge) - parseFloat(s.discount);
+  // totalPrice already has the delivery charge added and the discount taken off.
+  return parseFloat(s.totalPrice) - cogs - parseFloat(s.shippingCost);
 }
 
 app.get('/api/v1/sales', authenticate, async (req, res) => {
@@ -868,7 +869,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
 
     if (sortBy === 'profit') {
       const all = await prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy: { createdAt: 'desc' } });
-      all.sort((a, b) => (sortDir === 'asc' ? 1 : -1) * (calcSaleProfit(b) - calcSaleProfit(a)));
+      all.sort((a, b) => (sortDir === 'asc' ? -1 : 1) * (calcSaleProfit(b) - calcSaleProfit(a)));
       const page = all.slice(pagination.skip, pagination.skip + pagination.take);
       return res.json(paginatedResponse(page, all.length, pagination));
     }
@@ -1828,9 +1829,8 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const totalRevenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const totalCOGS = sales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
     const totalShippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
-    const totalShippingCharge = sales.reduce((s, r) => s + parseFloat(r.shippingCharge), 0);
-    const totalDiscount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
-    const grossProfit = totalRevenue - totalCOGS - totalShippingCost + totalShippingCharge - totalDiscount;
+    // totalPrice already carries the delivery charge and the discount; only the fare comes off.
+    const grossProfit = totalRevenue - totalCOGS - totalShippingCost;
 
     // 'Stock Purchase' expenses are cash-outflow tracking only — COGS above already
     // accounts for cost of goods at time of sale, so including both would double-count.
@@ -1845,9 +1845,9 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
-    sales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); monthlyData[m].orders += 1; });
-    expenses.forEach(e => { const m = e.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, expenses: 0, orders: 0 }; monthlyData[m].expenses += parseFloat(e.amount); });
-    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({ month, revenue: d.revenue, profit: d.revenue - d.cogs - d.expenses, expenses: d.expenses, orders: d.orders }));
+    sales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); monthlyData[m].fares += parseFloat(s.shippingCost); monthlyData[m].orders += 1; });
+    expenses.forEach(e => { const m = e.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[m].expenses += parseFloat(e.amount); });
+    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({ month, revenue: d.revenue, profit: d.revenue - d.cogs - d.fares - d.expenses, expenses: d.expenses, orders: d.orders }));
 
     const expenseByCategory = {};
     expenses.forEach(e => { if (!expenseByCategory[e.category]) expenseByCategory[e.category] = 0; expenseByCategory[e.category] += parseFloat(e.amount); });
@@ -2086,7 +2086,9 @@ app.get('/api/v1/reports/pnl', authenticate, requireAdmin, async (req, res) => {
     const shippingCost = sales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const shippingCharge = sales.reduce((s, r) => s + parseFloat(r.shippingCharge), 0);
     const discount = sales.reduce((s, r) => s + parseFloat(r.discount), 0);
-    const grossProfit = revenue - cogs - shippingCost + shippingCharge - discount;
+    // Revenue is each order's total, which already has the delivery charge added and the discount
+    // taken off, so only the fare paid to the rider or courier comes off here.
+    const grossProfit = revenue - cogs - shippingCost;
     const expensesByCategory = {}; let totalExpenses = 0;
     expenses.forEach(e => { const a = parseFloat(e.amount); if (!expensesByCategory[e.category]) expensesByCategory[e.category] = 0; expensesByCategory[e.category] += a; totalExpenses += a; });
     const netProfit = grossProfit - totalExpenses;
@@ -2102,7 +2104,7 @@ app.get('/api/v1/reports/sales', authenticate, requireAdmin, async (req, res) =>
     if (status) where.status = status; if (productId) where.items = { some: { productId } }; if (customerId) where.customerId = customerId;
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     const sales = await prisma.sale.findMany({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true }, orderBy: { date: 'desc' } });
-    const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost) + parseFloat(r.shippingCharge) - parseFloat(r.discount), 0) };
+    const summary = { totalSales: sales.length, totalRevenue: sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0), totalProfit: sales.reduce((s, r) => s + parseFloat(r.totalPrice) - r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0) - parseFloat(r.shippingCost), 0) };
     res.json({ sales, summary });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
