@@ -276,10 +276,16 @@ export default function Reports() {
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Profit & Loss Statement</h3>
           <div className="space-y-2">
             <Row label="Revenue" value={data.revenue} bold />
+            {(data.shippingCharge > 0 || data.discount > 0) && (
+              <p className="text-xs text-gray-400 -mt-1 pb-1">
+                Order totals, so already {[
+                  data.shippingCharge > 0 && `including ${formatMoney(data.shippingCharge)} delivery charged`,
+                  data.discount > 0 && `after ${formatMoney(data.discount)} of discounts`,
+                ].filter(Boolean).join(' and ')}
+              </p>
+            )}
             <Row label="Cost of Goods Sold" value={-data.cogs} negative />
-            <Row label="Shipping Costs Paid" value={-data.shippingCost} negative />
-            <Row label="Shipping Charged" value={data.shippingCharge} />
-            <Row label="Discounts Given" value={-data.discount} negative />
+            <Row label="Rider & Courier Fares Paid" value={-data.shippingCost} negative />
             <div className="border-t border-gray-300 pt-2 mt-2">
               <Row label="Gross Profit" value={data.grossProfit} bold highlight />
             </div>
