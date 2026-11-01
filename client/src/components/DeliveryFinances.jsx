@@ -9,8 +9,9 @@ import {
 import { Link } from 'react-router-dom';
 
 // Does running our own bike beat paying a courier per drop? The fixed cost is the rider's wage
-// plus the bike hire; against it sits the delivery fees actually billed, less whatever the rider
-// laid out that the company ended up carrying rather than charging on.
+// plus the bike hire; against it sits the delivery fees actually billed, plus a credit for each
+// ride to Platinum (nobody pays for it, but a courier would have had to be), less whatever the
+// rider laid out that the company ended up carrying rather than charging on.
 
 function Card({ label, value, sub, tone = 'slate' }) {
   const tones = { slate: 'text-slate-800', green: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600' };
@@ -60,6 +61,7 @@ export default function DeliveryFinances() {
   if (!data) return null;
 
   const { cost, income, net, riderAccounts, outstanding } = data;
+  const trips = data.courierTrips || { count: 0, value: 0, credit: 0 };
   const beating = net >= 0;
   const aboveBreakEven = data.breakEvenPerDay != null && data.perDay >= data.breakEvenPerDay;
 
@@ -80,7 +82,7 @@ export default function DeliveryFinances() {
         </div>
       </div>
 
-      {data.deliveries === 0 ? (
+      {data.jobs === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
           <FiTruck className="mx-auto mb-2 text-gray-300" size={30} />
           <p className="text-sm text-gray-500">No deliveries completed in this window.</p>
@@ -92,8 +94,8 @@ export default function DeliveryFinances() {
       ) : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Card label="Deliveries made" value={data.deliveries}
-              sub={`${data.perDay.toFixed(1)} a day${data.breakEvenPerDay != null ? ` · break-even ${data.breakEvenPerDay.toFixed(1)}` : ''}`}
+            <Card label="Deliveries made" value={data.jobs}
+              sub={`${trips.count > 0 ? `${data.deliveries} drops + ${trips.count} Platinum trip${trips.count === 1 ? '' : 's'} · ` : ''}${data.perDay.toFixed(1)} a day${data.breakEvenPerDay != null ? ` · break-even ${data.breakEvenPerDay.toFixed(1)}` : ''}`}
               tone={aboveBreakEven ? 'green' : 'red'} />
             <Card label="Cost per delivery" value={cost.perDelivery != null ? formatMoney(cost.perDelivery) : '—'}
               sub={`vs ${formatMoney(data.courierFee)} a courier charged`}
@@ -101,7 +103,9 @@ export default function DeliveryFinances() {
             <Card label="Fees billed" value={formatMoney(income.feesBilled)}
               sub={income.perDelivery != null ? `${formatMoney(income.perDelivery)} a drop` : null} />
             <Card label={beating ? 'Net gain' : 'Net cost'} value={formatMoney(Math.abs(net))}
-              sub={beating ? 'fees cover the bike' : 'fees do not cover the bike'}
+              sub={trips.count > 0
+                ? `incl. ${formatMoney(trips.credit)} for Platinum trips · in cash ${data.cashNet >= 0 ? '+' : '−'}${formatMoney(Math.abs(data.cashNet))}`
+                : beating ? 'fees cover the bike' : 'fees do not cover the bike'}
               tone={beating ? 'green' : 'red'} />
           </div>
 
@@ -111,7 +115,7 @@ export default function DeliveryFinances() {
             {data.savingVsCourier >= 0 ? <FiTrendingUp size={16} className="mt-0.5 shrink-0" /> : <FiTrendingDown size={16} className="mt-0.5 shrink-0" />}
             <span>
               {data.savingVsCourier >= 0
-                ? `Doing these ${data.deliveries} drops yourself cost ${formatMoney(Math.abs(data.savingVsCourier))} less than paying a courier ${formatMoney(data.courierFee)} each.`
+                ? `Doing these ${data.jobs} deliveries yourself cost ${formatMoney(Math.abs(data.savingVsCourier))} less than paying a courier ${formatMoney(data.courierFee)} each.`
                 : `Paying a courier ${formatMoney(data.courierFee)} a drop would have cost ${formatMoney(Math.abs(data.savingVsCourier))} less than running the bike over this window.`}
               {data.breakEvenPerMonth != null && ` The bike needs about ${Math.round(data.breakEvenPerMonth)} drops a month to wash its face.`}
             </span>
@@ -137,7 +141,10 @@ export default function DeliveryFinances() {
                   <tbody className="divide-y divide-gray-50">
                     <tr>
                       <td className="py-2">Us<div className="text-xs text-gray-400">the rider's wage and the bike hire</div></td>
-                      <td className="py-2 text-right">{cost.courierSplit.own.drops}</td>
+                      <td className="py-2 text-right">
+                        {cost.courierSplit.own.drops}
+                        {cost.courierSplit.own.courierTrips > 0 && <div className="text-xs text-gray-400">+ {cost.courierSplit.own.courierTrips} Platinum trips</div>}
+                      </td>
                       <td className="py-2 text-right">{formatMoney(cost.courierSplit.own.cost)}</td>
                       <td className="py-2 text-right font-semibold">
                         {cost.courierSplit.own.costPerDrop != null ? formatMoney(cost.courierSplit.own.costPerDrop) : '—'}
@@ -252,6 +259,22 @@ export default function DeliveryFinances() {
                   </Link>
                 </div>
               )}
+
+              <div className="bg-white rounded-xl border border-gray-100 p-4">
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">What the bike earned</h4>
+                <Row label="Delivery fees billed" value={formatMoney(income.feesBilled)} />
+                <Row label="Platinum trips" value={formatMoney(trips.credit)}
+                  note={`${trips.count} × ${formatMoney(trips.value)}, not billed to anyone`} />
+                <Row label="Less total cost" value={'-' + formatMoney(cost.total)} />
+                <div className="pt-1.5 mt-1 border-t border-gray-200">
+                  <Row label="Net" value={(net < 0 ? '-' : '') + formatMoney(Math.abs(net))} tone={net >= 0 ? 'green' : 'red'} />
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  A trip to Platinum is credited at the courier fee in Settings, since that is what we
+                  would pay someone else to take the parcels in. It is a saving, not cash: in cash the
+                  bike is {data.cashNet >= 0 ? 'up' : 'down'} {formatMoney(Math.abs(data.cashNet))}.
+                </p>
+              </div>
 
               <div className="bg-white rounded-xl border border-gray-100 p-4">
                 <h4 className="text-sm font-semibold text-gray-700 mb-2">Cash through the rider's hands</h4>

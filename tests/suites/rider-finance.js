@@ -116,6 +116,13 @@ module.exports = {
   eq('but he can take back an unsettled one', delOwn.status, 200);
 
   section('the delivery finances dashboard');
+  // Rides to Platinum: one taken in the window, one not yet taken, one from two months back.
+  const run = (scheduledFor, status, dispatchedAt) => prisma.courierRun.create({
+    data: { slot: '09:00', scheduledFor, courier: 'Platinum', status, dispatchedAt, companyId: seed.companyId },
+  });
+  await run(new Date(Date.now() - 2 * 86400000), 'Dispatched', new Date(Date.now() - 2 * 86400000));
+  await run(new Date(Date.now() - 1 * 86400000), 'Open', null);
+  await run(new Date(Date.now() - 60 * 86400000), 'Dispatched', new Date(Date.now() - 60 * 86400000));
   const fin = (await admin('GET', '/deliveries/finances')).body;
   eq('three deliveries in the window', fin.deliveries, 3);
   eq("the wage comes from Greg's payroll record", fin.cost.riderMonthly, 3100);
@@ -128,7 +135,12 @@ module.exports = {
   eq('the courier benchmark is the K50 default', fin.courierFee, 50);
   const expectedTotal = fin.cost.fixedInWindow + fin.cost.borneByCompany;
   near('total cost is fixed plus what the company carried', fin.cost.total, expectedTotal, 0.02);
-  near('net is fees less total cost', fin.net, fin.income.feesBilled - fin.cost.total, 0.02);
+  eq('the Platinum ride taken in the window is credited at the courier fee', fin.courierTrips, { count: 1, value: 50, credit: 50 });
+  eq('so the bike did three drops and one trip', [fin.jobs, fin.cost.courierSplit.own.courierTrips], [4, 1]);
+  near('net counts the trip as well as the fees', fin.net, fin.income.feesBilled + 50 - fin.cost.total, 0.02);
+  near('while the cash net is the fees alone', fin.cashNet, fin.income.feesBilled - fin.cost.total, 0.02);
+  near('the cost per delivery is spread over the trip too', fin.cost.perDelivery, fin.cost.total / 4, 0.02);
+  near("the bike's cost per drop likewise", fin.cost.courierSplit.own.costPerDrop, fin.cost.courierSplit.own.cost / 4, 0.02);
   eq('and his position is on it', fin.riderAccounts.find(a => a.riderId === seed.gregRiderId).netDue, 1500);
 
   section('acknowledging the report');
