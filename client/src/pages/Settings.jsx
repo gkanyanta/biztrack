@@ -3,6 +3,7 @@ import { getSettings, updateSettings, getMetaFeedReport, getStockLocations, crea
 import LoadingSpinner from '../components/LoadingSpinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
+import ZraStatusCard from '../components/ZraStatusCard';
 import toast from 'react-hot-toast';
 import { FiUpload, FiTrash2, FiTruck, FiPlus, FiKey, FiUsers, FiShoppingBag, FiCopy } from 'react-icons/fi';
 
@@ -324,6 +325,8 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      <ZraStatusCard />
 
       {/* Delivery Costs — what the bike and rider cost, and what a courier charged */}
       <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">

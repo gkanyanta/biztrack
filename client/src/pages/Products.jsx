@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getProducts, createProduct, updateProduct, deleteProduct, bulkRestock, getStockLog, getProductGroups, createProductGroup } from '../services/api';
+import { getProducts, createProduct, updateProduct, deleteProduct, bulkRestock, getStockLog, getProductGroups, createProductGroup, getZraStatus } from '../services/api';
+import { ZRA_TAX_CATEGORIES } from '../utils/zra';
 import { formatMoney, calcMargin } from '../utils/format';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -36,9 +37,13 @@ export default function Products() {
   const [form, setForm] = useState({
     name: '', sku: '', description: '', category: '',
     costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5',
-    supplier: '', brand: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: ''
+    supplier: '', brand: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: '',
+    zraClassCode: '', zraTaxCategory: ''
   });
   const imageInputRef = useRef(null);
+  // The ZRA fields only appear for a company with Smart Invoice switched on.
+  const [zra, setZra] = useState(null);
+  useEffect(() => { getZraStatus().then(r => setZra(r.data)).catch(() => {}); }, []);
 
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
@@ -87,7 +92,7 @@ export default function Products() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', brand: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: '' });
+    setForm({ name: '', sku: '', description: '', category: '', costPrice: '', sellingPrice: '', originalPrice: '', stock: '0', reorderLevel: '5', supplier: '', brand: '', imageUrl: '', imageChanged: false, groupId: '', variantLabel: '', zraClassCode: '', zraTaxCategory: '' });
     setShowForm(true);
   };
 
@@ -97,7 +102,8 @@ export default function Products() {
       name: p.name, sku: p.sku, description: p.description || '', category: p.category || '',
       costPrice: p.costPrice, sellingPrice: p.sellingPrice, originalPrice: p.originalPrice || '', stock: String(p.stock), reorderLevel: String(p.reorderLevel),
       supplier: p.supplier || '', brand: p.brand || '', imageUrl: p.imageUrl || '', imageChanged: false,
-      groupId: p.groupId || '', variantLabel: p.variantLabel || ''
+      groupId: p.groupId || '', variantLabel: p.variantLabel || '',
+      zraClassCode: p.zraClassCode || '', zraTaxCategory: p.zraTaxCategory || ''
     });
     setShowForm(true);
   };
@@ -136,6 +142,8 @@ export default function Products() {
         groupId: form.groupId || null,
         variantLabel: form.variantLabel ? form.variantLabel.trim() : null,
         brand: form.brand ? form.brand.trim() : null,
+        zraClassCode: form.zraClassCode ? form.zraClassCode.trim() : null,
+        zraTaxCategory: form.zraTaxCategory || null,
       };
       if (editing && !form.imageChanged) delete data.imageUrl;
       delete data.imageChanged;
@@ -336,6 +344,24 @@ export default function Products() {
                 placeholder="Leave blank to use the store's fallback brand"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
+            {zra?.enabled && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ZRA item classification code</label>
+                  <input type="text" value={form.zraClassCode} onChange={e => setForm({...form, zraClassCode: e.target.value})}
+                    placeholder="From ZRA's item classification list"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ZRA tax category</label>
+                  <select value={form.zraTaxCategory} onChange={e => setForm({...form, zraTaxCategory: e.target.value})}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">Company default ({zra.defaultTaxCategory || 'not set'})</option>
+                    {ZRA_TAX_CATEGORIES.map(c => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
+                  </select>
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Product Group <span className="text-gray-400 font-normal">(links color/size variants)</span></label>
               {creatingGroup ? (

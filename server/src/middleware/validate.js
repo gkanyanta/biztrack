@@ -66,6 +66,14 @@ function validateProduct(req, res, next) {
   if (req.body.supplier) req.body.supplier = sanitizeString(req.body.supplier, 200);
   if (req.body.brand !== undefined) req.body.brand = typeof req.body.brand === 'string' && req.body.brand.trim() ? sanitizeString(req.body.brand, 100) : null;
   if (req.body.variantLabel) req.body.variantLabel = sanitizeString(req.body.variantLabel, 100);
+  // ZRA Smart Invoice. Whether an item is registered with ZRA is BizTrack's to record, never the form's.
+  delete req.body.zraRegisteredAt;
+  if (req.body.zraClassCode !== undefined) req.body.zraClassCode = typeof req.body.zraClassCode === 'string' && req.body.zraClassCode.trim() ? sanitizeString(req.body.zraClassCode, 20) : null;
+  if (req.body.zraTaxCategory !== undefined) {
+    const cat = typeof req.body.zraTaxCategory === 'string' ? req.body.zraTaxCategory.trim() : '';
+    if (cat && !['A', 'C1', 'C2', 'C3', 'D', 'E', 'TOT'].includes(cat)) return res.status(400).json({ error: 'Unknown ZRA tax category' });
+    req.body.zraTaxCategory = cat || null;
+  }
   next();
 }
 

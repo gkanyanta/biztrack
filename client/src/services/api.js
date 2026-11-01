@@ -165,6 +165,14 @@ export const uploadCompanyLogo = (id, logo) => api.put(`/superadmin/companies/${
 export const addCompanyUser = (id, data) => api.post(`/superadmin/companies/${id}/users`, data);
 export const resetAdminPassword = (userId, data) => api.post(`/superadmin/users/${userId}/reset-password`, data);
 
+// ZRA Smart Invoice — the superadmin sets it up per company; the company sees what has not gone through.
+export const getCompanyZra = (id) => api.get(`/superadmin/companies/${id}/zra`);
+export const saveCompanyZra = (id, data) => api.put(`/superadmin/companies/${id}/zra`, data);
+export const initialiseCompanyZra = (id) => api.post(`/superadmin/companies/${id}/zra/initialise`);
+export const getZraStatus = () => api.get('/zra/status');
+export const retryZra = () => api.post('/zra/retry');
+export const retryZraDocument = (id) => api.post(`/zra/documents/${id}/retry`);
+
 // Settings
 export const getSettings = () => api.get('/settings');
 export const updateSettings = (data) => api.put('/settings', data);

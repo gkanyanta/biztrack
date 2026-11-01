@@ -128,6 +128,8 @@ async function startBackend(which, testUrl) {
     // See the comments on both limiters in the entry points.
     AUTH_RATE_LIMIT_MAX: '100000',
     RATE_LIMIT_MAX: '1000000',
+    // The ZRA suite runs a pretend VSDC on this machine.
+    ZRA_ALLOWED_HOSTS: '127.0.0.1',
   };
   const proc = cfg.start(env);
   let log = '';
