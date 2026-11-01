@@ -28,6 +28,7 @@ something else.
 | `meta-feed` | The Facebook/WhatsApp catalogue feed: ZMW pricing and sale prices, variants, stock, image URLs, CSV escaping, one company's products never in another's feed, no cost or supplier data, and a database failure or empty catalogue never published as an empty feed |
 | `money-splits` | Money splits counts staff pay from Payroll and the fares on orders, shows what is still to collect, flags buckets with no target yet, and cuts months at midnight in Zambia |
 | `profit` | The P&L, sales report, dashboard and profit sort count the delivery charge and discount once (they are already in the order total), take off rider fares, and sort highest profit first |
+| `order-queries` | The office asks a consultant about an order and the consultant answers: one thread per order, only the order's consultant can see or reply, whose turn it is, closing and asking again, and every payment note on the Sales Report |
 | `payroll` | Salary accrual and proration, the allowance cap, advances netting off what is owed, and staff pay reaching the P&L |
 | `payrun` | A finalised cycle never changing, late customer payments and unpaid balances arriving on the next payslip, loan instalments deducted on their terms unless edited, recoveries and held money, and the wage cost booked once |
 | `rider-finance` | The rider's balance, expenses settled as company cost or recharged, partial recharges, and the delivery finances figures |

@@ -51,6 +51,7 @@ model Company {
   payslipLines       PayslipLine[]
   consultantTargets  ConsultantTarget[]
   advanceRequests    AdvanceRequest[]
+  orderQueries       OrderQuery[]
   zraConfig          ZraConfig?
   fiscalDocuments    FiscalDocument[]
 }
@@ -180,6 +181,7 @@ model Sale {
   riderExpenses   RiderExpense[]
   payAdjustments  PayAdjustment[]
   fiscalDocuments FiscalDocument[]
+  queries         OrderQuery[]
 
   @@unique([companyId, orderNumber])
   @@index([companyId, date])
@@ -412,6 +414,7 @@ model Consultant {
   payslips             Payslip[]
   targets              ConsultantTarget[]
   advanceRequests      AdvanceRequest[]
+  orderQueries         OrderQuery[]
 }
 
 model CommissionPayment {
@@ -997,4 +1000,43 @@ model FiscalDocument {
   @@unique([saleId, kind])
   @@unique([companyId, invoiceNo])
   @@index([companyId, status])
+}
+
+// The office asking a consultant what is happening with an order, and the conversation that
+// follows. One thread per order at a time; it is addressed to the order's consultant, who is
+// the only one besides the office who can read or answer it.
+model OrderQuery {
+  id           String              @id @default(cuid())
+  saleId       String
+  sale         Sale                @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  consultantId String
+  consultant   Consultant          @relation(fields: [consultantId], references: [id])
+  // open: waiting on the consultant · answered: waiting on the office · closed
+  status       String              @default("open")
+  raisedById   String
+  closedAt     DateTime?
+  companyId    String
+  company      Company             @relation(fields: [companyId], references: [id])
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  messages     OrderQueryMessage[]
+
+  @@index([companyId, status])
+  @@index([consultantId, status])
+  @@index([saleId])
+}
+
+model OrderQueryMessage {
+  id         String     @id @default(cuid())
+  queryId    String
+  query      OrderQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  // Who wrote it, kept by name too so the thread still reads right if the login goes.
+  authorId   String
+  authorName String
+  // admin | consultant
+  authorRole String
+  message    String
+  createdAt  DateTime   @default(now())
+
+  @@index([queryId])
 }

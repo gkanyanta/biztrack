@@ -6,8 +6,10 @@ import { PaymentBadge } from '../components/StatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PaymentStatusModal from '../components/PaymentStatusModal';
 import DailySalesReportPDF from '../components/DailySalesReportPDF';
+import OrderQueryModal from '../components/OrderQueryModal';
+import { queryStatusLabel } from '../utils/orderQueries';
 import toast from 'react-hot-toast';
-import { FiDownload, FiShare2, FiMessageSquare, FiFileText, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { FiDownload, FiShare2, FiMessageSquare, FiFileText, FiChevronLeft, FiChevronRight, FiHelpCircle } from 'react-icons/fi';
 import { useAuth } from '../hooks/useAuth';
 
 const PERIOD_LABEL = { day: 'Daily', week: 'Weekly', month: 'Monthly' };
@@ -37,6 +39,8 @@ function getRange(period, anchor) {
   return { from: anchor, to: anchor, label: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) };
 }
 
+function formatShort(d) { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }); }
+
 function shiftAnchor(period, anchor, dir) {
   const d = new Date(anchor + 'T00:00:00');
   if (period === 'week') d.setDate(d.getDate() + dir * 7);
@@ -56,6 +60,10 @@ export default function DailySalesReport() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [paymentModalSale, setPaymentModalSale] = useState(null);
+  // Clicking the Outstanding total narrows the table to the orders still owing.
+  const [onlyOutstanding, setOnlyOutstanding] = useState(false);
+  const [threadSaleId, setThreadSaleId] = useState(null);
+  const isOffice = user?.role === 'admin' || user?.role === 'superadmin';
 
   const range = getRange(period, anchor);
 
@@ -122,6 +130,7 @@ export default function DailySalesReport() {
   };
 
   const summary = report?.summary;
+  const shown = !report ? [] : onlyOutstanding ? report.orders.filter(o => o.paymentStatus !== 'Paid') : report.orders;
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
@@ -189,11 +198,24 @@ export default function DailySalesReport() {
               <div className="text-xs text-green-700">Paid ({summary.paidCount})</div>
               <div className="text-xl font-bold text-green-700">{formatMoney(summary.paidAmount)}</div>
             </div>
-            <div className="bg-red-50 rounded-xl border border-red-200 p-4">
+            <button onClick={() => setOnlyOutstanding(v => !v)} disabled={summary.partialCount + summary.unpaidCount === 0}
+              className={`text-left rounded-xl border p-4 transition-colors disabled:cursor-default ${onlyOutstanding ? 'bg-red-100 border-red-400 ring-2 ring-red-300' : 'bg-red-50 border-red-200 hover:bg-red-100'}`}
+              title="Show only the orders still owing">
               <div className="text-xs text-red-700">Outstanding ({summary.partialCount + summary.unpaidCount})</div>
               <div className="text-xl font-bold text-red-700">{formatMoney(summary.totalOutstanding)}</div>
-            </div>
+              {summary.partialCount + summary.unpaidCount > 0 && (
+                <div className="text-[11px] text-red-600 mt-0.5">{onlyOutstanding ? 'Showing these · tap to show all' : 'Tap to see these orders'}</div>
+              )}
+            </button>
           </div>
+
+          {onlyOutstanding && (
+            <div className="flex flex-wrap items-center gap-2 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-red-800">
+              Showing the {shown.length} unpaid and part-paid order{shown.length === 1 ? '' : 's'}, {formatMoney(summary.totalOutstanding)} still to collect.
+              {isOffice && ' Open an order to read its notes and ask the consultant what is happening.'}
+              <button onClick={() => setOnlyOutstanding(false)} className="ml-auto text-xs underline">Show all orders</button>
+            </div>
+          )}
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
             <table className="w-full text-sm">
@@ -205,30 +227,45 @@ export default function DailySalesReport() {
                   {(!isConsultant && !consultantId) && <th className="text-left p-3 font-medium text-gray-600 hidden lg:table-cell">Consultant</th>}
                   <th className="text-right p-3 font-medium text-gray-600">Total</th>
                   <th className="text-center p-3 font-medium text-gray-600">Payment</th>
-                  <th className="text-left p-3 font-medium text-gray-600 hidden md:table-cell">Note</th>
+                  <th className="text-left p-3 font-medium text-gray-600">Notes &amp; queries</th>
                 </tr>
               </thead>
               <tbody>
-                {report.orders.map(o => (
+                {shown.map(o => (
                   <tr key={o.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="p-3 font-medium text-gray-800">{o.orderNumber}</td>
                     <td className="p-3 text-gray-700">{o.customerName}</td>
                     <td className="p-3 text-gray-600 hidden md:table-cell">{o.items.map(i => `${i.name} x${i.qty}`).join(', ')}</td>
                     {(!isConsultant && !consultantId) && <td className="p-3 text-gray-600 hidden lg:table-cell">{o.consultant?.name || '-'}</td>}
-                    <td className="p-3 text-right font-medium text-gray-800">{formatMoney(o.totalPrice)}</td>
+                    <td className="p-3 text-right font-medium text-gray-800">
+                      {formatMoney(o.totalPrice)}
+                      {o.paymentStatus !== 'Paid' && o.balance > 0 && <div className="text-xs font-normal text-red-600">{formatMoney(o.balance)} owed</div>}
+                    </td>
                     <td className="p-3 text-center">
                       <button onClick={() => setPaymentModalSale(o)} className="hover:opacity-75" title="Click to update payment status">
                         <PaymentBadge status={o.paymentStatus} />
                       </button>
                     </td>
-                    <td className="p-3 text-gray-600 hidden md:table-cell">
-                      {o.latestNote ? (
-                        <span className="flex items-center gap-1"><FiMessageSquare size={12} className="text-gray-400 shrink-0" /> {o.latestNote}{o.notesCount > 1 && <span className="text-gray-400"> (+{o.notesCount - 1})</span>}</span>
-                      ) : '-'}
+                    <td className="p-3 text-gray-600">
+                      <button onClick={() => setThreadSaleId(o.id)} className="text-left w-full group" title="Read every note and query on this order">
+                        {onlyOutstanding && o.notes?.length > 0 ? (
+                          <ul className="space-y-0.5">
+                            {o.notes.map((n, i) => (
+                              <li key={i} className="flex items-start gap-1"><FiMessageSquare size={12} className="text-gray-400 shrink-0 mt-0.5" /><span>{n.note} <span className="text-[11px] text-gray-400">{formatShort(n.createdAt)}</span></span></li>
+                            ))}
+                          </ul>
+                        ) : o.latestNote ? (
+                          <span className="flex items-center gap-1"><FiMessageSquare size={12} className="text-gray-400 shrink-0" /> {o.latestNote}{o.notesCount > 1 && <span className="text-gray-400"> (+{o.notesCount - 1})</span>}</span>
+                        ) : <span className="text-gray-400">No notes</span>}
+                        {o.query ? (() => { const st = queryStatusLabel(o.query.status, isOffice, o.consultant?.name); return <span className={`inline-block mt-1 text-[11px] px-1.5 py-0.5 rounded-full border ${st.className}`}>{st.label}</span>; })()
+                          : isOffice && o.consultant && o.paymentStatus !== 'Paid' && (
+                            <span className="inline-flex items-center gap-1 mt-1 text-[11px] text-blue-600 group-hover:underline"><FiHelpCircle size={11} /> Ask {o.consultant.name}</span>
+                          )}
+                      </button>
                     </td>
                   </tr>
                 ))}
-                {report.orders.length === 0 && (
+                {shown.length === 0 && (
                   <tr><td colSpan={7} className="p-8 text-center text-gray-400">
                     <FiFileText className="mx-auto mb-2" size={28} />
                     No orders for this period
@@ -240,6 +277,7 @@ export default function DailySalesReport() {
         </>
       )}
 
+      <OrderQueryModal saleId={threadSaleId} isOpen={!!threadSaleId} onClose={() => setThreadSaleId(null)} onChanged={() => loadReport()} />
       <PaymentStatusModal sale={paymentModalSale} isOpen={!!paymentModalSale} onClose={() => setPaymentModalSale(null)}
         onUpdated={() => loadReport()} />
     </div>

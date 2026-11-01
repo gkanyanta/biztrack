@@ -2,6 +2,7 @@ import { downloadPayslip } from '../components/PayslipPDF';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getConsultantDashboard } from '../services/api';
+import OrderQueriesAlert from '../components/OrderQueriesAlert';
 import { formatMoney, formatDate } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { StatusBadge, PaymentBadge } from '../components/StatusBadge';
@@ -58,6 +59,8 @@ export default function ConsultantDashboard() {
           </div>
         </div>
       </div>
+
+      <OrderQueriesAlert />
 
       {/* Today */}
       <div>

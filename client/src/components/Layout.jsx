@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { getAdvanceSummary } from '../services/api';
+import { getAdvanceSummary, getOrderQuerySummary } from '../services/api';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import useDarkMode from '../hooks/useDarkMode';
 import useNewOrderNotifications from '../hooks/useNewOrderNotifications';
 import {
   FiHome, FiPackage, FiShoppingCart, FiDollarSign,
-  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell, FiLayers, FiFileText, FiCalendar, FiInbox
+  FiUsers, FiTruck, FiBarChart2, FiSettings, FiLogOut, FiMenu, FiX, FiCreditCard, FiClipboard, FiShield, FiUserCheck, FiSun, FiMoon, FiTarget, FiPieChart, FiBell, FiLayers, FiFileText, FiCalendar, FiInbox, FiHelpCircle
 } from 'react-icons/fi';
 
 const adminNavItems = [
@@ -17,6 +17,7 @@ const adminNavItems = [
   { path: '/sales', icon: FiShoppingCart, label: 'Sales' },
   { path: '/quotes', icon: FiFileText, label: 'Quotes' },
   { path: '/daily-report', icon: FiCalendar, label: 'Sales Report' },
+  { path: '/order-queries', icon: FiHelpCircle, label: 'Order Queries' },
   { path: '/expenses', icon: FiDollarSign, label: 'Expenses' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
   { path: '/consultants', icon: FiUserCheck, label: 'Consultants' },
@@ -41,6 +42,7 @@ const consultantNavItems = [
   { path: '/daily-report', icon: FiCalendar, label: 'Sales Report' },
   { path: '/my-stock', icon: FiPackage, label: 'My Stock' },
   { path: '/credit', icon: FiCreditCard, label: 'Credit' },
+  { path: '/order-queries', icon: FiHelpCircle, label: 'Order Queries' },
   { path: '/my-advances', icon: FiInbox, label: 'Salary Advance' },
 ];
 
@@ -73,6 +75,13 @@ export default function Layout() {
     if (user?.role !== 'admin') return;
     getAdvanceSummary().then(res => setAdvancesWaiting(res.data.pending + res.data.approved)).catch(() => {});
   }, [user?.role, location.pathname]);
+  // Order queries waiting on whoever is signed in: replies for the office, questions for a consultant.
+  const [queriesWaiting, setQueriesWaiting] = useState(0);
+  useEffect(() => {
+    if (user?.role !== 'admin' && user?.role !== 'consultant') return;
+    getOrderQuerySummary().then(res => setQueriesWaiting(res.data.waitingOnYou)).catch(() => {});
+  }, [user?.role, location.pathname]);
+  const navBadges = { '/payroll': advancesWaiting, '/order-queries': queriesWaiting };
   const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'rider' ? riderNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
 
   return (
@@ -113,10 +122,10 @@ export default function Layout() {
               >
                 <item.icon size={18} />
                 {item.label}
-                {item.path === '/payroll' && advancesWaiting > 0 && (
+                {navBadges[item.path] > 0 && (
                   <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold min-w-[1.25rem] h-5 px-1 rounded-full flex items-center justify-center"
-                    title="Advance requests waiting">
-                    {advancesWaiting > 9 ? '9+' : advancesWaiting}
+                    title="Waiting for you">
+                    {navBadges[item.path] > 9 ? '9+' : navBadges[item.path]}
                   </span>
                 )}
               </Link>

@@ -192,8 +192,10 @@ router.get('/reports/daily', async (req, res) => {
         items: { include: { product: { select: { name: true } } } },
         consultant: { select: { id: true, name: true } },
         customer: { select: { name: true, phone: true } },
-        paymentNotes: { orderBy: { createdAt: 'desc' }, take: 1 },
+        paymentNotes: { orderBy: { createdAt: 'desc' } },
         _count: { select: { paymentNotes: true } },
+        // The latest query thread on the order, so the report can say whose turn it is.
+        queries: { orderBy: { updatedAt: 'desc' }, take: 1, select: { id: true, status: true } },
       },
       orderBy: { date: 'asc' },
     });
@@ -213,6 +215,7 @@ router.get('/reports/daily', async (req, res) => {
         totalPrice: total, amountPaid, balance: total - amountPaid,
         paymentType: s.paymentType, paymentStatus: s.paymentStatus,
         consultant: s.consultant, latestNote: s.paymentNotes[0]?.note || null, notesCount: s._count.paymentNotes,
+        notes: s.paymentNotes.map(n => ({ note: n.note, createdAt: n.createdAt })), query: s.queries[0] || null,
       };
     });
 

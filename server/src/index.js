@@ -75,6 +75,7 @@ app.use('/api/v1/deliveries', require('./routes/deliveries'));
 app.use('/api/v1/staff', require('./routes/staff'));
 app.use('/api/v1/payroll', require('./routes/payroll'));
 app.use('/api/v1/advances', require('./routes/advances'));
+app.use('/api/v1/order-queries', require('./routes/orderQueries'));
 app.use('/api/v1/targets', require('./routes/targets'));
 app.use('/api/v1/zra', require('./routes/zra'));
 app.use('/api/v1/superadmin', require('./routes/superadmin'));
