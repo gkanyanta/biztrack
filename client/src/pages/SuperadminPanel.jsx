@@ -5,6 +5,7 @@ import {
   addCompanyUser, resetAdminPassword
 } from '../services/api';
 import Modal from '../components/Modal';
+import ZraCompanySettings from '../components/ZraCompanySettings';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
 import {
@@ -314,6 +315,8 @@ export default function SuperadminPanel() {
                             <FiUserPlus size={14} /> Add User
                           </button>
                         </div>
+
+                        <ZraCompanySettings companyId={c.id} />
 
                         {/* Users */}
                         <h4 className="text-sm font-semibold text-gray-700 mb-2">Admin Users</h4>

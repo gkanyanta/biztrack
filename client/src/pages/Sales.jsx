@@ -16,6 +16,8 @@ import toast from 'react-hot-toast';
 import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiShoppingCart, FiEye, FiPackage, FiDollarSign, FiX, FiCamera, FiTruck } from 'react-icons/fi';
 import BarcodeScanner from '../components/BarcodeScanner';
 import { useAuth } from '../hooks/useAuth';
+import ZraTag from '../components/ZraTag';
+import { zraInvoice, zraCreditNote } from '../utils/zra';
 
 // Where the order physically is, in the words the office uses rather than the rider's status name.
 const DELIVERY_LABELS = { Assigned: 'With rider', PickedUp: 'On the way', Delivered: 'Dropped off', Failed: 'Delivery failed' };
@@ -383,6 +385,7 @@ export default function Sales() {
                         {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                       </select>
                       <DeliveryTag delivery={s.delivery} />
+                      <ZraTag sale={s} />
                     </td>
                     <td className="p-3 text-center hidden sm:table-cell">
                       <button onClick={() => setPaymentModalSale(s)} className="hover:opacity-75" title="Click to update payment status">
@@ -710,6 +713,21 @@ export default function Sales() {
               </div>
               <ReceiptButton saleId={showDetail.id} size={20} className="ml-3 p-2 bg-blue-50 rounded-lg hover:bg-blue-100" />
             </div>
+
+            {/* What ZRA holds for this sale, when the company reports to ZRA. */}
+            {zraInvoice(showDetail) && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm space-y-1">
+                <h4 className="font-semibold text-gray-700 mb-1 flex items-center gap-2">ZRA Smart Invoice <ZraTag sale={showDetail} /></h4>
+                {[zraInvoice(showDetail), zraCreditNote(showDetail)].filter(Boolean).map(d => (
+                  <div key={d.id}>
+                    <span className="text-gray-500">{d.kind === 'credit_note' ? 'Credit note' : 'Invoice'} {d.invoiceNo}:</span>{' '}
+                    {d.status === 'issued'
+                      ? <span>receipt {d.rcptNo}, SDC {d.sdcId}</span>
+                      : <span className={d.status === 'failed' ? 'text-red-600' : 'text-amber-700'}>{d.status === 'failed' ? 'not accepted' : 'waiting to send'}{d.lastError ? ` — ${d.lastError}` : ''}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* The delivery run behind this order, so "where is it" is answerable from here. */}
             {showDetail.delivery && (
