@@ -1888,6 +1888,17 @@ router.get('/finances', requireAdmin, async (req, res) => {
     const totalCost = round2(fixedInWindow + borne + hiredFares);
     const count = delivered.length;
 
+    // Each courier run dispatched is a ride to Platinum on our bike, however many parcels it
+    // carried. Nobody is billed for that ride, but it is a delivery the bike did that we would
+    // otherwise pay a courier for, so it is credited at the courier fee. (There is one bike and
+    // one rider; a run with no rider recorded is still his.)
+    const courierTrips = await prisma.courierRun.count({
+      where: { companyId, status: 'Dispatched', dispatchedAt: { gte: from, lte: to } },
+    });
+    const tripValue = basis.feeCharged;
+    const tripCredit = round2(courierTrips * tripValue);
+    const jobs = count + courierTrips;
+
     // Where the rider stands right now, which is a balance and not a window figure.
     const accounts = [];
     for (const r of riders) {
@@ -1901,23 +1912,27 @@ router.get('/finances', requireAdmin, async (req, res) => {
     res.json({
       from, to, days,
       deliveries: count,
-      perDay: round2(count / days),
+      courierTrips: { count: courierTrips, value: tripValue, credit: tripCredit },
+      // Drops plus courier trips: everything the bike and the couriers did for us.
+      jobs,
+      perDay: round2(jobs / days),
       cost: {
         riderMonthly, bikeMonthly, fixedMonthly, fixedInWindow,
         riderPaidFromPayroll: staff.length > 0,
         laidOutByRider: laidOut, recoveredFromCustomers: recovered, borneByCompany: borne,
         hiredCourierFares: hiredFares,
         total: totalCost,
-        perDelivery: count ? round2(totalCost / count) : null,
+        perDelivery: jobs ? round2(totalCost / jobs) : null,
         byCategory: Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([category, amount]) => ({ category, amount })),
         // The question the warehouse asks every time the rider is swamped: send him, or book a car?
           courierSplit: {
           own: {
             drops: ownDrops.length,
+            courierTrips,
               // The fixed cost is the bike and the wage, and it is carried whether he does one drop
-              // or twenty, so it all lands on the drops he actually made.
+              // or twenty, so it all lands on the drops and courier trips he actually made.
             cost: round2(fixedInWindow + borne),
-            costPerDrop: ownDrops.length ? round2((fixedInWindow + borne) / ownDrops.length) : null,
+            costPerDrop: ownDrops.length + courierTrips ? round2((fixedInWindow + borne) / (ownDrops.length + courierTrips)) : null,
             feesBilled: sumFees(ownDrops),
           },
           hired: {
@@ -1934,7 +1949,9 @@ router.get('/finances', requireAdmin, async (req, res) => {
         perDelivery: count ? round2(feesBilled / count) : null,
         cashCollectedAtDoors: collected,
       },
-      net: round2(feesBilled - totalCost),
+      // What the bike earned us, counting its courier trips; cashNet is the money alone.
+      net: round2(feesBilled + tripCredit - totalCost),
+      cashNet: round2(feesBilled - totalCost),
       dispatchedFrom: Object.entries(byOrigin)
         .filter(([, n]) => n > 0)
         .map(([where, drops]) => ({ where, drops }))
@@ -1943,7 +1960,7 @@ router.get('/finances', requireAdmin, async (req, res) => {
       courierFee: basis.feeCharged,
       breakEvenPerDay: basis.feeCharged > 0 ? round2(fixedMonthly / basis.feeCharged / 30.44) : null,
       breakEvenPerMonth: basis.feeCharged > 0 ? round2(fixedMonthly / basis.feeCharged) : null,
-      savingVsCourier: round2((basis.feeCharged * count) - totalCost),
+      savingVsCourier: round2((basis.feeCharged * jobs) - totalCost),
       riderAccounts: accounts,
       outstanding: {
         awaitingRechargeCount: awaitingRecharge._count,

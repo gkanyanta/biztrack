@@ -104,7 +104,7 @@ module.exports = {
     // Leaving the fare out would show income with no cost behind it.
     near('total cost includes the fixed cost and the fare',
          fin.cost.total, fin.cost.fixedInWindow + fin.cost.borneByCompany + 120, 0.02);
-    near('net is fees less that total', fin.net, fin.income.feesBilled - fin.cost.total, 0.02);
+    near('net is fees, plus any Platinum trips, less that total', fin.net, fin.income.feesBilled + fin.courierTrips.credit - fin.cost.total, 0.02);
     eq('and the origins are reported', fin.dispatchedFrom.some(o => o.where === 'warehouse'), true);
 
     section('the warehouse can hire a car, but not invent a courier');
