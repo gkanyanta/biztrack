@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getDashboard, getDeliveryPerformance } from '../services/api';
 import AdvanceRequestsAlert from '../components/AdvanceRequestsAlert';
+import OrderQueriesAlert from '../components/OrderQueriesAlert';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
 import DateRangePicker from '../components/DateRangePicker';
@@ -69,6 +70,7 @@ export default function Dashboard() {
       </div>
 
       <AdvanceRequestsAlert />
+      <OrderQueriesAlert />
 
       {/* Growth Tracker - Top Priority */}
       {g && (() => {
