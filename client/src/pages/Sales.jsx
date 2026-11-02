@@ -68,10 +68,13 @@ export default function Sales() {
 
   // Line items for the order
   const [orderItems, setOrderItems] = useState([]);
+  // A new order starts as most of them are: a Facebook ad, paid by mobile money, not yet paid,
+  // taken today.
+  const today = new Date().toLocaleDateString('en-CA');
   const emptyForm = {
     customerName: '', customerPhone: '', customerCity: '', deliveryAddress: '',
-    shippingCost: '', shippingCharge: '', discount: '0', paymentMethod: '',
-    paymentStatus: 'Unpaid', source: '', notes: '', date: '',
+    shippingCost: '', shippingCharge: '', discount: '0', paymentMethod: 'Mobile Money',
+    paymentStatus: 'Unpaid', source: 'Facebook Ad', notes: '', date: today,
     paymentType: 'Cash', amountPaid: '', creditDueDate: '', creditNotes: '',
     consultantId: '', status: 'Confirmed', fulfilment: 'delivery'
   };
@@ -181,6 +184,9 @@ export default function Sales() {
         amountPaid: parseFloat(form.amountPaid) || 0,
         consultantId: form.consultantId || null,
       };
+      // Left on today, a new order takes the moment it is saved rather than midnight, so the
+      // time of the sale is kept.
+      if (!editing && data.date === today) delete data.date;
       if (data.date) data.date = new Date(data.date).toISOString();
       if (editing) {
         await updateSale(editing.id, data);
