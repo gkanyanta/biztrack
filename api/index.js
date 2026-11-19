@@ -2135,6 +2135,70 @@ app.delete('/api/v1/shipping-rates/:id', authenticate, requireAdmin, async (req,
 });
 
 // ---- DASHBOARD ----
+// The business month: what "this month" means on the dashboard and in the monthly figures.
+//
+// A company counts either by calendar month (the 1st to the end of the month) or by its pay
+// cycle (pay day to the day before the next pay day, e.g. 11 Nov to 10 Dec). A business that
+// pays commission and judges targets on the cycle wants its profit, ad spend and sales measured
+// over the same window, or every month cuts one pay cycle in two. Tax returns, bank statements
+// and Meta billing stay calendar months, which is why this is a choice per company.
+//
+// Boundaries are midnight in Zambia (UTC+2 all year), whatever the server clock says.
+// (mirrored in api/index.js)
+
+const BUSINESS_ZM_OFFSET = 2 * 3600 * 1000;
+const BUSINESS_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Midnight in Zambia on a calendar day; month and day may overflow, as with Date.UTC.
+const business_zmMidnight = (y, m0, d) => new Date(Date.UTC(y, m0, d) - BUSINESS_ZM_OFFSET);
+// The Zambian calendar day a moment falls on.
+const business_zmDay = (at) => {
+  const z = new Date(new Date(at).getTime() + BUSINESS_ZM_OFFSET);
+  return { y: z.getUTCFullYear(), m: z.getUTCMonth(), d: z.getUTCDate() };
+};
+const business_dayText = (date) => {
+  const { m, d } = business_zmDay(date);
+  return `${d} ${BUSINESS_MONTH_NAMES[m]}`;
+};
+
+// The business month containing `at`, or `back` months before it.
+//   from, to   the instants it runs between (to is exclusive)
+//   key        sorts in time order: YYYY-MM of the month it starts in
+//   name       how a person reads it: "November 2026", or "11 Nov – 10 Dec 2026" for a cycle
+//   short      for a chart axis: "Nov 2026", or "Nov–Dec" for a cycle
+//   days       how long it is
+function business_month(basis, payDay, at = new Date(), back = 0) {
+  const { y, m, d } = business_zmDay(at);
+  const cycle = basis === 'cycle';
+  const startMonth = (cycle && d < payDay ? m - 1 : m) - back;
+  const startDay = cycle ? payDay : 1;
+  const from = business_zmMidnight(y, startMonth, startDay);
+  const to = business_zmMidnight(y, startMonth + 1, startDay);
+  const s = business_zmDay(from);
+  const lastDay = new Date(to.getTime() - 1);
+  const e = business_zmDay(lastDay);
+  const key = `${s.y}-${String(s.m + 1).padStart(2, '0')}`;
+  const name = cycle
+    ? `${business_dayText(from)} – ${business_dayText(lastDay)} ${e.y}`
+    : `${new Date(Date.UTC(s.y, s.m, 1)).toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' })} ${s.y}`;
+  const short = cycle
+    ? `${BUSINESS_MONTH_NAMES[s.m]}–${BUSINESS_MONTH_NAMES[e.m]}${s.y !== e.y ? ` ${String(e.y).slice(2)}` : ''}`
+    : `${BUSINESS_MONTH_NAMES[s.m]} ${s.y}`;
+  return { basis: cycle ? 'cycle' : 'calendar', from, to, key, name, short, days: Math.round((to - from) / 86400000) };
+}
+
+// How far into its business month `at` is, counting today: 1 on the first day.
+const business_dayIndex = (month, at = new Date()) => Math.min(month.days, Math.max(1, Math.floor((new Date(at) - month.from) / 86400000) + 1));
+
+// A company's choice, kept as the `monthBasis` setting; calendar unless it says cycle.
+async function business_monthBasis(prisma, companyId) {
+  const [company, setting] = await Promise.all([
+    prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } }),
+    prisma.setting.findUnique({ where: { companyId_key: { companyId, key: 'monthBasis' } } }),
+  ]);
+  return { basis: setting?.value === 'cycle' ? 'cycle' : 'calendar', payDay: company?.consultantPayDay || 11 };
+}
+
 // ---- TARGET TRACKER ----
 // The dashboard's headline: how the period is going against a target that can be reached.
 // A target the admin has set for a period containing today wins. Without one, the target is
@@ -2147,7 +2211,10 @@ const TRACKER_AD_CATEGORY = 'Facebook Ads';
 
 async function dashboard_targetTracker(prisma, companyId) {
   const now = new Date();
-  const monthStart = (back) => new Date(now.getFullYear(), now.getMonth() - back, 1);
+  // "Month" is the company's business month: calendar, or its pay cycle.
+  const { basis, payDay } = await business_monthBasis(prisma, companyId);
+  const monthOf = (back) => business_month(basis, payDay, now, back);
+  const monthStart = (back) => monthOf(back).from;
   const num = (v) => parseFloat(v || 0) || 0;
   const r2 = (n) => Math.round(n * 100) / 100;
 
@@ -2156,7 +2223,7 @@ async function dashboard_targetTracker(prisma, companyId) {
   activeTargets.sort((a, b) => (a.periodEnd - a.periodStart) - (b.periodEnd - b.periodStart));
   const activeTarget = activeTargets[0] || null;
   const periodStart = activeTarget ? new Date(activeTarget.periodStart) : monthStart(0);
-  const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(monthOf(0).to.getTime() - 1);
 
   const historyFrom = monthStart(3);
   const from = periodStart < historyFrom ? periodStart : historyFrom;
@@ -2179,7 +2246,7 @@ async function dashboard_targetTracker(prisma, companyId) {
     const a = monthStart(back), b = new Date(monthStart(back - 1).getTime() - 1);
     const rows = between(sales, a, b);
     return {
-      month: `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`,
+      month: monthOf(back).key, name: monthOf(back).name, short: monthOf(back).short,
       revenue: revenueOf(rows), orders: rows.length, adSpend: adsOf(between(expenses, a, b)),
     };
   });
@@ -2215,7 +2282,8 @@ async function dashboard_targetTracker(prisma, companyId) {
     lastMonthRevenue: months[0].revenue, lastMonthOrders: months[0].orders,
     periodRevenue, periodOrders, periodStart, periodEnd, periodTotalDays, periodDayIdx,
     activeTarget: activeTarget ? { id: activeTarget.id, label: activeTarget.label, periodStart: activeTarget.periodStart, periodEnd: activeTarget.periodEnd, revenueTarget: activeTarget.revenueTarget, savingsRate: activeTarget.savingsRate } : null,
-    targetBasis: activeTarget ? null : { month: best.month, revenue: best.revenue, upliftPercent: TRACKER_UPLIFT * 100 },
+    targetBasis: activeTarget ? null : { month: best.month, name: best.name, revenue: best.revenue, upliftPercent: TRACKER_UPLIFT * 100 },
+    monthBasis: basis, monthName: monthOf(0).name, lastMonthName: monthOf(1).name,
     recentMonths: months,
     growthTarget, growthProgress: growthTarget > 0 ? Math.min(100, (periodRevenue / growthTarget) * 100) : 0,
     remainingToTarget, daysLeft, dailyRevenueRate,
@@ -2240,6 +2308,12 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const { from, to } = req.query;
     const dateFilter = { companyId };
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
+    // "Month" is the company's business month: calendar, or its pay cycle.
+    const { basis, payDay } = await business_monthBasis(prisma, companyId);
+    const now = new Date();
+    const bmNow = business_month(basis, payDay, now), bmLast = business_month(basis, payDay, now, 1);
+    const bmShort = {};
+    const bmKey = (date) => { const m = business_month(basis, payDay, date); bmShort[m.key] = m.short; return m.key; };
 
     const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
     const totalRevenue = sales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
@@ -2261,9 +2335,9 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
-    sales.forEach(s => { const m = s.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); monthlyData[m].fares += parseFloat(s.shippingCost); monthlyData[m].orders += 1; });
-    expenses.forEach(e => { const m = e.date.toISOString().slice(0, 7); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[m].expenses += parseFloat(e.amount); });
-    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({ month, revenue: d.revenue, profit: d.revenue - d.cogs - d.fares - d.expenses, expenses: d.expenses, orders: d.orders }));
+    sales.forEach(s => { const m = bmKey(s.date); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[m].revenue += parseFloat(s.totalPrice); monthlyData[m].cogs += s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0); monthlyData[m].fares += parseFloat(s.shippingCost); monthlyData[m].orders += 1; });
+    expenses.forEach(e => { const m = bmKey(e.date); if (!monthlyData[m]) monthlyData[m] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[m].expenses += parseFloat(e.amount); });
+    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, d]) => ({ month, label: bmShort[month], revenue: d.revenue, profit: d.revenue - d.cogs - d.fares - d.expenses, expenses: d.expenses, orders: d.orders }));
 
     const expenseByCategory = {};
     expenses.forEach(e => { if (!expenseByCategory[e.category]) expenseByCategory[e.category] = 0; expenseByCategory[e.category] += parseFloat(e.amount); });
@@ -2325,12 +2399,11 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const unpaidCashTotal = parseFloat(unpaidCashAgg._sum.totalPrice || 0) - parseFloat(unpaidCashAgg._sum.amountPaid || 0);
 
     // ---- GROWTH ANALYSIS ----
-    const now = new Date();
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    const lastMonthStart = bmLast.from;
+    const lastMonthEnd = new Date(bmLast.to.getTime() - 1);
 
-    const thisMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart);
+    // This business month's orders, whatever date range the dashboard is showing.
+    const thisMonthSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: bmNow.from, lt: bmNow.to } }, include: { items: true } });
     const thisMonthRevenue = thisMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const thisMonthOrders = thisMonthSales.length;
     const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + r.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0), 0);
@@ -2339,8 +2412,8 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
     const lastMonthRevenue = lastMonthSalesData.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const lastMonthOrders = lastMonthSalesData.length;
 
-    const dayOfMonth = now.getDate();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dayOfMonth = business_dayIndex(bmNow, now);
+    const daysInMonth = bmNow.days;
     const dailyRevenueRate = dayOfMonth > 0 ? thisMonthRevenue / dayOfMonth : 0;
     const dailyOrderRate = dayOfMonth > 0 ? thisMonthOrders / dayOfMonth : 0;
     const projectedMonthRevenue = dailyRevenueRate * daysInMonth;
@@ -2418,7 +2491,8 @@ app.get('/api/v1/dashboard', authenticate, requireAdmin, async (req, res) => {
       };
     }
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, unpaidCashOrders, unpaidCashCount, unpaidCashTotal, growth, savings, consultantImpact });
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, unpaidCashOrders, unpaidCashCount, unpaidCashTotal, growth, savings, consultantImpact,
+      businessMonth: { basis, payDay, current: { name: bmNow.name, short: bmNow.short }, previous: { name: bmLast.name, short: bmLast.short } } });
   } catch (err) { console.error('DASHBOARD ERROR:', err); res.status(500).json({ error: err.message, stack: err.stack }); }
 });
 
@@ -4322,13 +4396,21 @@ const money_r2 = (n) => Math.round(n * 100) / 100;
 app.get('/api/v1/reports/money-splits', authenticate, requireAdmin, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    const { month } = req.query; // YYYY-MM, defaults to the current month in Zambia
-    const lusakaNow = new Date(Date.now() + 2 * 3600 * 1000);
-    const fallback = `${lusakaNow.getUTCFullYear()}-${String(lusakaNow.getUTCMonth() + 1).padStart(2, '0')}`;
-    const [y, m] = (/^\d{4}-\d{2}$/.test(month || '') ? month : fallback).split('-').map(Number);
-    // Zambia is UTC+2 all year: the month starts at midnight there, 22:00 the evening before in UTC.
-    const start = new Date(Date.UTC(y, m - 1, 1) - 2 * 3600 * 1000);
-    const end = new Date(Date.UTC(y, m, 1) - 2 * 3600 * 1000);
+    // A calendar month by default, because this is where the books are reconciled against tax
+    // returns and bank statements; basis=cycle splits a pay cycle instead. `month` is the
+    // YYYY-MM the period starts in, and defaults to the one running now in Zambia.
+    const { month } = req.query;
+    const basis = req.query.basis === 'cycle' ? 'cycle' : 'calendar';
+    const { payDay } = await business_monthBasis(prisma, companyId);
+    const current = business_month(basis, payDay);
+    let period = current;
+    if (/^\d{4}-\d{2}$/.test(month || '')) {
+      const [my, mm] = month.split('-').map(Number);
+      // Any moment inside the period that starts in that month: noon on its first day.
+      period = business_month(basis, payDay, new Date(Date.UTC(my, mm - 1, basis === 'cycle' ? payDay : 1, 10)));
+    }
+    const start = period.from;
+    const end = period.to;
 
     const [sales, expenses, settings] = await Promise.all([
       prisma.sale.findMany({
@@ -4375,7 +4457,10 @@ app.get('/api/v1/reports/money-splits', authenticate, requireAdmin, async (req, 
     const ownerOwedBack = Math.max(0, actual.ownerDraw - targetAmounts.ownerDraw);
 
     res.json({
-      month: `${y}-${String(m).padStart(2, '0')}`,
+      month: period.key,
+      basis, name: period.name,
+      // The last twelve periods on this basis, newest first, to choose from.
+      periods: Array.from({ length: 12 }, (_, i) => business_month(basis, payDay, new Date(), i)).map(x => ({ month: x.key, name: x.name })),
       revenue,
       collected: money_r2(collected),
       uncollected: money_r2(revenue - collected),
@@ -4839,6 +4924,14 @@ const PAYROLL_UNPAID_ORDER_CYCLES = 3;
 const payroll_isLabel = (s) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(s || ''));
 const payroll_num = (v) => parseFloat(v || 0) || 0;
 const payroll_personKey = (o) => (o.consultantId ? `c:${o.consultantId}` : `s:${o.staffId}`);
+
+// A cycle's wage cost belongs to the cycle, so it is dated the cycle's last day (the day before
+// pay day), not the day it was finalised, which falls in the next cycle. Stored the way the
+// Expenses form stores a date: that day at 00:00 UTC.
+const payroll_cycleLastDay = (label, payDay) => {
+  const [y, m] = label.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, payDay - 1));
+};
 
 // A date typed as YYYY-MM-DD is read as midday local time, so it stays the same calendar day
 // whatever the server's time zone. Blank means today.
@@ -5398,6 +5491,7 @@ app.post('/api/v1/payroll/run/finalise', authenticate, requireAdmin, async (req,
             data: {
               description: `${slip.kind === 'commission' ? 'Commission' : 'Salary'}: ${slip.name} (${periodText})`,
               amount: slip.wageCost, category: PAYROLL_EXPENSE_CATEGORY, companyId,
+              date: payroll_cycleLastDay(run.period.label, run.period.payDay),
             },
           });
           expenseId = expense.id;

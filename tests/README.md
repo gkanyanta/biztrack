@@ -24,6 +24,7 @@ something else.
 | Suite | What it protects |
 |---|---|
 | `advances` | Salary advances staff ask for themselves: the instalments they state, the office approving on its own terms or declining, and repayments starting on the first pay day after the money is handed over, never a finalised cycle, with one loan per payout |
+| `business-month` | A company counting by calendar month or by pay cycle: the dashboard's "this month", profit and chart following the choice from midnight in Zambia on pay day, a date range not moving it, and Money Splits showing either |
 | `delivery-cash` | Cash a rider collects reaching the order's ledger only when the office confirms it, and coming back out when that is undone |
 | `meta-feed` | The Facebook/WhatsApp catalogue feed: ZMW pricing and sale prices, variants, stock, image URLs, CSV escaping, one company's products never in another's feed, no cost or supplier data, and a database failure or empty catalogue never published as an empty feed |
 | `money-splits` | Money splits counts staff pay from Payroll and the fares on orders, shows what is still to collect, flags buckets with no target yet, and cuts months at midnight in Zambia |

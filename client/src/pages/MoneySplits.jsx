@@ -38,6 +38,8 @@ function recentMonths(n = 6) {
 
 export default function MoneySplits() {
   const [ym, setYm] = useState(currentYM());
+  // Calendar months by default, to reconcile with tax returns and bank statements; or pay cycles.
+  const [basis, setBasis] = useState('calendar');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showTargets, setShowTargets] = useState(false);
@@ -46,13 +48,13 @@ export default function MoneySplits() {
 
   const load = () => {
     setLoading(true);
-    getMoneySplits({ month: ym })
+    getMoneySplits({ month: ym || undefined, basis })
       .then(res => setData(res.data))
       .catch(() => toast.error('Failed to load money splits'))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, [ym]);
+  useEffect(load, [ym, basis]);
 
   const openTargets = () => {
     setEditTargets({ ...(data?.targets || DEFAULT_ALLOCATION_TARGETS) });
@@ -96,9 +98,14 @@ export default function MoneySplits() {
           <p className="text-xs text-gray-500">Where each kwacha of revenue is going — targets vs actual</p>
         </div>
         <div className="flex gap-2 items-center">
-          <select value={ym} onChange={e => setYm(e.target.value)}
+          <select value={basis} onChange={e => { setBasis(e.target.value); setYm(''); }}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none">
-            {recentMonths(12).map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+            <option value="calendar">By month</option>
+            <option value="cycle">By pay cycle</option>
+          </select>
+          <select value={data.month} onChange={e => setYm(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm outline-none">
+            {(data.periods || recentMonths(12).map(m => ({ month: m, name: monthLabel(m) }))).map(p => <option key={p.month} value={p.month}>{p.name}</option>)}
           </select>
           <button onClick={openTargets}
             className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
@@ -111,7 +118,7 @@ export default function MoneySplits() {
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-5 text-white shadow-lg">
         <div className="flex items-end justify-between flex-wrap gap-3">
           <div>
-            <p className="text-xs text-blue-100">Confirmed revenue — {monthLabel(data.month)}</p>
+            <p className="text-xs text-blue-100">Confirmed revenue — {data.name || monthLabel(data.month)}</p>
             <p className="text-3xl font-bold mt-1">{formatMoney(revenue)}</p>
             {data.uncollected > 0 && (
               <p className="text-xs text-blue-100 mt-0.5">{formatMoney(data.collected)} collected · {formatMoney(data.uncollected)} still to collect</p>

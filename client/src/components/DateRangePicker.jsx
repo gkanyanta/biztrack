@@ -1,18 +1,25 @@
 import { FiCalendar, FiX } from 'react-icons/fi';
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// Dates as the YYYY-MM-DD the date inputs use, in local time. (toISOString would give the UTC
+// day, which in Zambia is the day before for anything at midnight.)
+const iso = (d) => d.toLocaleDateString('en-CA');
+const todayISO = () => iso(new Date());
 const daysAgoISO = (n) => {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return iso(d);
 };
 const firstOfMonthISO = () => {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+  return iso(new Date(d.getFullYear(), d.getMonth(), 1));
 };
-const firstOfYearISO = () => {
+const firstOfYearISO = () => iso(new Date(new Date().getFullYear(), 0, 1));
+
+// The pay cycle runs from pay day to the day before the next one, e.g. 11 Nov to 10 Dec.
+const cycleStart = (payDay, back = 0) => {
   const d = new Date();
-  return new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10);
+  const month = (d.getDate() >= payDay ? d.getMonth() : d.getMonth() - 1) - back;
+  return new Date(d.getFullYear(), month, payDay);
 };
 
 const PRESETS = [
@@ -22,8 +29,20 @@ const PRESETS = [
   { label: 'MTD', get: () => ({ from: firstOfMonthISO(), to: todayISO() }) },
   { label: 'YTD', get: () => ({ from: firstOfYearISO(), to: todayISO() }) },
 ];
+const CYCLE_PRESETS = (payDay) => [
+  { label: 'This cycle', get: () => ({ from: iso(cycleStart(payDay)), to: todayISO() }) },
+  {
+    label: 'Last cycle',
+    get: () => {
+      const end = cycleStart(payDay);
+      end.setDate(end.getDate() - 1);
+      return { from: iso(cycleStart(payDay, 1)), to: iso(end) };
+    },
+  },
+];
 
-export default function DateRangePicker({ from, to, onChange, className = '' }) {
+// With a payDay, it also offers the pay cycle running now and the one before it.
+export default function DateRangePicker({ from, to, onChange, payDay, className = '' }) {
   const apply = (f, t) => onChange({ from: f || '', to: t || '' });
   const hasRange = from || to;
   return (
@@ -32,7 +51,7 @@ export default function DateRangePicker({ from, to, onChange, className = '' }) 
         <FiCalendar size={14} />
         <span className="text-xs font-medium">Range:</span>
       </div>
-      {PRESETS.map((p) => (
+      {[...PRESETS, ...(payDay ? CYCLE_PRESETS(payDay) : [])].map((p) => (
         <button
           key={p.label}
           type="button"
