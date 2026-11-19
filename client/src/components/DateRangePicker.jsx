@@ -51,16 +51,22 @@ export default function DateRangePicker({ from, to, onChange, payDay, className 
         <FiCalendar size={14} />
         <span className="text-xs font-medium">Range:</span>
       </div>
-      {[...PRESETS, ...(payDay ? CYCLE_PRESETS(payDay) : [])].map((p) => (
-        <button
-          key={p.label}
-          type="button"
-          onClick={() => { const r = p.get(); apply(r.from, r.to); }}
-          className="px-2 py-1 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
-        >
-          {p.label}
-        </button>
-      ))}
+      {[...PRESETS, ...(payDay ? CYCLE_PRESETS(payDay) : [])].map((p) => {
+        // The preset whose dates are the ones showing is lit, so a click visibly takes.
+        const r = p.get();
+        const active = r.from === from && r.to === to;
+        return (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => apply(r.from, r.to)}
+            aria-pressed={active}
+            className={`px-2 py-1 text-xs border rounded-lg ${active ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 hover:bg-gray-50 text-gray-700'}`}
+          >
+            {p.label}
+          </button>
+        );
+      })}
       <input
         type="date"
         value={from || ''}

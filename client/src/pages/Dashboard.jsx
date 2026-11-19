@@ -65,15 +65,13 @@ export default function Dashboard() {
   const bm = data.businessMonth || { basis: 'calendar', current: {}, previous: {} };
   const unit = bm.basis === 'cycle' ? 'cycle' : 'month';
   const Unit = bm.basis === 'cycle' ? 'Cycle' : 'Month';
+  const dayText = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const rangeText = !range.from && !range.to ? 'all time'
+    : range.from === range.to ? dayText(range.from)
+      : `${range.from ? dayText(range.from) : 'the start'} – ${range.to ? dayText(range.to) : 'today'}`;
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
-      {/* Date range filter */}
-      <div className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 flex items-center justify-between gap-2">
-        <DateRangePicker from={range.from} to={range.to} onChange={setRange} payDay={bm.payDay} />
-        {loading && <span className="text-xs text-gray-400">Updating...</span>}
-      </div>
-
       <PayrollDueAlert />
       <AdvanceRequestsAlert />
       <OrderQueriesAlert />
@@ -351,6 +349,19 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      {/* The date range sits with what it controls: the deliveries, cards and charts below. The
+          sections above always show the business month running now. */}
+      <div className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700">Figures for {rangeText}</h3>
+            <p className="text-xs text-gray-400">The cards, charts and deliveries below follow this range. The sections above always show {bm.current.name || `this ${unit}`}.</p>
+          </div>
+          {loading && <span className="text-xs text-gray-400 whitespace-nowrap">Updating…</span>}
+        </div>
+        <DateRangePicker from={range.from} to={range.to} onChange={setRange} payDay={bm.payDay} />
+      </div>
 
       {/* Own-delivery economics — is the bike beating what couriers charged? */}
       {delivery && delivery.overall.assigned > 0 && (
