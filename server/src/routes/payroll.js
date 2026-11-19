@@ -427,6 +427,14 @@ const payroll_isLabel = (s) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(s || ''));
 const payroll_num = (v) => parseFloat(v || 0) || 0;
 const payroll_personKey = (o) => (o.consultantId ? `c:${o.consultantId}` : `s:${o.staffId}`);
 
+// A cycle's wage cost belongs to the cycle, so it is dated the cycle's last day (the day before
+// pay day), not the day it was finalised, which falls in the next cycle. Stored the way the
+// Expenses form stores a date: that day at 00:00 UTC.
+const payroll_cycleLastDay = (label, payDay) => {
+  const [y, m] = label.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, payDay - 1));
+};
+
 // A date typed as YYYY-MM-DD is read as midday local time, so it stays the same calendar day
 // whatever the server's time zone. Blank means today.
 function payroll_parseDate(v) {
@@ -987,6 +995,7 @@ router.post('/run/finalise', async (req, res) => {
             data: {
               description: `${slip.kind === 'commission' ? 'Commission' : 'Salary'}: ${slip.name} (${periodText})`,
               amount: slip.wageCost, category: PAYROLL_EXPENSE_CATEGORY, companyId,
+              date: payroll_cycleLastDay(run.period.label, run.period.payDay),
             },
           });
           expenseId = expense.id;

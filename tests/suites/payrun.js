@@ -82,6 +82,10 @@ module.exports = {
     const fin = await api('POST', '/payroll/run/finalise', { period: L2 });
     eq('the closed cycle is finalised', [fin.status, fin.body.status], [201, 'final']);
     eq('and cannot be finalised twice', (await api('POST', '/payroll/run/finalise', { period: L2 })).status, 400);
+    const [ly, lm] = L2.split('-').map(Number);
+    const finaliseCosts = (await wages()).filter(w => /^(Salary|Commission): /.test(w.description) && w.description.includes('to'));
+    eq('its wage cost is dated the last day of the cycle, not the day it was finalised',
+       [...new Set(finaliseCosts.map(w => w.date.toISOString().slice(0, 10)))], [new Date(Date.UTC(ly, lm - 1, 10)).toISOString().slice(0, 10)]);
     let w = await wages();
     // Annie: 175 earned less 110 recovered. Beatrice: her salary, the advance being a loan and not a second cost.
     eq('the wage cost is booked once, when the cycle closes', w.map(e => Number(e.amount)), [65, 2500]);
@@ -183,6 +187,7 @@ module.exports = {
     section('what the consultant sees');
     const mine = (await (await loginAs(base, 'annie'))('GET', '/dashboard/consultant')).body;
     eq('every finalised payslip, newest first', mine.payslipHistory.map(p => p.period), [L1, L2]);
+    eq('and their figures for the pay cycle running now', [mine.cycle.label, typeof mine.thisCycle.commissionEarned], [L0, 'number']);
     eq('each as it was closed', mine.payslipHistory.map(p => p.netPay), [170, 15]);
     eq('the older one carried forward, the newer one paid', mine.payslipHistory.map(p => [p.carried, p.outstanding]), [[false, 0], [true, 15]]);
     eq('with the lines that explain it', mine.payslipHistory[0].lines.some(l => l.kind === 'loan'), true);

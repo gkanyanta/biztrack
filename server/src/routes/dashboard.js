@@ -2,6 +2,8 @@ const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { calcCommission } = require('../utils/commission');
 const { payrollInternals } = require('./payroll');
+const { getConsultantPayPeriod } = require('../utils/payPeriod');
+const { business_month, business_dayIndex, business_monthBasis } = require('../utils/businessMonth');
 
 router.use(authenticate);
 
@@ -15,20 +17,23 @@ router.get('/consultant', async (req, res) => {
     const consultant = await prisma.consultant.findFirst({ where: { id: consultantId, companyId } });
     if (!consultant) return res.status(404).json({ error: 'Consultant not found' });
 
+    // A consultant is paid by pay cycle, so their figures run by it too, whatever the company
+    // counts its own months by.
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const company = await prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } });
+    const currentCycle = getConsultantPayPeriod(now, company?.consultantPayDay || 11);
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     const allSales = await prisma.sale.findMany({ where: { consultantId, companyId, status: { not: 'Cancelled' } }, include: { items: true }, orderBy: { date: 'desc' } });
-    const monthSales = allSales.filter(s => new Date(s.date) >= monthStart);
+    const cycleSales = allSales.filter(s => { const d = new Date(s.date); return d >= currentCycle.periodFrom && d < currentCycle.periodTo; });
     const todaySales = allSales.filter(s => new Date(s.date) >= todayStart && new Date(s.date) <= todayEnd);
 
     const sum = (arr, fn) => arr.reduce((s, x) => s + fn(x), 0);
-    const productsSoldInMonth = sum(monthSales, s => s.items.reduce((q, i) => q + i.qty, 0));
-
+    const productsSoldInCycle = sum(cycleSales, s => s.items.reduce((q, i) => q + i.qty, 0));
+    const revenueInCycle = sum(cycleSales, s => parseFloat(s.totalPrice));
     const calcComm = (sales) => calcCommission(consultant.payType, consultant.commissionRate, consultant.tierThreshold, consultant.tierRate, sales);
-    const commissionEarnedMonth = calcComm(monthSales);
+    const commissionEarnedCycle = calcComm(cycleSales);
 
     const payments = await prisma.commissionPayment.findMany({ where: { consultantId, companyId }, orderBy: { createdAt: 'desc' } });
     const totalProductsSoldAllTime = sum(allSales, s => s.items.reduce((q, i) => q + i.qty, 0));
@@ -45,9 +50,10 @@ router.get('/consultant', async (req, res) => {
     const payslipHistory = await payrollInternals.payroll_payslipHistory(prisma, companyId, consultantId);
 
     res.json({
-      consultant: { id: consultant.id, name: consultant.name, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
+      consultant: { id: consultant.id, name: consultant.name, payType: consultant.payType, commissionRate: consultant.commissionRate, tierThreshold: consultant.tierThreshold, tierRate: consultant.tierRate, monthlyAllowance: consultant.monthlyAllowance },
+      cycle: { from: currentCycle.periodFrom, to: currentCycle.periodTo, payDate: currentCycle.payDate, label: currentCycle.label },
       today: { ordersCount: todaySales.length, productsSold: sum(todaySales, s => s.items.reduce((q, i) => q + i.qty, 0)), revenue: sum(todaySales, s => parseFloat(s.totalPrice)) },
-      thisMonth: { ordersCount: monthSales.length, productsSold: productsSoldInMonth, revenue: sum(monthSales, s => parseFloat(s.totalPrice)), commissionEarned: commissionEarnedMonth },
+      thisCycle: { ordersCount: cycleSales.length, productsSold: productsSoldInCycle, revenue: revenueInCycle, commissionEarned: commissionEarnedCycle },
       allTime: { ordersCount: allSales.length, productsSold: totalProductsSoldAllTime, commissionEarned: commissionEarnedAllTime, commissionPaid, allowancePaid, advancePaid, balance },
       recentSales: allSales.slice(0, 10).map(s => ({ id: s.id, orderNumber: s.orderNumber, date: s.date, customerName: s.customerName, totalPrice: s.totalPrice, status: s.status, paymentStatus: s.paymentStatus, productsCount: s.items.reduce((q, i) => q + i.qty, 0) })),
       recentPayments: payments.slice(0, 10),
@@ -68,7 +74,10 @@ const TRACKER_AD_CATEGORY = 'Facebook Ads';
 
 async function dashboard_targetTracker(prisma, companyId) {
   const now = new Date();
-  const monthStart = (back) => new Date(now.getFullYear(), now.getMonth() - back, 1);
+  // "Month" is the company's business month: calendar, or its pay cycle.
+  const { basis, payDay } = await business_monthBasis(prisma, companyId);
+  const monthOf = (back) => business_month(basis, payDay, now, back);
+  const monthStart = (back) => monthOf(back).from;
   const num = (v) => parseFloat(v || 0) || 0;
   const r2 = (n) => Math.round(n * 100) / 100;
 
@@ -77,7 +86,7 @@ async function dashboard_targetTracker(prisma, companyId) {
   activeTargets.sort((a, b) => (a.periodEnd - a.periodStart) - (b.periodEnd - b.periodStart));
   const activeTarget = activeTargets[0] || null;
   const periodStart = activeTarget ? new Date(activeTarget.periodStart) : monthStart(0);
-  const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(monthOf(0).to.getTime() - 1);
 
   const historyFrom = monthStart(3);
   const from = periodStart < historyFrom ? periodStart : historyFrom;
@@ -100,7 +109,7 @@ async function dashboard_targetTracker(prisma, companyId) {
     const a = monthStart(back), b = new Date(monthStart(back - 1).getTime() - 1);
     const rows = between(sales, a, b);
     return {
-      month: `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, '0')}`,
+      month: monthOf(back).key, name: monthOf(back).name, short: monthOf(back).short,
       revenue: revenueOf(rows), orders: rows.length, adSpend: adsOf(between(expenses, a, b)),
     };
   });
@@ -136,7 +145,8 @@ async function dashboard_targetTracker(prisma, companyId) {
     lastMonthRevenue: months[0].revenue, lastMonthOrders: months[0].orders,
     periodRevenue, periodOrders, periodStart, periodEnd, periodTotalDays, periodDayIdx,
     activeTarget: activeTarget ? { id: activeTarget.id, label: activeTarget.label, periodStart: activeTarget.periodStart, periodEnd: activeTarget.periodEnd, revenueTarget: activeTarget.revenueTarget, savingsRate: activeTarget.savingsRate } : null,
-    targetBasis: activeTarget ? null : { month: best.month, revenue: best.revenue, upliftPercent: TRACKER_UPLIFT * 100 },
+    targetBasis: activeTarget ? null : { month: best.month, name: best.name, revenue: best.revenue, upliftPercent: TRACKER_UPLIFT * 100 },
+    monthBasis: basis, monthName: monthOf(0).name, lastMonthName: monthOf(1).name,
     recentMonths: months,
     growthTarget, growthProgress: growthTarget > 0 ? Math.min(100, (periodRevenue / growthTarget) * 100) : 0,
     remainingToTarget, daysLeft, dailyRevenueRate,
@@ -165,6 +175,12 @@ router.get('/', requireAdmin, async (req, res) => {
     if (from || to) { dateFilter.date = {}; if (from) dateFilter.date.gte = new Date(from); if (to) dateFilter.date.lte = new Date(to + 'T23:59:59.999Z'); }
 
     const saleCOGS = (s) => s.items.reduce((sum, i) => sum + (parseFloat(i.costPrice) * i.qty), 0);
+    // "Month" is the company's business month: calendar, or its pay cycle.
+    const { basis, payDay } = await business_monthBasis(prisma, companyId);
+    const now = new Date();
+    const bmNow = business_month(basis, payDay, now), bmLast = business_month(basis, payDay, now, 1);
+    const bmShort = {};
+    const bmKey = (date) => { const m = business_month(basis, payDay, date); bmShort[m.key] = m.short; return m.key; };
 
     const sales = await prisma.sale.findMany({ where: { status: { not: 'Cancelled' }, ...dateFilter }, include: { items: true } });
     const totalRevenue = sales.reduce((sum, s) => sum + parseFloat(s.totalPrice), 0);
@@ -187,9 +203,9 @@ router.get('/', requireAdmin, async (req, res) => {
     const profitMargin = totalCOGS > 0 ? (netProfit / totalCOGS) * 100 : 0;
 
     const monthlyData = {};
-    sales.forEach(s => { const month = s.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[month].revenue += parseFloat(s.totalPrice); monthlyData[month].cogs += saleCOGS(s); monthlyData[month].fares += parseFloat(s.shippingCost); monthlyData[month].orders += 1; });
-    expenses.forEach(e => { const month = e.date.toISOString().slice(0, 7); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[month].expenses += parseFloat(e.amount); });
-    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, data]) => ({ month, revenue: data.revenue, profit: data.revenue - data.cogs - data.fares - data.expenses, expenses: data.expenses, orders: data.orders }));
+    sales.forEach(s => { const month = bmKey(s.date); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[month].revenue += parseFloat(s.totalPrice); monthlyData[month].cogs += saleCOGS(s); monthlyData[month].fares += parseFloat(s.shippingCost); monthlyData[month].orders += 1; });
+    expenses.forEach(e => { const month = bmKey(e.date); if (!monthlyData[month]) monthlyData[month] = { revenue: 0, cogs: 0, fares: 0, expenses: 0, orders: 0 }; monthlyData[month].expenses += parseFloat(e.amount); });
+    const monthlySummary = Object.entries(monthlyData).sort(([a], [b]) => a.localeCompare(b)).map(([month, data]) => ({ month, label: bmShort[month], revenue: data.revenue, profit: data.revenue - data.cogs - data.fares - data.expenses, expenses: data.expenses, orders: data.orders }));
 
     const expenseByCategory = {};
     expenses.forEach(e => { if (!expenseByCategory[e.category]) expenseByCategory[e.category] = 0; expenseByCategory[e.category] += parseFloat(e.amount); });
@@ -251,10 +267,11 @@ router.get('/', requireAdmin, async (req, res) => {
     const unpaidCashTotal = parseFloat(unpaidCashAgg._sum.totalPrice || 0) - parseFloat(unpaidCashAgg._sum.amountPaid || 0);
 
     // ---- GROWTH TRACKER ----
-    const now = new Date();
-    const thisMonthStart2 = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    const thisMonthStart2 = bmNow.from;
+    const lastMonthStart = bmLast.from;
+    const lastMonthEnd = new Date(bmLast.to.getTime() - 1);
+    // This business month's orders, whatever date range the dashboard is showing.
+    const monthSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: bmNow.from, lt: bmNow.to } }, include: { items: true } });
 
     const lastMonthSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: lastMonthStart, lte: lastMonthEnd } }, include: { items: true } });
     const lastMonthRevenue = lastMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
@@ -267,14 +284,14 @@ router.get('/', requireAdmin, async (req, res) => {
 
     // Period window: user-defined target's period if set, otherwise current month
     const periodStart = activeTarget ? new Date(activeTarget.periodStart) : thisMonthStart2;
-    const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const periodEnd = activeTarget ? new Date(activeTarget.periodEnd) : new Date(bmNow.to.getTime() - 1);
     const periodSales = await prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, date: { gte: periodStart, lte: periodEnd } }, include: { items: true } });
     const periodRevenue = periodSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const periodOrders = periodSales.length;
     const periodCOGS = periodSales.reduce((s, r) => s + saleCOGS(r), 0);
 
     // Legacy "this month" still used by reinvestment math below
-    const currentMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart2);
+    const currentMonthSales = monthSales;
     const thisMonthRevenue2 = currentMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const thisMonthOrders = currentMonthSales.length;
     const thisMonthCOGS2 = currentMonthSales.reduce((s, r) => s + saleCOGS(r), 0);
@@ -293,14 +310,13 @@ router.get('/', requireAdmin, async (req, res) => {
     const todaySavings = Math.max(0, todayGrossProfit * SAVINGS_RATE);
     const todayReinvest = Math.max(0, todayGrossProfit - todaySavings);
 
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const thisMonthSales = sales.filter(s => new Date(s.date) >= thisMonthStart);
+    const thisMonthSales = monthSales;
     const thisMonthRevenue = thisMonthSales.reduce((s, r) => s + parseFloat(r.totalPrice), 0);
     const thisMonthCOGS = thisMonthSales.reduce((s, r) => s + saleCOGS(r), 0);
     const thisMonthShippingCost = thisMonthSales.reduce((s, r) => s + parseFloat(r.shippingCost), 0);
     const thisMonthGrossProfit = thisMonthRevenue - thisMonthCOGS - thisMonthShippingCost;
     const thisMonthSavingsTotal = Math.max(0, thisMonthGrossProfit * SAVINGS_RATE);
-    const dayOfMonth = now.getDate();
+    const dayOfMonth = business_dayIndex(bmNow, now);
 
     const savings = {
       rate: SAVINGS_RATE,
@@ -348,7 +364,8 @@ router.get('/', requireAdmin, async (req, res) => {
       };
     }
 
-    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, unpaidCashOrders, unpaidCashCount, unpaidCashTotal, growth, savings, consultantImpact });
+    res.json({ totalRevenue, totalCOGS, grossProfit, totalExpenses, netProfit, totalOrders, avgOrderValue, adSpend, roas, profitMargin, monthlySummary, expenseByCategory, topProducts, lowStockProducts, pendingOrders, unpaidCashOrders, unpaidCashCount, unpaidCashTotal, growth, savings, consultantImpact,
+      businessMonth: { basis, payDay, current: { name: bmNow.name, short: bmNow.short }, previous: { name: bmLast.name, short: bmLast.short } } });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const XLSX = require('xlsx');
+const { business_month, business_monthBasis } = require('../utils/businessMonth');
 
 router.use(authenticate);
 router.use(requireAdmin);
@@ -37,13 +38,21 @@ router.get('/money-splits', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    const { month } = req.query; // YYYY-MM, defaults to the current month in Zambia
-    const lusakaNow = new Date(Date.now() + 2 * 3600 * 1000);
-    const fallback = `${lusakaNow.getUTCFullYear()}-${String(lusakaNow.getUTCMonth() + 1).padStart(2, '0')}`;
-    const [y, m] = (/^\d{4}-\d{2}$/.test(month || '') ? month : fallback).split('-').map(Number);
-    // Zambia is UTC+2 all year: the month starts at midnight there, 22:00 the evening before in UTC.
-    const start = new Date(Date.UTC(y, m - 1, 1) - 2 * 3600 * 1000);
-    const end = new Date(Date.UTC(y, m, 1) - 2 * 3600 * 1000);
+    // A calendar month by default, because this is where the books are reconciled against tax
+    // returns and bank statements; basis=cycle splits a pay cycle instead. `month` is the
+    // YYYY-MM the period starts in, and defaults to the one running now in Zambia.
+    const { month } = req.query;
+    const basis = req.query.basis === 'cycle' ? 'cycle' : 'calendar';
+    const { payDay } = await business_monthBasis(prisma, companyId);
+    const current = business_month(basis, payDay);
+    let period = current;
+    if (/^\d{4}-\d{2}$/.test(month || '')) {
+      const [my, mm] = month.split('-').map(Number);
+      // Any moment inside the period that starts in that month: noon on its first day.
+      period = business_month(basis, payDay, new Date(Date.UTC(my, mm - 1, basis === 'cycle' ? payDay : 1, 10)));
+    }
+    const start = period.from;
+    const end = period.to;
 
     const [sales, expenses, settings] = await Promise.all([
       prisma.sale.findMany({
@@ -90,7 +99,10 @@ router.get('/money-splits', async (req, res) => {
     const ownerOwedBack = Math.max(0, actual.ownerDraw - targetAmounts.ownerDraw);
 
     res.json({
-      month: `${y}-${String(m).padStart(2, '0')}`,
+      month: period.key,
+      basis, name: period.name,
+      // The last twelve periods on this basis, newest first, to choose from.
+      periods: Array.from({ length: 12 }, (_, i) => business_month(basis, payDay, new Date(), i)).map(x => ({ month: x.key, name: x.name })),
       revenue,
       collected: r2(collected),
       uncollected: r2(revenue - collected),

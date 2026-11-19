@@ -61,15 +61,17 @@ export default function Dashboard() {
   ];
 
   const expensePieData = Object.entries(data.expenseByCategory).map(([name, value]) => ({ name, value }));
+  // "Month" here is the company's business month: a calendar month, or its pay cycle.
+  const bm = data.businessMonth || { basis: 'calendar', current: {}, previous: {} };
+  const unit = bm.basis === 'cycle' ? 'cycle' : 'month';
+  const Unit = bm.basis === 'cycle' ? 'Cycle' : 'Month';
+  const dayText = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const rangeText = !range.from && !range.to ? 'all time'
+    : range.from === range.to ? dayText(range.from)
+      : `${range.from ? dayText(range.from) : 'the start'} – ${range.to ? dayText(range.to) : 'today'}`;
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
-      {/* Date range filter */}
-      <div className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 flex items-center justify-between gap-2">
-        <DateRangePicker from={range.from} to={range.to} onChange={setRange} />
-        {loading && <span className="text-xs text-gray-400">Updating...</span>}
-      </div>
-
       <PayrollDueAlert />
       <AdvanceRequestsAlert />
       <OrderQueriesAlert />
@@ -77,14 +79,14 @@ export default function Dashboard() {
       {/* Growth Tracker - Top Priority */}
       {g && (() => {
         const at = g.activeTarget;
-        const periodLabel = at ? (at.label || `${new Date(at.periodStart).toLocaleDateString()} – ${new Date(at.periodEnd).toLocaleDateString()}`) : 'This Month';
+        const periodLabel = at ? (at.label || `${new Date(at.periodStart).toLocaleDateString()} – ${new Date(at.periodEnd).toLocaleDateString()}`) : (bm.current.name || 'This Month');
         const revenue = at ? g.periodRevenue : g.thisMonthRevenue;
         const orders = at ? g.periodOrders : g.thisMonthOrders;
         return (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-5 text-white shadow-lg">
           <div className="flex items-center gap-2 mb-4">
             <FiTarget size={20} />
-            <h3 className="font-bold text-lg">{at ? 'Target Tracker' : 'Monthly Target Tracker'}</h3>
+            <h3 className="font-bold text-lg">{at ? 'Target Tracker' : `${bm.basis === 'cycle' ? 'Pay Cycle' : 'Monthly'} Target Tracker`}</h3>
             <span className="ml-auto text-blue-100 text-xs font-medium bg-white/15 px-2 py-1 rounded-full">{periodLabel}</span>
             <Link to="/reports?tab=growth" className="text-blue-100 text-xs hover:text-white hover:underline">Details →</Link>
           </div>
@@ -96,9 +98,9 @@ export default function Dashboard() {
               <p className="text-blue-200 text-xs">{orders} orders</p>
             </div>
             <div className="bg-white/15 rounded-lg p-3">
-              <p className="text-blue-100 text-xs">{at ? 'Target' : `Target (best recent month + ${g.targetBasis.upliftPercent}%)`}</p>
+              <p className="text-blue-100 text-xs">{at ? 'Target' : `Target (best recent ${unit} + ${g.targetBasis.upliftPercent}%)`}</p>
               <p className="text-xl font-bold">{formatMoney(g.growthTarget)}</p>
-              <p className="text-blue-200 text-xs">{at ? `${(parseFloat(at.savingsRate) * 100).toFixed(1)}% savings rate` : `Best: ${formatMoney(g.targetBasis.revenue)} in ${g.targetBasis.month} · last month ${formatMoney(g.lastMonthRevenue)}`}</p>
+              <p className="text-blue-200 text-xs">{at ? `${(parseFloat(at.savingsRate) * 100).toFixed(1)}% savings rate` : `Best: ${formatMoney(g.targetBasis.revenue)} in ${g.targetBasis.name || g.targetBasis.month} · last ${unit} ${formatMoney(g.lastMonthRevenue)}`}</p>
             </div>
             <div className="bg-white/15 rounded-lg p-3">
               <p className="text-blue-100 text-xs">Projected (end of period)</p>
@@ -204,11 +206,11 @@ export default function Dashboard() {
           <div className="bg-white/10 rounded-lg p-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div>
-                <span className="text-emerald-200">This Month Profit</span>
+                <span className="text-emerald-200">This {Unit} Profit</span>
                 <p className="font-semibold text-sm">{formatMoney(data.savings.thisMonth.grossProfit)}</p>
               </div>
               <div>
-                <span className="text-emerald-200">Total Saved This Month</span>
+                <span className="text-emerald-200">Total Saved This {Unit}</span>
                 <p className="font-semibold text-sm">{formatMoney(data.savings.thisMonth.totalSavings)}</p>
               </div>
               <div>
@@ -280,7 +282,7 @@ export default function Dashboard() {
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
           <div className="flex items-center gap-2 mb-4">
             <FiUserCheck className="text-indigo-600" size={18} />
-            <h3 className="text-sm font-bold text-gray-800">Consultant Impact (This Month)</h3>
+            <h3 className="text-sm font-bold text-gray-800">Consultant Impact ({bm.current.name || 'This Month'})</h3>
             <Link to="/consultants" className="ml-auto text-xs text-blue-600 hover:text-blue-800">Details →</Link>
           </div>
 
@@ -348,6 +350,19 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* The date range sits with what it controls: the deliveries, cards and charts below. The
+          sections above always show the business month running now. */}
+      <div className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700">Figures for {rangeText}</h3>
+            <p className="text-xs text-gray-400">The cards, charts and deliveries below follow this range. The sections above always show {bm.current.name || `this ${unit}`}.</p>
+          </div>
+          {loading && <span className="text-xs text-gray-400 whitespace-nowrap">Updating…</span>}
+        </div>
+        <DateRangePicker from={range.from} to={range.to} onChange={setRange} payDay={bm.payDay} />
+      </div>
+
       {/* Own-delivery economics — is the bike beating what couriers charged? */}
       {delivery && delivery.overall.assigned > 0 && (
         <Link to="/deliveries" className="block bg-white rounded-xl p-4 shadow-sm border border-gray-100 hover:shadow-md hover:border-blue-200 transition-shadow">
@@ -405,11 +420,11 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {data.monthlySummary.length > 0 && (
           <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">Monthly Revenue vs Profit</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-4">{bm.basis === 'cycle' ? 'Revenue vs Profit by Pay Cycle' : 'Monthly Revenue vs Profit'}</h3>
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={data.monthlySummary}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v) => formatMoney(v)} />
                 <Legend />
@@ -442,7 +457,7 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={data.monthlySummary}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v) => formatMoney(v)} />
                 <Line type="monotone" dataKey="revenue" stroke="#3B82F6" strokeWidth={2} />

@@ -205,6 +205,22 @@ export default function Settings() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div className="border-t border-gray-200 pt-4 mt-2">
+            <h4 className="text-sm font-medium text-gray-500 mb-3">Business month</h4>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Count months by</label>
+            <select value={settings.monthBasis === 'cycle' ? 'cycle' : 'calendar'}
+              onChange={e => setSettings({...settings, monthBasis: e.target.value})}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="calendar">Calendar month (1st to the end of the month)</option>
+              <option value="cycle">Pay cycle (pay day to the day before the next pay day)</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              What "this month" means on the dashboard: the target tracker, profit and savings, Consultant Impact and the monthly charts.
+              Choose pay cycle if you judge sales and pay on the same window. Money Splits can show either.
+            </p>
+          </div>
+          <div className="border-t border-gray-200 pt-4 mt-2">
             <h4 className="text-sm font-medium text-gray-500 mb-3">Currency</h4>
           </div>
           <div>
