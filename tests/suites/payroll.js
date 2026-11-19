@@ -81,15 +81,18 @@ module.exports = {
   eq('and he is owed again', find(s.salaried, 'Greg Kanyanta').balance, 3000);
 
   section('consultants are paid the same way now');
-  const cPay = await api('POST', `/consultants/${annieId}/payments`, { amount: 50, type: 'commission' });
+  const cComm = await api('POST', `/consultants/${annieId}/payments`, { amount: 50, type: 'commission' });
+  eq('commission cannot be paid from the Consultants page, only from its payslip', cComm.status, 400);
+  const cPay = await api('POST', `/consultants/${annieId}/payments`, { amount: 50, type: 'allowance' });
   eq('consultant payment accepted', cPay.status, 201);
   eq('it raised a wage expense too', (await wages()).length, 2);
   eq('linked to the payment', !!cPay.body.expenseId, true);
+  const before = find((await api('GET', '/payroll/summary')).body.commissioned, 'Annie').balance;
   const cAdv = await api('POST', `/consultants/${annieId}/payments`, { amount: 200, type: 'advance' });
   eq('a consultant advance raises none', cAdv.body.expenseId, null);
   eq('so the count holds', (await wages()).length, 2);
   s = (await api('GET', '/payroll/summary')).body;
-  eq('her balance nets the advance', find(s.commissioned, 'Annie').balance, -200);
+  near('her balance nets the advance', find(s.commissioned, 'Annie').balance, before - 200, 0.01);
 
   section('the payroll totals');
   s = (await api('GET', '/payroll/summary')).body;

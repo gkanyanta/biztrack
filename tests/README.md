@@ -30,7 +30,7 @@ something else.
 | `profit` | The P&L, sales report, dashboard and profit sort count the delivery charge and discount once (they are already in the order total), take off rider fares, and sort highest profit first |
 | `order-queries` | The office asks a consultant about an order and the consultant answers: one thread per order, only the order's consultant can see or reply, whose turn it is, closing and asking again, and every payment note on the Sales Report |
 | `payroll` | Salary accrual and proration, the allowance cap, advances netting off what is owed, and staff pay reaching the P&L |
-| `payrun` | A finalised cycle never changing, late customer payments and unpaid balances arriving on the next payslip, loan instalments deducted on their terms unless edited, recoveries and held money, and the wage cost booked once |
+| `payrun` | A finalised cycle never changing, late customer payments and unpaid balances arriving on the next payslip, loan instalments deducted on their terms unless edited, recoveries and held money, the wage cost booked once, payments keeping the day they were made, paying a whole cycle at once without paying anyone twice, and the page opening on whatever cycle is waiting to be finalised or paid |
 | `rider-finance` | The rider's balance, expenses settled as company cost or recharged, partial recharges, and the delivery finances figures |
 | `rider-scope` | Who may reach what — every endpoint closed to a rider, the inventory role able to dispatch but not touch money, and the payment secret withheld from non-admins |
 | `sale-status` | An order that still has to travel cannot be recorded as already delivered, while a counter collection can |

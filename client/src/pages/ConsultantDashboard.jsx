@@ -208,7 +208,7 @@ export default function ConsultantDashboard() {
               <div key={p.id} className="flex items-center justify-between p-3 text-sm">
                 <div>
                   <div className="font-medium text-gray-800 capitalize">{p.type}</div>
-                  <div className="text-xs text-gray-500">{formatDate(p.createdAt)} {p.paymentMethod ? `• ${p.paymentMethod}` : ''}</div>
+                  <div className="text-xs text-gray-500">{formatDate(p.paidAt || p.createdAt)} {p.paymentMethod ? `• ${p.paymentMethod}` : ''}</div>
                 </div>
                 <span className="font-bold text-emerald-700">+{formatMoney(p.amount)}</span>
               </div>

@@ -3954,6 +3954,13 @@ app.post('/api/v1/consultants/:id/payments', authenticate, requireAdmin, async (
       periodTo = periodTo ? new Date(periodTo) : null;
     }
 
+    // Commission is paid from its payslip on the Payroll page. Paid from here it landed on
+    // whichever cycle this page was showing, usually the one still running, and came off the
+    // next pay instead of settling the last.
+    if ((type || 'commission') === 'commission') {
+      return res.status(400).json({ error: 'Pay commission from the payslip on the Payroll page.' });
+    }
+
     if ((type || 'commission') !== 'allowance') {
       const closed = await payroll_finalisedCycleOf(prisma, companyId, periodFrom, periodTo);
       if (closed) return res.status(400).json({ error: `The ${closed} cycle is finalised. Pay it from its payslip on the Payroll page.` });
@@ -4833,6 +4840,108 @@ const payroll_isLabel = (s) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(s || ''));
 const payroll_num = (v) => parseFloat(v || 0) || 0;
 const payroll_personKey = (o) => (o.consultantId ? `c:${o.consultantId}` : `s:${o.staffId}`);
 
+// A date typed as YYYY-MM-DD is read as midday local time, so it stays the same calendar day
+// whatever the server's time zone. Blank means today.
+function payroll_parseDate(v) {
+  if (!v) return new Date();
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0, 0);
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// The day the money was handed over. A pay day is often entered days later, so the payment
+// carries its own date; older rows without one fall back to when they were recorded.
+const payroll_paymentOut = (x) => ({
+  id: x.id, amount: payroll_num(x.amount), createdAt: x.createdAt, paidAt: x.paidAt || x.createdAt,
+  paymentMethod: x.paymentMethod, reference: x.reference, notes: x.notes,
+});
+const payroll_paidAtOf = (x) => new Date(x.paidAt || x.createdAt);
+
+// Where payroll stands today: the oldest cycle that has ended but is not finalised, and the
+// finalised cycles that still have money owed on a payslip. The Payroll page opens on
+// whichever needs doing and the dashboard warns about both.
+async function payroll_due(prisma, companyId) {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } });
+  const payDay = company?.consultantPayDay || 11;
+  const currentPeriod = getConsultantPayPeriod(new Date(), payDay).label;
+  const runs = await prisma.payRun.findMany({ where: { companyId }, orderBy: { period: 'asc' }, select: { period: true } });
+  const lastRun = runs.length ? runs[runs.length - 1] : null;
+  // With no run yet, the first to finalise is the cycle that ended most recently.
+  const next = lastRun ? payroll_shiftLabel(lastRun.period, 1) : payroll_shiftLabel(currentPeriod, -1);
+  const toFinalise = next < currentPeriod ? next : null;
+
+  const payslips = await prisma.payslip.findMany({
+    where: { companyId },
+    select: {
+      consultantId: true, staffId: true, netPay: true, payRun: { select: { period: true } },
+      commissionPayments: { select: { amount: true } }, staffPayments: { select: { amount: true } },
+    },
+  });
+  // Only a person's newest payslip can still be owed on: older balances were carried into it.
+  const newest = new Map();
+  for (const p of payslips) {
+    const k = payroll_personKey(p);
+    if (!newest.has(k) || newest.get(k).payRun.period < p.payRun.period) newest.set(k, p);
+  }
+  const byPeriod = {};
+  for (const p of newest.values()) {
+    const paid = [...p.commissionPayments, ...p.staffPayments].reduce((s, x) => s + payroll_num(x.amount), 0);
+    const outstanding = round2(payroll_num(p.netPay) - paid);
+    if (outstanding < 0.01) continue;
+    const u = byPeriod[p.payRun.period] || (byPeriod[p.payRun.period] = { period: p.payRun.period, people: 0, outstanding: 0 });
+    u.people += 1;
+    u.outstanding = round2(u.outstanding + outstanding);
+  }
+  const unpaid = Object.values(byPeriod).sort((a, b) => (a.period < b.period ? -1 : 1));
+  return { currentPeriod, toFinalise, unpaid };
+}
+
+// Pay day in one go: every payslip on a finalised cycle that still has money owed is settled
+// in full, on one date and by one method. Someone whose balance has already been carried into
+// a later payslip is left alone; that payslip is where they are paid.
+async function payroll_payAll(prisma, companyId, body) {
+  const period = body.period;
+  if (!payroll_isLabel(period)) return { status: 400, error: 'Period must look like 2026-11' };
+  const run = await prisma.payRun.findUnique({ where: { companyId_period: { companyId, period } } });
+  if (!run) return { status: 400, error: 'Finalise this cycle before paying it' };
+  const paidAt = payroll_parseDate(body.paidAt);
+  if (!paidAt) return { status: 400, error: 'Give the date the money was handed over' };
+  if (paidAt > new Date(Date.now() + 24 * 60 * 60 * 1000)) return { status: 400, error: 'The payment date cannot be in the future' };
+
+  const later = await prisma.payslip.findMany({
+    where: { companyId, payRun: { period: { gt: period } } }, select: { consultantId: true, staffId: true },
+  });
+  const carried = new Set(later.map(payroll_personKey));
+
+  const result = await prisma.$transaction(async (tx) => {
+    const slips = await tx.payslip.findMany({
+      where: { payRunId: run.id, companyId },
+      include: { commissionPayments: { select: { amount: true } }, staffPayments: { select: { amount: true } } },
+    });
+    let count = 0, total = 0;
+    for (const slip of slips) {
+      if (carried.has(payroll_personKey(slip))) continue;
+      const paid = [...slip.commissionPayments, ...slip.staffPayments].reduce((s, x) => s + payroll_num(x.amount), 0);
+      const amount = round2(payroll_num(slip.netPay) - paid);
+      if (amount < 0.01) continue;
+      const common = {
+        amount, paidAt, periodFrom: run.periodFrom, periodTo: run.periodTo,
+        paymentMethod: body.paymentMethod ? String(body.paymentMethod).slice(0, 50) : null,
+        reference: body.reference ? String(body.reference).slice(0, 100) : null,
+        notes: body.notes ? String(body.notes) : null, payslipId: slip.id, companyId,
+      };
+      if (slip.consultantId) await tx.commissionPayment.create({ data: { ...common, consultantId: slip.consultantId, type: 'commission' } });
+      else await tx.staffPayment.create({ data: { ...common, staffId: slip.staffId, type: 'salary' } });
+      count += 1;
+      total = round2(total + amount);
+    }
+    return { count, total };
+  }, { timeout: 20000 });
+  if (!result.count) return { status: 400, error: 'Everyone on this cycle is already paid' };
+  return { status: 201, body: { paid: result.count, total: result.total } };
+}
+
 function payroll_shiftLabel(label, by) {
   const [y, m] = label.split('-').map(Number);
   const d = new Date(y, m - 1 + by, 1);
@@ -4903,8 +5012,11 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
   const runs = await prisma.payRun.findMany({ where: { companyId }, orderBy: { period: 'asc' } });
   const lastRun = runs.length ? runs[runs.length - 1] : null;
   const nextToFinalise = lastRun ? payroll_shiftLabel(lastRun.period, 1) : null;
-  // With nothing asked for, show the cycle that is waiting to be finalised.
-  const period = requestedPeriod || (nextToFinalise && nextToFinalise < currentLabel ? nextToFinalise : currentLabel);
+  // With nothing asked for, open on what needs doing: a cycle that has ended and is waiting to
+  // be finalised, else the latest finalised cycle with pay still owed, else the running cycle.
+  const due = await payroll_due(prisma, companyId);
+  const period = requestedPeriod || due.toFinalise
+    || (due.unpaid.length ? due.unpaid[due.unpaid.length - 1].period : null) || currentLabel;
   const cycle = payPeriodFromLabel(period, payDay);
   const existing = runs.find(r => r.period === period) || null;
   const lookbackFrom = payPeriodFromLabel(payroll_shiftLabel(period, -PAYROLL_ARREARS_LOOKBACK), payDay).periodFrom;
@@ -4975,7 +5087,7 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
   if (existing) {
     slips = payslips.filter(p => p.payRunId === existing.id).map(p => {
       const key = payroll_personKey(p);
-      const payments = paymentsOf(p).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const payments = paymentsOf(p).sort((a, b) => payroll_paidAtOf(a) - payroll_paidAtOf(b));
       const paid = paidOn(p);
       const netPay = payroll_num(p.netPay);
       // Once a later payslip exists, whatever was outstanding here has been carried into it.
@@ -4989,7 +5101,7 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
         broughtForward: payroll_num(p.broughtForward), earnings: payroll_num(p.earnings),
         alreadyPaid: payroll_num(p.alreadyPaid), deductions: payroll_num(p.deductions), netPay,
         paid, outstanding: round2(netPay - paid), carried,
-        payments: payments.map(x => ({ id: x.id, amount: payroll_num(x.amount), createdAt: x.createdAt, paymentMethod: x.paymentMethod, reference: x.reference, notes: x.notes })),
+        payments: payments.map(payroll_paymentOut),
         loans: [], unpaidOrders: [], held: heldFor(key),
       };
     });
@@ -5173,6 +5285,7 @@ async function payroll_run(prisma, companyId, requestedPeriod) {
     // Every cycle with payslips on record, so an old one can always be reached.
     finalisedPeriods: runs.map(r => r.period),
     currentPeriod: currentLabel,
+    due,
     payslips: slips,
     totals: {
       headcount: slips.length,
@@ -5235,7 +5348,7 @@ async function payroll_payslipHistory(prisma, companyId, consultantId) {
       broughtForward: payroll_num(p.broughtForward), earnings: payroll_num(p.earnings), alreadyPaid: payroll_num(p.alreadyPaid),
       deductions: payroll_num(p.deductions), netPay, paid, outstanding, carried, balance: carried ? 0 : outstanding,
       lines: p.lines.filter(l => l.kind !== 'baseline').map(l => ({ kind: l.kind, label: l.label, amount: payroll_num(l.amount) })),
-      payments: p.commissionPayments.map(x => ({ id: x.id, amount: payroll_num(x.amount), createdAt: x.createdAt, paymentMethod: x.paymentMethod, reference: x.reference, notes: x.notes })),
+      payments: p.commissionPayments.map(payroll_paymentOut),
       loans: [], held: [],
     };
   });
@@ -5255,6 +5368,12 @@ app.get('/api/v1/payroll/run', authenticate, requireAdmin, async (req, res) => {
   try {
     if (req.query.period && !payroll_isLabel(req.query.period)) return res.status(400).json({ error: 'Period must look like 2026-11' });
     res.json(await payroll_run(prisma, req.user.companyId, req.query.period || null));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.get('/api/v1/payroll/due', authenticate, requireAdmin, async (req, res) => {
+  try {
+    res.json(await payroll_due(prisma, req.user.companyId));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -5366,9 +5485,12 @@ app.post('/api/v1/payroll/payslips/:id/payments', authenticate, requireAdmin, as
     const outstanding = round2(payroll_num(payslip.netPay) - payroll_num(sofar._sum.amount));
     if (outstanding <= 0) return res.status(400).json({ error: 'Nothing is owed on this payslip' });
     if (amount > outstanding + 0.01) return res.status(400).json({ error: `Only K${outstanding.toFixed(2)} is owed on this payslip` });
+    const paidAt = payroll_parseDate(req.body.paidAt);
+    if (!paidAt) return res.status(400).json({ error: 'Give the date the money was handed over' });
+    if (paidAt > new Date(Date.now() + 24 * 60 * 60 * 1000)) return res.status(400).json({ error: 'The payment date cannot be in the future' });
 
     const common = {
-      amount, periodFrom: payslip.payRun.periodFrom, periodTo: payslip.payRun.periodTo,
+      amount, paidAt, periodFrom: payslip.payRun.periodFrom, periodTo: payslip.payRun.periodTo,
       paymentMethod: req.body.paymentMethod || null, reference: req.body.reference || null, notes: req.body.notes || null,
       payslipId: payslip.id, companyId,
     };
@@ -5376,6 +5498,14 @@ app.post('/api/v1/payroll/payslips/:id/payments', authenticate, requireAdmin, as
       ? await prisma.commissionPayment.create({ data: { ...common, consultantId: payslip.consultantId, type: 'commission' } })
       : await prisma.staffPayment.create({ data: { ...common, staffId: payslip.staffId, type: 'salary' } });
     res.status(201).json(payment);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.post('/api/v1/payroll/run/pay-all', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const out = await payroll_payAll(prisma, req.user.companyId, req.body || {});
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.status(out.status).json(out.body);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

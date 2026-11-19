@@ -127,7 +127,7 @@ export default function PayslipPDF({ slip, name, jobTitle, periodLabel, periodNa
             {payments.map((p, i) => (
               <View key={i} style={styles.line}>
                 <Text style={styles.lineLabel}>
-                  {formatDate(p.createdAt)}{p.paymentMethod ? ` · ${p.paymentMethod}` : ''}{p.reference ? ` · ${p.reference}` : ''}
+                  {formatDate(p.paidAt || p.createdAt)}{p.paymentMethod ? ` · ${p.paymentMethod}` : ''}{p.reference ? ` · ${p.reference}` : ''}
                 </Text>
                 <Text>{money(p.amount)}</Text>
               </View>
