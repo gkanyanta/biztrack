@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  getPayRun, finalisePayRun, reopenPayRun, payPayslip, deletePayslipPayment,
+  getPayRun, finalisePayRun, reopenPayRun, payPayslip, payAllPayslips, deletePayslipPayment,
   createPayAdjustment, deletePayAdjustment, releasePayAdjustment,
   getLoans, createLoan, updateLoan, deleteLoan, setLoanInstalment, setConsultantTarget, deleteConsultantTarget,
   getStaffMembers, createStaffMember, updateStaffMember, deleteStaffMember,
@@ -49,6 +49,17 @@ const shiftLabel = (label, by) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
+// A date as the YYYY-MM-DD a date input wants, in local time.
+const toDateInput = (d) => new Date(d).toLocaleDateString('en-CA');
+
+// People are usually paid on pay day and it gets entered later, so a payment defaults to the
+// cycle's pay day, or to today while that day has not come yet.
+const defaultPaidAt = (payDate) => {
+  const today = toDateInput(new Date());
+  const day = toDateInput(payDate);
+  return day < today ? day : today;
+};
+
 const inputClass = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500';
 
 function Card({ label, value, sub, tone = 'slate' }) {
@@ -94,7 +105,9 @@ export default function Payroll() {
   const [history, setHistory] = useState([]);
 
   const [payFor, setPayFor] = useState(null);
-  const [payForm, setPayForm] = useState({ amount: '', paymentMethod: '', reference: '', notes: '' });
+  const [payForm, setPayForm] = useState({ amount: '', paidAt: '', paymentMethod: '', reference: '', notes: '' });
+  // { paidAt, paymentMethod, reference } while the "pay everyone" form is open.
+  const [payAllForm, setPayAllForm] = useState(null);
   const [adjustFor, setAdjustFor] = useState(null);
   const [adjustForm, setAdjustForm] = useState({ kind: 'bonus', amount: '', reason: '', saleId: '', basis: 'returned', refundable: false });
   const [loanForm, setLoanForm] = useState(null);
@@ -189,13 +202,23 @@ export default function Payroll() {
 
   const openPay = (slip) => {
     setPayFor(slip);
-    setPayForm({ amount: String(slip.outstanding), paymentMethod: '', reference: '', notes: '' });
+    setPayForm({ amount: String(slip.outstanding), paidAt: defaultPaidAt(run.period.payDate), paymentMethod: '', reference: '', notes: '' });
   };
 
   const submitPay = async (e) => {
     e.preventDefault();
     const ok = await act(() => payPayslip(payFor.id, { ...payForm, amount: parseFloat(payForm.amount) }), `Paid ${payFor.name}`);
     if (ok) setPayFor(null);
+  };
+
+  const submitPayAll = async (e) => {
+    e.preventDefault();
+    let done = '';
+    const ok = await act(async () => {
+      const res = await payAllPayslips({ period: run.period.label, ...payAllForm });
+      done = `${res.data.paid} ${res.data.paid === 1 ? 'payslip' : 'payslips'} marked paid, ${formatMoney(res.data.total)} in all`;
+    });
+    if (ok) { toast.success(done); setPayAllForm(null); }
   };
 
   const openAdjust = (slip, kind, order) => {
@@ -285,6 +308,19 @@ export default function Payroll() {
 
   const { totals, payslips } = run;
   const isDraft = run.status === 'draft';
+  const payable = isDraft ? [] : payslips.filter(p => !p.carried && p.outstanding > 0);
+  const payableTotal = payable.reduce((s, p) => s + p.outstanding, 0);
+  // Cycles needing attention other than the one on screen: one waiting to be finalised, and
+  // finalised ones with pay still owed.
+  const due = run.due || { toFinalise: null, unpaid: [] };
+  const dueElsewhere = [
+    ...(due.toFinalise && due.toFinalise !== run.period.label
+      ? [{ period: due.toFinalise, text: `The ${due.toFinalise} cycle has ended and is waiting to be finalised.` }] : []),
+    ...due.unpaid.filter(u => u.period !== run.period.label).map(u => ({
+      period: u.period,
+      text: `${u.people} ${u.people === 1 ? 'payslip' : 'payslips'} on the ${u.period} cycle still to pay, ${formatMoney(u.outstanding)} in all.`,
+    })),
+  ];
   const openPeriod = isDraft ? run.period.label : run.currentPeriod;
 
   // The cycle label is the month the period closes and is paid.
@@ -361,7 +397,7 @@ export default function Payroll() {
           {!isDraft && (
             <>
               {slip.payments.map(p => (
-                <Row key={p.id} label={`Paid ${formatDate(p.createdAt)}${p.paymentMethod ? ` · ${p.paymentMethod}` : ''}`} amount={-p.amount}>
+                <Row key={p.id} label={`Paid ${formatDate(p.paidAt || p.createdAt)}${p.paymentMethod ? ` · ${p.paymentMethod}` : ''}`} amount={-p.amount}>
                   {!slip.carried && <button onClick={() => act(() => deletePayslipPayment(slip.id, p.id), 'Payment removed')} className="text-gray-300 hover:text-red-600"><FiX size={13} /></button>}
                 </Row>
               ))}
@@ -482,14 +518,20 @@ export default function Payroll() {
           <button onClick={() => openStaffForm(null)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm flex items-center gap-1.5"><FiPlus size={15} /> Staff</button>
           {run.canFinalise && (
             <button onClick={() => setConfirm({
-              title: 'Finalise this cycle',
+              title: 'Finalise this cycle', confirmLabel: 'Finalise', tone: 'neutral',
               message: `Finalise ${run.period.name}? The payslips are written down as they stand, ${formatMoney(totals.netPay)} net in all, and money that comes in later for these orders is paid on the next cycle.`,
               go: () => act(() => finalisePayRun(run.period.label), 'Cycle finalised. Pay each payslip below.'),
             })} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium flex items-center gap-1.5"><FiLock size={14} /> Finalise cycle</button>
           )}
+          {payable.length > 0 && (
+            <button onClick={() => setPayAllForm({ paidAt: defaultPaidAt(run.period.payDate), paymentMethod: '', reference: '' })}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5">
+              <FiDollarSign size={14} /> Mark all as paid
+            </button>
+          )}
           {run.canReopen && (
             <button onClick={() => setConfirm({
-              title: 'Reopen this cycle',
+              title: 'Reopen this cycle', confirmLabel: 'Reopen', tone: 'neutral',
               message: 'Reopen this cycle? Its payslips go back to a live draft and are worked out again from today\'s figures.',
               go: () => act(() => reopenPayRun(run.period.label), 'Cycle reopened'),
             })} className="px-3 py-2 border border-gray-200 rounded-lg text-sm flex items-center gap-1.5"><FiUnlock size={14} /> Reopen</button>
@@ -497,6 +539,27 @@ export default function Payroll() {
         </div>
       </div>
 
+      {dueElsewhere.map(d => (
+        <div key={d.period} className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-center gap-2 flex-wrap">
+          <FiAlertCircle size={16} className="shrink-0" />
+          <span className="flex-1 min-w-[12rem]">{d.text}</span>
+          <button onClick={() => setPeriod(d.period)} className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-medium hover:bg-amber-100">
+            Open {d.period}
+          </button>
+        </div>
+      ))}
+      {payable.length > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800 flex items-start gap-2">
+          <FiDollarSign size={16} className="mt-0.5 shrink-0" />
+          <span>
+            {payable.length} {payable.length === 1 ? 'payslip' : 'payslips'} still to pay, {formatMoney(payableTotal)} in all.
+            Once the money is sent, press Pay on each payslip, or Mark all as paid if everyone got their full pay.
+          </span>
+        </div>
+      )}
+      {!isDraft && !run.canReopen && run.finalisedPeriods[run.finalisedPeriods.length - 1] === run.period.label && (
+        <p className="text-xs text-gray-400">Payments have been recorded on this cycle, so it can no longer be reopened. Remove them first to reopen it.</p>
+      )}
       {isDraft && run.blockedReason && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
           <FiAlertCircle size={16} className="mt-0.5 shrink-0" />
@@ -613,10 +676,10 @@ export default function Payroll() {
                         <button onClick={() => editLoan(l)} className="p-1.5 text-gray-400 hover:text-blue-600" title="Change the terms"><FiEdit2 size={14} /></button>
                       )}
                       {l.repaid === 0 ? (
-                        <button onClick={() => setConfirm({ title: 'Remove loan', message: `Remove the ${l.description} loan for ${l.name}? Nothing has been repaid on it.`, go: () => act(() => deleteLoan(l.id), 'Loan removed') })}
+                        <button onClick={() => setConfirm({ title: 'Remove loan', confirmLabel: 'Remove', message: `Remove the ${l.description} loan for ${l.name}? Nothing has been repaid on it.`, go: () => act(() => deleteLoan(l.id), 'Loan removed') })}
                           className="p-1.5 text-gray-400 hover:text-red-600" title="Remove"><FiTrash2 size={14} /></button>
                       ) : l.status === 'active' && l.outstanding > 0 && (
-                        <button onClick={() => setConfirm({ title: 'Write off the rest', message: `Stop deducting the ${l.description} loan and write off the ${formatMoney(l.outstanding)} ${l.name} still owes?`, go: () => act(() => updateLoan(l.id, { status: 'cancelled' }), 'Loan cancelled') })}
+                        <button onClick={() => setConfirm({ title: 'Write off the rest', confirmLabel: 'Write off', message: `Stop deducting the ${l.description} loan and write off the ${formatMoney(l.outstanding)} ${l.name} still owes?`, go: () => act(() => updateLoan(l.id, { status: 'cancelled' }), 'Loan cancelled') })}
                           className="p-1.5 text-gray-400 hover:text-red-600" title="Write off the rest"><FiTrash2 size={14} /></button>
                       )}
                     </td>
@@ -664,7 +727,7 @@ export default function Payroll() {
                       <button onClick={() => openHistory(s)} className="p-1.5 text-gray-400 hover:text-blue-600" title="Paid outside payslips"><FiDollarSign size={14} /></button>
                       <button onClick={() => openStaffForm(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={14} /></button>
                       <button onClick={() => setConfirm({
-                        title: 'Remove from payroll',
+                        title: 'Remove from payroll', confirmLabel: 'Remove',
                         message: `Remove ${s.name}? If they have been paid, the record is kept and simply marked inactive so the history survives.`,
                         go: () => act(async () => { const res = await deleteStaffMember(s.id); toast.success(res.data.message); }),
                       })} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={14} /></button>
@@ -767,6 +830,11 @@ export default function Payroll() {
                 onChange={e => setPayForm({ ...payForm, amount: e.target.value })} className={inputClass} />
               <p className="text-xs text-gray-400 mt-1">Pay less than the full amount and the rest is brought forward to the next cycle.</p>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paid on</label>
+              <input required type="date" max={toDateInput(new Date())} value={payForm.paidAt}
+                onChange={e => setPayForm({ ...payForm, paidAt: e.target.value })} className={inputClass} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
@@ -788,6 +856,45 @@ export default function Payroll() {
               <button type="button" onClick={() => setPayFor(null)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
               <button type="submit" disabled={submitting} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
                 {submitting ? 'Recording…' : 'Record payment'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* ---- PAY EVERYONE ---- */}
+      <Modal isOpen={!!payAllForm} onClose={() => setPayAllForm(null)} title={`Mark the ${run.period.label} cycle as paid`}>
+        {payAllForm && (
+          <form onSubmit={submitPayAll} className="space-y-3">
+            <div className="bg-gray-50 rounded-lg p-3 text-sm divide-y divide-gray-100">
+              {payable.map(p => (
+                <div key={p.id} className="flex justify-between py-1"><span>{p.name}</span><span className="font-medium">{formatMoney(p.outstanding)}</span></div>
+              ))}
+              <div className="flex justify-between pt-2 font-semibold"><span>Total</span><span>{formatMoney(payableTotal)}</span></div>
+            </div>
+            <p className="text-xs text-gray-500">Each person is recorded as paid in full. If someone got less, close this and use Pay on their payslip instead.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Paid on</label>
+                <input required type="date" max={toDateInput(new Date())} value={payAllForm.paidAt}
+                  onChange={e => setPayAllForm({ ...payAllForm, paidAt: e.target.value })} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Method</label>
+                <select value={payAllForm.paymentMethod} onChange={e => setPayAllForm({ ...payAllForm, paymentMethod: e.target.value })} className={inputClass}>
+                  <option value="">Not recorded</option>
+                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+              <input value={payAllForm.reference} onChange={e => setPayAllForm({ ...payAllForm, reference: e.target.value })} className={inputClass} />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setPayAllForm(null)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+              <button type="submit" disabled={submitting} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                {submitting ? 'Recording…' : `Mark ${payable.length} as paid`}
               </button>
             </div>
           </form>
@@ -1112,6 +1219,8 @@ export default function Payroll() {
         onConfirm={() => { const go = confirm.go; setConfirm(null); go(); }}
         title={confirm?.title || ''}
         message={confirm?.message || ''}
+        confirmLabel={confirm?.confirmLabel}
+        tone={confirm?.tone}
       />
     </div>
   );

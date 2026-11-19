@@ -209,6 +209,8 @@ export const getPayRun = (params) => api.get('/payroll/run', { params });
 export const finalisePayRun = (period) => api.post('/payroll/run/finalise', { period });
 export const reopenPayRun = (period) => api.post('/payroll/run/reopen', { period });
 export const payPayslip = (id, data) => api.post(`/payroll/payslips/${id}/payments`, data);
+export const payAllPayslips = (data) => api.post('/payroll/run/pay-all', data);
+export const getPayrollDue = () => api.get('/payroll/due');
 export const deletePayslipPayment = (id, paymentId) => api.delete(`/payroll/payslips/${id}/payments/${paymentId}`);
 export const createPayAdjustment = (data) => api.post('/payroll/adjustments', data);
 export const deletePayAdjustment = (id) => api.delete(`/payroll/adjustments/${id}`);

@@ -435,6 +435,9 @@ model CommissionPayment {
   // cycle was finalised, so a payslip payment raises no expense of its own.
   payslipId     String?
   payslip       Payslip?   @relation(fields: [payslipId], references: [id])
+  // The day the money was actually handed over, when it differs from the day it was recorded.
+  // Null on older rows: read it as createdAt.
+  paidAt        DateTime?
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id])
   createdAt     DateTime   @default(now())
@@ -495,6 +498,9 @@ model StaffPayment {
   // Cash paid against a finalised payslip — see CommissionPayment.payslipId.
   payslipId     String?
   payslip       Payslip?  @relation(fields: [payslipId], references: [id])
+  // The day the money was actually handed over, when it differs from the day it was recorded.
+  // Null on older rows: read it as createdAt.
+  paidAt        DateTime?
   companyId     String
   company       Company   @relation(fields: [companyId], references: [id])
   createdAt     DateTime  @default(now())

@@ -534,6 +534,13 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
     }
 
     // Enforce allowance cap (prorated by startDate)
+    // Commission is paid from its payslip on the Payroll page. Paid from here it landed on
+    // whichever cycle this page was showing, usually the one still running, and came off the
+    // next pay instead of settling the last.
+    if ((type || 'commission') === 'commission') {
+      return res.status(400).json({ error: 'Pay commission from the payslip on the Payroll page.' });
+    }
+
     if ((type || 'commission') !== 'allowance') {
       const closed = await payrollInternals.payroll_finalisedCycleOf(prisma, companyId, periodFrom, periodTo);
       if (closed) return res.status(400).json({ error: `The ${closed} cycle is finalised. Pay it from its payslip on the Payroll page.` });

@@ -20,8 +20,10 @@ module.exports = {
 
     section('a cycle before it is finalised');
     let r = await run();
-    eq('with no runs yet, the current cycle is shown', r.period.label, L0);
-    eq('and it cannot be finalised while it is running', [r.status, r.canFinalise], ['draft', false]);
+    eq('with no runs yet, the page opens on the cycle that has just ended', r.period.label, L1);
+    eq('and says it is waiting to be finalised', r.due.toFinalise, L1);
+    r = await run(L0);
+    eq('the cycle running now cannot be finalised yet', [r.status, r.canFinalise], ['draft', false]);
 
     r = await run(L2);
     let annie = slip(r, 'Annie'), bea = slip(r, 'Beatrice Kunda');
@@ -102,9 +104,19 @@ module.exports = {
     section('paying a payslip');
     const beaSlip = slip(r, 'Beatrice Kunda');
     eq('more than is owed is refused', (await api('POST', `/payroll/payslips/${beaSlip.id}/payments`, { amount: 2500 })).status, 400);
-    eq('part of it is accepted', (await api('POST', `/payroll/payslips/${beaSlip.id}/payments`, { amount: 2000, paymentMethod: 'Cash' })).status, 201);
+    const future = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString('en-CA');
+    eq('a payment dated in the future is refused', (await api('POST', `/payroll/payslips/${beaSlip.id}/payments`, { amount: 100, paidAt: future })).status, 400);
+    eq('part of it is accepted', (await api('POST', `/payroll/payslips/${beaSlip.id}/payments`, { amount: 2000, paymentMethod: 'Cash', paidAt: '2026-01-15' })).status, 201);
+    const beaPayment = slip(await run(L2), 'Beatrice Kunda').payments[0];
+    eq('it keeps the day the money was handed over, not the day it was entered',
+       new Date(beaPayment.paidAt).toLocaleDateString('en-CA'), '2026-01-15');
     eq('and raises no expense of its own', (await wages()).length, 3);
     eq('leaving the rest outstanding', slip(await run(L2), 'Beatrice Kunda').outstanding, 200);
+
+    section('what still needs doing');
+    let due = (await api('GET', '/payroll/due')).body;
+    eq('the cycle that has ended is waiting to be finalised', due.toFinalise, L1);
+    eq('and the finalised one still has pay owed on it', due.unpaid.map(u => [u.period, u.people, u.outstanding]), [[L2, 2, 215]]);
 
     section('the next cycle picks up everything left behind');
     r = await run();
@@ -127,6 +139,10 @@ module.exports = {
     const oldSlip = slip(await run(L2), 'Annie');
     const late = await api('POST', `/payroll/payslips/${oldSlip.id}/payments`, { amount: 15 });
     eq('an old payslip can no longer be paid, its balance has moved on', [late.status, late.body.error.includes(L1)], [400, true]);
+    eq('once finalised, the page opens on it so it can be paid', (await run()).period.label, L1);
+    due = (await api('GET', '/payroll/due')).body;
+    eq('nothing is waiting to be finalised now, and the old balances count only on the new payslips',
+       [due.toFinalise, due.unpaid.map(u => u.period)], [null, [L1]]);
     const loans = (await api('GET', '/payroll/loans')).body;
     eq('the loan shows as repaid over two cycles', [loans[0].repaid, loans[0].outstanding, loans[0].repayments.length], [100, 0, 2]);
 
@@ -144,6 +160,25 @@ module.exports = {
     eq('and finalises the same again', slip(r, 'Annie').netPay, 170);
     await api('POST', `/payroll/payslips/${slip(r, 'Annie').id}/payments`, { amount: 170 });
     eq('but not once someone has been paid from it', (await api('POST', '/payroll/run/reopen', { period: L1 })).status, 400);
+
+    section('paying everyone at once');
+    eq('a cycle that is not finalised cannot be paid', (await api('POST', '/payroll/run/pay-all', { period: L0 })).status, 400);
+    eq('nor one whose balances have all moved on', (await api('POST', '/payroll/run/pay-all', { period: L2 })).status, 400);
+    const owedBefore = (await run(L1)).payslips.filter(p => !p.carried && p.outstanding > 0);
+    const wagesBefore = (await wages()).length;
+    const all = await api('POST', '/payroll/run/pay-all', { period: L1, paidAt: '2026-01-16', paymentMethod: 'Mobile Money' });
+    eq('everyone still owed is paid in full', [all.status, all.body.paid, all.body.total],
+       [201, owedBefore.length, owedBefore.reduce((a, p) => a + p.outstanding, 0)]);
+    r = await run(L1);
+    eq('so nothing is left to pay on the cycle', r.payslips.filter(p => p.outstanding > 0).length, 0);
+    eq('the person already paid is not paid twice', slip(r, 'Annie').payments.length, 1);
+    eq('each payment carries the day and method given',
+       [new Date(slip(r, 'Beatrice Kunda').payments[0].paidAt).toLocaleDateString('en-CA'), slip(r, 'Beatrice Kunda').payments[0].paymentMethod], ['2026-01-16', 'Mobile Money']);
+    eq('and it raises no expense of its own', (await wages()).length, wagesBefore);
+    eq('a second press finds nobody left to pay', (await api('POST', '/payroll/run/pay-all', { period: L1 })).status, 400);
+    due = (await api('GET', '/payroll/due')).body;
+    eq('with everything paid, nothing is due', [due.toFinalise, due.unpaid.length], [null, 0]);
+    eq('and the page opens on the cycle running now', (await run()).period.label, L0);
 
     section('what the consultant sees');
     const mine = (await (await loginAs(base, 'annie'))('GET', '/dashboard/consultant')).body;

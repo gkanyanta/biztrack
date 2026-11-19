@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getDashboard, getDeliveryPerformance } from '../services/api';
 import AdvanceRequestsAlert from '../components/AdvanceRequestsAlert';
+import PayrollDueAlert from '../components/PayrollDueAlert';
 import OrderQueriesAlert from '../components/OrderQueriesAlert';
 import { formatMoney } from '../utils/format';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -69,6 +70,7 @@ export default function Dashboard() {
         {loading && <span className="text-xs text-gray-400">Updating...</span>}
       </div>
 
+      <PayrollDueAlert />
       <AdvanceRequestsAlert />
       <OrderQueriesAlert />
 

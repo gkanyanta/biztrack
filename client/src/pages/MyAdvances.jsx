@@ -137,6 +137,7 @@ export default function MyAdvances() {
           setConfirm(null);
         }}
         title="Withdraw request"
+        confirmLabel="Withdraw"
         message={confirm ? `Withdraw your request for ${formatMoney(confirm.agreed.amount)}?` : ''}
       />
     </div>

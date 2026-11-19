@@ -44,7 +44,7 @@ export default function Consultants() {
 
   const emptyForm = { name: '', phone: '', whatsapp: '', payType: 'per_unit', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', startDate: '', notes: '' };
   const [form, setForm] = useState(emptyForm);
-  const emptyPayment = { amount: '', type: 'commission', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
+  const emptyPayment = { amount: '', type: 'allowance', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
   const [showStockModal, setShowStockModal] = useState(null);
   const [consultantStockList, setConsultantStockList] = useState([]);
   const [stockTransfers, setStockTransfers] = useState([]);
@@ -730,7 +730,7 @@ export default function Consultants() {
                     <tbody>
                       {showDetail.payments.map(p => (
                         <tr key={p.id} className="border-b border-gray-50">
-                          <td className="p-2 text-gray-600">{formatDate(p.createdAt)}</td>
+                          <td className="p-2 text-gray-600">{formatDate(p.paidAt || p.createdAt)}</td>
                           <td className="p-2">
                             <span className={`text-xs px-1.5 py-0.5 rounded ${p.type === 'commission' ? 'bg-orange-50 text-orange-700' : p.type === 'advance' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
                               {p.type}
@@ -852,14 +852,16 @@ export default function Consultants() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
                     <select value={paymentForm.type} onChange={e => setPaymentForm({...paymentForm, type: e.target.value})}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="commission">Commission</option>
                       <option value="allowance">Communication Allowance</option>
                       <option value="advance">Salary Advance</option>
                     </select>
                     <p className="text-xs text-gray-400 mt-1">
                       {paymentForm.type === 'allowance'
                         ? 'Paid on top of commission, up to the cycle cap.'
-                        : 'Taken off the payslip for this cycle. Once a cycle is finalised it is paid from its payslip on the Payroll page.'}
+                        : 'Taken off the payslip for this cycle.'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Commission is paid from the payslip on the <Link to="/payroll" className="text-blue-600 hover:underline">Payroll</Link> page.
                     </p>
                   </div>
                   <div>
