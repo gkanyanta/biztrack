@@ -54,6 +54,7 @@ model Company {
   orderQueries       OrderQuery[]
   zraConfig          ZraConfig?
   fiscalDocuments    FiscalDocument[]
+  saleChangeLogs     SaleChangeLog[]
 }
 
 model User {
@@ -67,6 +68,7 @@ model User {
   createdAt DateTime @default(now())
 
   statusChanges      OrderStatusLog[] @relation("StatusChanges")
+  saleChanges        SaleChangeLog[]  @relation("SaleChanges")
   deliveriesAssigned Delivery[]       @relation("DeliveriesAssigned")
   salesRecorded      Sale[]           @relation("SalesRecorded")
   runsDispatched     CourierRun[]     @relation("RunsDispatched")
@@ -178,6 +180,7 @@ model Sale {
   paymentNotes    PaymentNote[]
   quote           Quote?
   delivery        Delivery?
+  changeLogs      SaleChangeLog[]
   riderExpenses   RiderExpense[]
   payAdjustments  PayAdjustment[]
   fiscalDocuments FiscalDocument[]
@@ -395,6 +398,10 @@ model Consultant {
   monthlyAllowance     Decimal             @default(400) @db.Decimal(10, 2)
   isActive             Boolean             @default(true)
   isStockLocation      Boolean             @default(false)
+  // Runs the sales team day to day: sees every consultant's orders, corrects their contact
+  // details and moves an order to another consultant, all logged. Pay, prices and money stay
+  // with the admin. Set by the admin on the Consultants page.
+  isSupervisor         Boolean             @default(false)
   startDate            DateTime?
   notes                String?
   userId               String?             @unique
@@ -945,31 +952,31 @@ model AdvanceRequest {
 // that company. Only the platform superadmin edits this: it holds where BizTrack sends invoices,
 // and a company admin must not be able to point that somewhere else.
 model ZraConfig {
-  id                       String    @id @default(cuid())
-  companyId                String    @unique
-  company                  Company   @relation(fields: [companyId], references: [id])
-  enabled                  Boolean   @default(false)
+  id                   String    @id @default(cuid())
+  companyId            String    @unique
+  company              Company   @relation(fields: [companyId], references: [id])
+  enabled              Boolean   @default(false)
   // sandbox | production — shown on screen so nobody mistakes test invoices for real ones.
-  environment              String    @default("sandbox")
+  environment          String    @default("sandbox")
   // The company's VSDC, e.g. https://vsdc.example.com/zravsdc. Its host must also be listed in
   // the ZRA_ALLOWED_HOSTS environment variable.
-  vsdcUrl                  String?
-  tpin                     String?
-  branchId                 String    @default("000")
-  deviceSerial             String?
+  vsdcUrl              String?
+  tpin                 String?
+  branchId             String    @default("000")
+  deviceSerial         String?
   // A | C1 | C2 | C3 | D | E | TOT — what a product with no category of its own is taxed under.
-  defaultTaxCategory       String?
+  defaultTaxCategory   String?
   // Sales dated before this are history and are never sent.
-  startDate                DateTime?
-  qtyUnitCode              String    @default("U")
-  pkgUnitCode              String    @default("NT")
-  originCountry            String?
-  deliveryClassCode        String?
-  deliveryRegisteredAt     DateTime?
-  refundReasonCode         String?
-  initialisedAt            DateTime?
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  startDate            DateTime?
+  qtyUnitCode          String    @default("U")
+  pkgUnitCode          String    @default("NT")
+  originCountry        String?
+  deliveryClassCode    String?
+  deliveryRegisteredAt DateTime?
+  refundReasonCode     String?
+  initialisedAt        DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 }
 
 // One invoice, or one credit note, as reported to ZRA. The sale is the source of the figures;
@@ -1045,4 +1052,24 @@ model OrderQueryMessage {
   createdAt  DateTime   @default(now())
 
   @@index([queryId])
+}
+
+// A change someone other than the order's own consultant made to it: a supervisor correcting
+// the customer's contact details, or moving the order to another consultant. Kept so the admin
+// can see who changed what, because moving an order moves the commission with it.
+model SaleChangeLog {
+  id        String   @id @default(cuid())
+  saleId    String
+  sale      Sale     @relation(fields: [saleId], references: [id])
+  // details | reassigned
+  change    String
+  detail    String
+  byUserId  String?
+  byUser    User?    @relation("SaleChanges", fields: [byUserId], references: [id])
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([saleId])
+  @@index([companyId])
 }

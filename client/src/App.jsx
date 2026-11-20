@@ -30,6 +30,7 @@ import Payroll from './pages/Payroll';
 import RiderDashboard from './pages/RiderDashboard';
 import MyAdvances from './pages/MyAdvances';
 import OrderQueries from './pages/OrderQueries';
+import Team from './pages/Team';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -49,6 +50,13 @@ function DashboardRouter() {
   if (user?.role === 'purchasing') return <Navigate to="/expenses" />;
   if (user?.role === 'rider') return <RiderDashboard />;
   return <Dashboard />;
+}
+
+// The team page: the office, and the consultant the admin has made sales supervisor.
+function TeamAccess({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'admin' || (user?.role === 'consultant' && user?.isSupervisor)) return children;
+  return <Navigate to="/" />;
 }
 
 function AdminOnly({ children }) {
@@ -131,6 +139,7 @@ function AppRoutes() {
         <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
         <Route path="my-advances" element={<MyAdvances />} />
         <Route path="order-queries" element={<NotInventory><OrderQueries /></NotInventory>} />
+        <Route path="team" element={<TeamAccess><Team /></TeamAccess>} />
       </Route>
     </Routes>
   );

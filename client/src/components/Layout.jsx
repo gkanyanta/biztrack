@@ -82,7 +82,11 @@ export default function Layout() {
     getOrderQuerySummary().then(res => setQueriesWaiting(res.data.waitingOnYou)).catch(() => {});
   }, [user?.role, location.pathname]);
   const navBadges = { '/payroll': advancesWaiting, '/order-queries': queriesWaiting };
-  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantNavItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'rider' ? riderNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
+  // The sales supervisor is a consultant who also looks after the team.
+  const consultantItems = user?.isSupervisor
+    ? [consultantNavItems[0], { path: '/team', icon: FiUsers, label: 'Team' }, ...consultantNavItems.slice(1)]
+    : consultantNavItems;
+  const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'rider' ? riderNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
 
   return (
     <div className="flex h-screen bg-gray-50">

@@ -54,9 +54,11 @@ router.post('/login', validateLogin, async (req, res) => {
     }
 
     let consultantId = null;
+    let isSupervisor = false;
     if (user.role === 'consultant') {
-      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true, isSupervisor: true } });
       consultantId = c?.id || null;
+      isSupervisor = !!c?.isSupervisor;
     }
 
     const token = jwt.sign(
@@ -67,7 +69,7 @@ router.post('/login', validateLogin, async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId }
+      user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId, isSupervisor }
     });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Something went wrong' });
@@ -83,11 +85,13 @@ router.get('/me', require('../middleware/auth').authenticate, async (req, res) =
     });
     if (!user) return res.status(401).json({ error: 'User not found' });
     let consultantId = null;
+    let isSupervisor = false;
     if (user.role === 'consultant') {
-      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true, isSupervisor: true } });
       consultantId = c?.id || null;
+      isSupervisor = !!c?.isSupervisor;
     }
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId });
+    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId, isSupervisor });
   } catch (err) {
     console.error(err); res.status(500).json({ error: 'Something went wrong' });
   }

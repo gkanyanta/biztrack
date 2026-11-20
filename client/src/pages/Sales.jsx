@@ -46,6 +46,10 @@ function DeliveryTag({ delivery }) {
 export default function Sales() {
   const { user } = useAuth();
   const isConsultant = user?.role === 'consultant';
+  // The sales supervisor sees the whole team's orders. She changes her own here as before; for
+  // someone else's, the Team page corrects the customer's details or moves the order.
+  const isSupervisor = isConsultant && !!user?.isSupervisor;
+  const isMine = (s) => !isConsultant || s.consultantId === user?.consultantId;
   const [searchParams] = useSearchParams();
   const [sales, setSales] = useState([]);
   const [salesTotal, setSalesTotal] = useState(0);
@@ -372,6 +376,7 @@ export default function Sales() {
                     <td className="p-3 hidden lg:table-cell">
                       <div className="text-gray-700">{s.customerName || '-'}</div>
                       <div className="text-xs text-gray-500">{s.customerCity || ''}</div>
+                      {isSupervisor && <div className="text-xs text-indigo-600">{s.consultant?.name || 'No consultant'}</div>}
                     </td>
                     <td className="p-3 text-right font-medium text-gray-800">{formatMoney(s.totalPrice)}</td>
                     {!isConsultant && (
@@ -380,24 +385,28 @@ export default function Sales() {
                       </td>
                     )}
                     <td className="p-3 text-center">
-                      <select value={s.status} onChange={e => handleStatusChange(s, e.target.value)}
-                        className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none">
-                        {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
-                      </select>
+                      {isMine(s) ? (
+                        <select value={s.status} onChange={e => handleStatusChange(s, e.target.value)}
+                          className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none">
+                          {ORDER_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                        </select>
+                      ) : <span className="text-xs text-gray-600">{s.status}</span>}
                       <DeliveryTag delivery={s.delivery} />
                       <ZraTag sale={s} />
                     </td>
                     <td className="p-3 text-center hidden sm:table-cell">
-                      <button onClick={() => setPaymentModalSale(s)} className="hover:opacity-75" title="Click to update payment status">
-                        <PaymentBadge status={s.paymentStatus} />
-                      </button>
+                      {isMine(s) ? (
+                        <button onClick={() => setPaymentModalSale(s)} className="hover:opacity-75" title="Click to update payment status">
+                          <PaymentBadge status={s.paymentStatus} />
+                        </button>
+                      ) : <PaymentBadge status={s.paymentStatus} />}
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex gap-1 justify-end">
                         <ReceiptButton saleId={s.id} size={15} className="p-1.5" />
                         <button onClick={() => openDetail(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEye size={15} /></button>
-                        <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={15} /></button>
-                        <button onClick={() => setDeleteConfirm(s)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>
+                        {isMine(s) && <button onClick={() => openEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><FiEdit2 size={15} /></button>}
+                        {isMine(s) && <button onClick={() => setDeleteConfirm(s)} className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={15} /></button>}
                       </div>
                     </td>
                   </tr>
@@ -759,7 +768,7 @@ export default function Sales() {
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-semibold text-amber-800">Credit Details</h4>
-                  {showDetail.paymentStatus !== 'Paid' && (
+                  {showDetail.paymentStatus !== 'Paid' && isMine(showDetail) && (
                     <button onClick={() => setShowPaymentForm(!showPaymentForm)}
                       className="text-xs bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 flex items-center gap-1">
                       <FiDollarSign size={12} /> Record Payment
@@ -809,6 +818,17 @@ export default function Sales() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+            {/* Changes made by the supervisor or the office to someone else's order. */}
+            {showDetail.changeLogs?.length > 0 && (
+              <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs space-y-1">
+                <div className="font-semibold text-indigo-800">Changed by others</div>
+                {showDetail.changeLogs.map(l => (
+                  <div key={l.id} className="text-indigo-900">
+                    {formatDate(l.createdAt)} · {l.byUser?.name || 'Someone'} · {l.change === 'reassigned' ? `Moved: ${l.detail}` : l.detail}
+                  </div>
+                ))}
               </div>
             )}
             {(showDetail.statusHistory?.length > 0 || showDetail.delivery) && (
