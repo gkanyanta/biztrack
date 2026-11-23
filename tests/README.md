@@ -35,6 +35,7 @@ something else.
 | `rider-finance` | The rider's balance, expenses settled as company cost or recharged, partial recharges, and the delivery finances figures |
 | `rider-scope` | Who may reach what — every endpoint closed to a rider, the inventory role able to dispatch but not touch money, and the payment secret withheld from non-admins |
 | `sale-status` | An order that still has to travel cannot be recorded as already delivered, while a counter collection can |
+| `supervisor` | Only the admin makes a consultant sales supervisor, and it takes effect at once: she sees every order and query in her company, never cost prices, suppliers, pay terms, payroll or profit; corrects customer details and moves orders only before they go out, with every change logged; money on a colleague's order stays with them and the office; she puts orders on our own riders and moves them between riders, but cannot hire a courier, close a delivery or see the cash; and no consultant can close a delivery or list deliveries |
 | `zra` | ZRA Smart Invoice: off until the superadmin switches it on, only approved VSDC hosts, items registered once, TOT invoices with discounts that add up, credit notes on cancellation, an invoiced sale's figures fixed, a VSDC that is down or refusing never costing a sale, and one company never touching another's |
 
 Every assertion goes over HTTP against a real backend and a real Postgres, because what is worth

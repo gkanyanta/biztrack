@@ -221,6 +221,10 @@ export const requestAdvance = (data) => api.post('/advances/mine', data);
 export const withdrawAdvance = (id) => api.post(`/advances/mine/${id}/withdraw`);
 export const getAdvanceRequests = () => api.get('/advances');
 export const getAdvanceSummary = () => api.get('/advances/summary');
+// The sales supervisor: the team at a glance, and the two logged changes to a team member's order
+export const getTeam = () => api.get('/team');
+export const changeSaleDetails = (id, data) => api.put(`/sales/${id}/details`, data);
+export const reassignSale = (id, consultantId) => api.put(`/sales/${id}/consultant`, { consultantId });
 export const getOrderQueries = (params) => api.get('/order-queries', { params });
 export const getOrderQuerySummary = () => api.get('/order-queries/summary');
 export const raiseOrderQuery = (saleId, message) => api.post('/order-queries', { saleId, message });

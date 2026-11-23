@@ -472,6 +472,8 @@ router.put('/:id', requireAdmin, async (req, res) => {
       ...(raw.isActive !== undefined && { isActive: raw.isActive }),
       ...(raw.startDate !== undefined && { startDate: raw.startDate ? new Date(raw.startDate) : null }),
       ...(raw.notes !== undefined && { notes: raw.notes || null }),
+      // Only the admin reaches this route, so only the admin makes someone supervisor.
+      ...(raw.isSupervisor !== undefined && { isSupervisor: raw.isSupervisor === true || raw.isSupervisor === 'true' }),
     };
 
     const consultant = await prisma.consultant.update({ where: { id: req.params.id }, data });

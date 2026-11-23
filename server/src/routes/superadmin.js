@@ -159,6 +159,7 @@ router.delete('/companies/:id', async (req, res) => {
     await prisma.debtReminder.deleteMany({ where: { companyId } });
     await prisma.creditPayment.deleteMany({ where: { companyId } });
     await prisma.orderStatusLog.deleteMany({ where: { companyId } });
+    await prisma.saleChangeLog.deleteMany({ where: { companyId } });
     await prisma.stockLog.deleteMany({ where: { companyId } });
     await prisma.fiscalDocument.deleteMany({ where: { companyId } });
     await prisma.orderQuery.deleteMany({ where: { companyId } });

@@ -82,7 +82,10 @@ function Card({ label, value, sub, tone = 'slate' }) {
 export default function Deliveries() {
   const { user } = useAuth();
   const canSeeMoney = user?.role === 'admin' || user?.role === 'superadmin';
-  const visibleTabs = TABS.filter(t => canSeeMoney || !t.money);
+  // The sales supervisor assigns orders to our riders and moves them between riders. Closing a
+  // delivery, hiring a courier and courier runs stay with the office and the warehouse.
+  const isSupervisor = user?.role === 'consultant' && !!user?.isSupervisor;
+  const visibleTabs = TABS.filter(t => isSupervisor ? (t.key === 'assign' || t.key === 'active') : (canSeeMoney || !t.money));
   const [tab, setTab] = useState('assign');
   const [loading, setLoading] = useState(true);
   const [riders, setRiders] = useState([]);
@@ -286,6 +289,7 @@ export default function Deliveries() {
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Who is taking it</label>
               <CarrierSelect riders={riders} value={carrier} onChange={setCarrier}
+                allowHired={!isSupervisor}
                 unsetLabel="One of us — not decided yet"
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-800" />
             </div>
@@ -423,7 +427,7 @@ export default function Deliveries() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
-                  <CarrierSelect riders={riders} value={encodeCarrier(d)}
+                  <CarrierSelect riders={riders} value={encodeCarrier(d)} allowHired={!isSupervisor}
                     onChange={async (v) => {
                       const next = decodeCarrier(v);
                       // Hiring somebody costs a fare, and the fare belongs on the order. Handing it
@@ -440,12 +444,16 @@ export default function Deliveries() {
                       } catch (err) { toast.error(err.response?.data?.error || 'Could not hand it over'); }
                     }}
                     className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs outline-none" />
-                  <button onClick={() => openClose(d)}
-                    className="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Delivered</button>
-                  <button onClick={() => openFail(d)}
-                    className="px-2.5 py-1.5 border border-red-200 text-red-700 rounded-lg text-xs font-medium">Failed</button>
-                  <button onClick={async () => { if (!window.confirm('Remove this delivery? The order goes back to unassigned.')) return; await deleteDelivery(d.id); toast.success('Removed'); loadAll(); }}
-                    className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={14} /></button>
+                  {!isSupervisor && (
+                    <>
+                      <button onClick={() => openClose(d)}
+                        className="px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">Delivered</button>
+                      <button onClick={() => openFail(d)}
+                        className="px-2.5 py-1.5 border border-red-200 text-red-700 rounded-lg text-xs font-medium">Failed</button>
+                      <button onClick={async () => { if (!window.confirm('Remove this delivery? The order goes back to unassigned.')) return; await deleteDelivery(d.id); toast.success('Removed'); loadAll(); }}
+                        className="p-1.5 text-gray-400 hover:text-red-600"><FiTrash2 size={14} /></button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}

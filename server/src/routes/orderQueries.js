@@ -46,6 +46,8 @@ function oq_view(q) {
 // nothing, as though it did not exist.
 function oq_scope(user) {
   if (OQ_IS_OFFICE(user)) return { companyId: user.companyId };
+  // The sales supervisor follows up every consultant's queries.
+  if (user.role === 'consultant' && user.isSupervisor) return { companyId: user.companyId };
   if (user.role === 'consultant' && user.consultantId) return { companyId: user.companyId, consultantId: user.consultantId };
   return null;
 }

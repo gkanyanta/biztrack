@@ -42,7 +42,7 @@ export default function Consultants() {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [periodLabel, setPeriodLabel] = useState(() => getCurrentPayCycleLabel());
 
-  const emptyForm = { name: '', phone: '', whatsapp: '', payType: 'per_unit', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', startDate: '', notes: '' };
+  const emptyForm = { name: '', phone: '', whatsapp: '', payType: 'per_unit', commissionRate: '50', tierThreshold: '50', tierRate: '30', monthlyAllowance: '400', startDate: '', notes: '', isSupervisor: false };
   const [form, setForm] = useState(emptyForm);
   const emptyPayment = { amount: '', type: 'allowance', paymentMethod: '', reference: '', notes: '', periodFrom: '', periodTo: '' };
   const [showStockModal, setShowStockModal] = useState(null);
@@ -96,7 +96,8 @@ export default function Consultants() {
       commissionRate: c.commissionRate, tierThreshold: c.tierThreshold || '50', tierRate: c.tierRate || '30',
       monthlyAllowance: c.monthlyAllowance,
       startDate: c.startDate ? new Date(c.startDate).toISOString().slice(0, 10) : '',
-      notes: c.notes || ''
+      notes: c.notes || '',
+      isSupervisor: !!c.isSupervisor,
     });
     setShowForm(true);
   };
@@ -358,6 +359,7 @@ export default function Consultants() {
                     <td className="p-3">
                       <div className="font-medium text-gray-800">{c.name}</div>
                       {!c.isActive && <span className="text-xs text-red-500 bg-red-50 px-1.5 py-0.5 rounded">Inactive</span>}
+                      {c.isSupervisor && <span className="text-xs text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">Supervisor</span>}
                     </td>
                     <td className="p-3 text-gray-600 hidden sm:table-cell">{c.phone || '-'}</td>
                     <td className="p-3 text-right text-gray-800">
@@ -503,6 +505,20 @@ export default function Consultants() {
             <textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} rows={2}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
+          {editing && (
+            <label className="flex items-start gap-2 text-sm text-gray-700 bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+              <input type="checkbox" className="mt-0.5" checked={!!form.isSupervisor}
+                onChange={e => setForm({ ...form, isSupervisor: e.target.checked })} />
+              <span>
+                Sales supervisor
+                <span className="block text-xs text-gray-500">
+                  Sees every consultant's orders and the Team page, corrects customer details and moves orders between
+                  consultants before they go out, all logged. Never sees cost prices, profit or anyone's pay.
+                  Takes effect straight away.
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
             <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">{submitting ? 'Saving...' : editing ? 'Update' : 'Add'}</button>

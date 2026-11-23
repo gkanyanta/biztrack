@@ -110,6 +110,86 @@ function changesInvoiceFigures(existing, raw, newSaleItems) {
   return false;
 }
 
+// ---- WHAT A CONSULTANT MAY SEE ----
+// A consultant reads their own orders. The sales supervisor reads the whole team's, to follow
+// them up; writes stay with the order's own consultant and the office, apart from the two
+// logged supervisor actions further down. Cost prices never leave for any consultant.
+// (mirrored in api/index.js and server/src/routes/sales.js)
+function sale_stripCosts(user, sale) {
+  if (user.role !== 'consultant' || !sale) return sale;
+  return {
+    ...sale,
+    // The seller's name only: a consultant's pay terms are nobody else's business.
+    ...(sale.consultant && { consultant: { id: sale.consultant.id, name: sale.consultant.name } }),
+    items: (sale.items || []).map(({ costPrice, ...item }) => {
+      if (!item.product) return item;
+      const { costPrice: _c, supplier: _s, ...product } = item.product;
+      return { ...item, product };
+    }),
+  };
+}
+
+// ---- SUPERVISOR ACTIONS ON A TEAM MEMBER'S ORDER ----
+// Correcting the customer's details, and moving an order to another consultant (which moves
+// the commission with it). Both only before the order goes out, both open to the office too,
+// and both logged with who did it. Nothing here touches what was charged or paid.
+const SALE_DETAIL_FIELDS = { customerName: 'Name', customerPhone: 'Phone', customerCity: 'City', deliveryAddress: 'Address', notes: 'Notes' };
+const SALE_OPEN_STATUSES = ['Pending', 'Confirmed'];
+const sale_canSupervise = (user) => user.role === 'admin' || (user.role === 'consultant' && !!user.isSupervisor);
+
+async function sale_changeDetails(prisma, user, saleId, body) {
+  if (!sale_canSupervise(user)) return { status: 403, error: 'Only the office or the sales supervisor can do this' };
+  const sale = await prisma.sale.findFirst({ where: { id: saleId, companyId: user.companyId } });
+  if (!sale) return { status: 404, error: 'Sale not found' };
+  if (!SALE_OPEN_STATUSES.includes(sale.status)) return { status: 400, error: 'This order has already gone out. Ask the office to change it.' };
+  const data = {};
+  const changes = [];
+  for (const [field, label] of Object.entries(SALE_DETAIL_FIELDS)) {
+    if (body[field] === undefined) continue;
+    const value = sanitizeString(String(body[field] ?? '').trim(), 500) || null;
+    if ((sale[field] || null) === value) continue;
+    data[field] = value;
+    changes.push(`${label}: ${sale[field] || '(blank)'} → ${value || '(blank)'}`);
+  }
+  if (!changes.length) return { status: 400, error: 'Nothing has changed' };
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.saleChangeLog.create({ data: { saleId: sale.id, change: 'details', detail: changes.join('; '), byUserId: user.id, companyId: user.companyId } });
+    return tx.sale.update({ where: { id: sale.id }, data, select: { id: true, orderNumber: true, customerName: true, customerPhone: true, customerCity: true, deliveryAddress: true, notes: true } });
+  });
+  return { status: 200, body: updated };
+}
+
+async function sale_reassign(prisma, user, saleId, body) {
+  if (!sale_canSupervise(user)) return { status: 403, error: 'Only the office or the sales supervisor can do this' };
+  const sale = await prisma.sale.findFirst({
+    where: { id: saleId, companyId: user.companyId },
+    include: { items: { select: { stockSourceConsultantId: true } }, consultant: { select: { id: true, name: true } } },
+  });
+  if (!sale) return { status: 404, error: 'Sale not found' };
+  if (!SALE_OPEN_STATUSES.includes(sale.status)) return { status: 400, error: 'This order has already gone out. Ask the office to move it.' };
+  const target = await prisma.consultant.findFirst({
+    where: { id: String(body.consultantId || ''), companyId: user.companyId, isActive: true, isStockLocation: false },
+    select: { id: true, name: true },
+  });
+  if (!target) return { status: 400, error: 'Choose an active consultant' };
+  if (target.id === sale.consultantId) return { status: 400, error: `This order is already ${target.name}'s` };
+  // Goods taken from the consultant's own stock stay with that consultant's order.
+  if (sale.consultantId && sale.items.some(i => i.stockSourceConsultantId === sale.consultantId)) {
+    return { status: 400, error: `Part of this order comes out of ${sale.consultant.name}'s own stock, so it stays with them. Ask the office.` };
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.saleChangeLog.create({
+      data: { saleId: sale.id, change: 'reassigned', detail: `${sale.consultant?.name || 'No consultant'} → ${target.name}`, byUserId: user.id, companyId: user.companyId },
+    });
+    await tx.sale.update({ where: { id: sale.id }, data: { consultantId: target.id } });
+  });
+  return { status: 200, body: { id: sale.id, orderNumber: sale.orderNumber, consultant: target } };
+}
+
+const sale_changeLogsOf = (prisma, saleId) => prisma.saleChangeLog.findMany({
+  where: { saleId }, orderBy: { createdAt: 'desc' }, include: { byUser: { select: { name: true } } },
+});
+
 // Consultants can only select their own stock or Main (null). Admins can select any.
 function normalizeItemStockSource(item, user) {
   let src = item.stockSourceConsultantId || null;
@@ -143,7 +223,7 @@ router.get('/credit/summary', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const saleWhere = { companyId, paymentType: 'Credit', paymentStatus: { not: 'Paid' } };
-    if (req.user.role === 'consultant') saleWhere.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) saleWhere.consultantId = req.user.consultantId;
     const creditSales = await prisma.sale.findMany({ where: saleWhere, include: { customer: true } });
     const now = new Date();
     let totalOutstanding = 0, overdueCount = 0, overdueAmount = 0;
@@ -161,7 +241,7 @@ router.get('/credit/summary', async (req, res) => {
     });
     const topDebtors = Object.values(debtorMap).sort((a, b) => b.totalOwed - a.totalOwed);
     const paymentWhere = { companyId };
-    if (req.user.role === 'consultant') paymentWhere.sale = { consultantId: req.user.consultantId };
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) paymentWhere.sale = { consultantId: req.user.consultantId };
     const recentPayments = await prisma.creditPayment.findMany({ where: paymentWhere, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
     res.json({ totalOutstanding, overdueCount, overdueAmount, topDebtors, recentPayments });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -183,7 +263,7 @@ router.get('/reports/daily', async (req, res) => {
     const rangeEnd = new Date(to + 'T23:59:59.999Z');
 
     const where = { companyId, date: { gte: rangeStart, lte: rangeEnd }, status: { not: 'Cancelled' } };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     else if (req.query.consultantId) where.consultantId = req.query.consultantId;
 
     const sales = await prisma.sale.findMany({
@@ -248,7 +328,7 @@ router.get('/', async (req, res) => {
     if (customerId) where.customerId = customerId;
     if (consultantId) where.consultantId = consultantId;
     // Consultants only see their own sales
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     if (creditOverdue === 'true') { where.paymentType = 'Credit'; where.paymentStatus = { not: 'Paid' }; where.creditDueDate = { lt: new Date() }; }
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }, { customerPhone: { contains: search, mode: 'insensitive' } }]; }
@@ -256,16 +336,16 @@ router.get('/', async (req, res) => {
     const pagination = parsePagination(req.query);
     if (!pagination) {
       const sales = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
-      return res.json(sales);
+      return res.json(sales.map(x => sale_stripCosts(req.user, x)));
     }
 
     // Profit isn't a DB column (it's the order total less item COGS and the rider's fare), so it can't be
     // pushed into orderBy. Compute it for the whole filtered set once, then slice the requested page.
-    if (sortBy === 'profit') {
+    if (sortBy === 'profit' && req.user.role !== 'consultant') {
       const all = await prisma.sale.findMany({ where, include: saleInclude, orderBy: { createdAt: 'desc' } });
       all.sort((a, b) => (sortDir === 'asc' ? -1 : 1) * (calcSaleProfit(b) - calcSaleProfit(a)));
       const page = all.slice(pagination.skip, pagination.skip + pagination.take);
-      return res.json(paginatedResponse(page, all.length, pagination));
+      return res.json(paginatedResponse(page.map(x => sale_stripCosts(req.user, x)), all.length, pagination));
     }
 
     const orderBy = { [SALE_SORT_FIELDS[sortBy] || 'createdAt']: sortDir === 'asc' ? 'asc' : 'desc' };
@@ -273,7 +353,7 @@ router.get('/', async (req, res) => {
       prisma.sale.count({ where }),
       prisma.sale.findMany({ where, include: saleInclude, orderBy, skip: pagination.skip, take: pagination.take }),
     ]);
-    res.json(paginatedResponse(sales, total, pagination));
+    res.json(paginatedResponse(sales.map(x => sale_stripCosts(req.user, x)), total, pagination));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -282,14 +362,15 @@ router.get('/:id', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } }, paymentNotes: { orderBy: { createdAt: 'desc' } }, delivery: { include: { rider: { select: { name: true, phone: true } } } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     // Strip cost-exposing fields for consultants
     if (req.user.role === 'consultant') {
       sale.items = (sale.items || []).map(({ costPrice, ...rest }) => rest);
     }
-    res.json(sale);
+    sale.changeLogs = await sale_changeLogsOf(prisma, sale.id);
+    res.json(sale_stripCosts(req.user, sale));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -647,6 +728,8 @@ router.delete('/:id', async (req, res) => {
       await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
       await tx.paymentNote.deleteMany({ where: { saleId: req.params.id } });
       await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+      // The supervisor's corrections and moves; the order cannot go while these point at it.
+      await tx.saleChangeLog.deleteMany({ where: { saleId: req.params.id } });
       await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
       await tx.sale.delete({ where: { id: req.params.id } });
     }, { timeout: 20000 });
@@ -680,7 +763,7 @@ router.get('/:id/payments', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    if (req.user.role === 'consultant') {
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) {
       const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
       if (!owned) return res.status(404).json({ error: 'Sale not found' });
     }
@@ -695,7 +778,7 @@ router.post('/:id/reminders', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     const sale = await prisma.sale.findFirst({ where });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const reminder = await prisma.debtReminder.create({ data: { saleId: sale.id, channel: req.body.channel, message: req.body.message || null, companyId } });
@@ -707,7 +790,7 @@ router.get('/:id/reminders', async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
-    if (req.user.role === 'consultant') {
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) {
       const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
       if (!owned) return res.status(404).json({ error: 'Sale not found' });
     }
@@ -722,13 +805,29 @@ router.get('/:id/receipt', async (req, res) => {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     const sale = await prisma.sale.findFirst({ where, include: { ...saleInclude, creditPayments: { orderBy: { createdAt: 'desc' } } } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
     const settingsMap = {};
     settings.forEach(s => { settingsMap[s.key] = s.value; });
     res.json({ sale, settings: settingsMap });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.put('/:id/details', async (req, res) => {
+  try {
+    const out = await sale_changeDetails(req.app.locals.prisma, req.user, req.params.id, req.body || {});
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out.body);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+router.put('/:id/consultant', async (req, res) => {
+  try {
+    const out = await sale_reassign(req.app.locals.prisma, req.user, req.params.id, req.body || {});
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out.body);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

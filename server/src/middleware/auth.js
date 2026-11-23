@@ -13,10 +13,12 @@ async function authenticate(req, res, next) {
     // For consultant role, resolve their Consultant.id so route handlers can scope queries
     if (decoded.role === 'consultant') {
       const prisma = req.app.locals.prisma;
-      const consultant = await prisma.consultant.findFirst({ where: { userId: decoded.id, companyId: decoded.companyId }, select: { id: true, isActive: true } });
+      const consultant = await prisma.consultant.findFirst({ where: { userId: decoded.id, companyId: decoded.companyId }, select: { id: true, isActive: true, isSupervisor: true } });
       if (!consultant) return res.status(403).json({ error: 'No consultant profile linked to this account' });
       if (!consultant.isActive) return res.status(403).json({ error: 'Your consultant account is inactive' });
       req.user.consultantId = consultant.id;
+      // Read on every request, so switching it on or off takes effect without signing in again.
+      req.user.isSupervisor = !!consultant.isSupervisor;
     }
     // Same for riders: resolve Rider.id so every delivery query can be scoped to their own runs
     if (decoded.role === 'rider') {

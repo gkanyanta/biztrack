@@ -164,10 +164,12 @@ async function authenticateRaw(req, res, next) {
   try {
     req.user = jwt.verify(header.split(' ')[1], JWT_SECRET);
     if (req.user.role === 'consultant') {
-      const consultant = await prisma.consultant.findFirst({ where: { userId: req.user.id, companyId: req.user.companyId }, select: { id: true, isActive: true } });
+      const consultant = await prisma.consultant.findFirst({ where: { userId: req.user.id, companyId: req.user.companyId }, select: { id: true, isActive: true, isSupervisor: true } });
       if (!consultant) return res.status(403).json({ error: 'No consultant profile linked to this account' });
       if (!consultant.isActive) return res.status(403).json({ error: 'Your consultant account is inactive' });
       req.user.consultantId = consultant.id;
+      // Read on every request, so switching it on or off takes effect without signing in again.
+      req.user.isSupervisor = !!consultant.isSupervisor;
     }
     // Same for riders: resolve Rider.id so every delivery query can be scoped to their own runs
     if (req.user.role === 'rider') {
@@ -431,12 +433,14 @@ app.post('/api/v1/auth/login', authLimiter, validateLogin, async (req, res) => {
       return res.status(403).json({ error: 'Your company account has been suspended. Contact the system administrator.' });
     }
     let consultantId = null;
+    let isSupervisor = false;
     if (user.role === 'consultant') {
-      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true, isSupervisor: true } });
       consultantId = c?.id || null;
+      isSupervisor = !!c?.isSupervisor;
     }
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, companyId: user.companyId }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId } });
+    res.json({ token, user: { id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId, isSupervisor } });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -445,11 +449,13 @@ app.get('/api/v1/auth/me', authenticate, async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: req.user.id }, include: { company: true } });
     if (!user) return res.status(401).json({ error: 'User not found' });
     let consultantId = null;
+    let isSupervisor = false;
     if (user.role === 'consultant') {
-      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true } });
+      const c = await prisma.consultant.findUnique({ where: { userId: user.id }, select: { id: true, isSupervisor: true } });
       consultantId = c?.id || null;
+      isSupervisor = !!c?.isSupervisor;
     }
-    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId });
+    res.json({ id: user.id, username: user.username, name: user.name, role: user.role, companyId: user.companyId, companyName: user.company?.name || null, consultantId, isSupervisor });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -1134,11 +1140,157 @@ app.get('/api/v1/sales/notifications/new', authenticate, requireAdmin, async (re
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
+// ---- WHAT A CONSULTANT MAY SEE ----
+// A consultant reads their own orders. The sales supervisor reads the whole team's, to follow
+// them up; writes stay with the order's own consultant and the office, apart from the two
+// logged supervisor actions further down. Cost prices never leave for any consultant.
+// (mirrored in api/index.js and server/src/routes/sales.js)
+function sale_stripCosts(user, sale) {
+  if (user.role !== 'consultant' || !sale) return sale;
+  return {
+    ...sale,
+    // The seller's name only: a consultant's pay terms are nobody else's business.
+    ...(sale.consultant && { consultant: { id: sale.consultant.id, name: sale.consultant.name } }),
+    items: (sale.items || []).map(({ costPrice, ...item }) => {
+      if (!item.product) return item;
+      const { costPrice: _c, supplier: _s, ...product } = item.product;
+      return { ...item, product };
+    }),
+  };
+}
+
+// ---- SUPERVISOR ACTIONS ON A TEAM MEMBER'S ORDER ----
+// Correcting the customer's details, and moving an order to another consultant (which moves
+// the commission with it). Both only before the order goes out, both open to the office too,
+// and both logged with who did it. Nothing here touches what was charged or paid.
+const SALE_DETAIL_FIELDS = { customerName: 'Name', customerPhone: 'Phone', customerCity: 'City', deliveryAddress: 'Address', notes: 'Notes' };
+const SALE_OPEN_STATUSES = ['Pending', 'Confirmed'];
+const sale_canSupervise = (user) => user.role === 'admin' || (user.role === 'consultant' && !!user.isSupervisor);
+
+async function sale_changeDetails(prisma, user, saleId, body) {
+  if (!sale_canSupervise(user)) return { status: 403, error: 'Only the office or the sales supervisor can do this' };
+  const sale = await prisma.sale.findFirst({ where: { id: saleId, companyId: user.companyId } });
+  if (!sale) return { status: 404, error: 'Sale not found' };
+  if (!SALE_OPEN_STATUSES.includes(sale.status)) return { status: 400, error: 'This order has already gone out. Ask the office to change it.' };
+  const data = {};
+  const changes = [];
+  for (const [field, label] of Object.entries(SALE_DETAIL_FIELDS)) {
+    if (body[field] === undefined) continue;
+    const value = sanitizeString(String(body[field] ?? '').trim(), 500) || null;
+    if ((sale[field] || null) === value) continue;
+    data[field] = value;
+    changes.push(`${label}: ${sale[field] || '(blank)'} → ${value || '(blank)'}`);
+  }
+  if (!changes.length) return { status: 400, error: 'Nothing has changed' };
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.saleChangeLog.create({ data: { saleId: sale.id, change: 'details', detail: changes.join('; '), byUserId: user.id, companyId: user.companyId } });
+    return tx.sale.update({ where: { id: sale.id }, data, select: { id: true, orderNumber: true, customerName: true, customerPhone: true, customerCity: true, deliveryAddress: true, notes: true } });
+  });
+  return { status: 200, body: updated };
+}
+
+async function sale_reassign(prisma, user, saleId, body) {
+  if (!sale_canSupervise(user)) return { status: 403, error: 'Only the office or the sales supervisor can do this' };
+  const sale = await prisma.sale.findFirst({
+    where: { id: saleId, companyId: user.companyId },
+    include: { items: { select: { stockSourceConsultantId: true } }, consultant: { select: { id: true, name: true } } },
+  });
+  if (!sale) return { status: 404, error: 'Sale not found' };
+  if (!SALE_OPEN_STATUSES.includes(sale.status)) return { status: 400, error: 'This order has already gone out. Ask the office to move it.' };
+  const target = await prisma.consultant.findFirst({
+    where: { id: String(body.consultantId || ''), companyId: user.companyId, isActive: true, isStockLocation: false },
+    select: { id: true, name: true },
+  });
+  if (!target) return { status: 400, error: 'Choose an active consultant' };
+  if (target.id === sale.consultantId) return { status: 400, error: `This order is already ${target.name}'s` };
+  // Goods taken from the consultant's own stock stay with that consultant's order.
+  if (sale.consultantId && sale.items.some(i => i.stockSourceConsultantId === sale.consultantId)) {
+    return { status: 400, error: `Part of this order comes out of ${sale.consultant.name}'s own stock, so it stays with them. Ask the office.` };
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.saleChangeLog.create({
+      data: { saleId: sale.id, change: 'reassigned', detail: `${sale.consultant?.name || 'No consultant'} → ${target.name}`, byUserId: user.id, companyId: user.companyId },
+    });
+    await tx.sale.update({ where: { id: sale.id }, data: { consultantId: target.id } });
+  });
+  return { status: 200, body: { id: sale.id, orderNumber: sale.orderNumber, consultant: target } };
+}
+
+const sale_changeLogsOf = (prisma, saleId) => prisma.saleChangeLog.findMany({
+  where: { saleId }, orderBy: { createdAt: 'desc' }, include: { byUser: { select: { name: true } } },
+});
+
+// The sales team at a glance, for the sales supervisor and the office: this pay cycle's orders
+// and collections per consultant against their targets, orders still to go out, unpaid orders
+// and open order queries. No pay, cost or profit: a supervisor sees what the team sells, not
+// what anyone earns. (mirrored in api/index.js and server/src/routes/team.js)
+const TEAM_UNPAID_DAYS = 90;
+
+async function team_view(prisma, user) {
+  const companyId = user.companyId;
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { consultantPayDay: true } });
+  const cycle = getConsultantPayPeriod(new Date(), company?.consultantPayDay || 11);
+  const unpaidFrom = new Date(Date.now() - TEAM_UNPAID_DAYS * 864e5);
+  const saleSelect = {
+    id: true, orderNumber: true, date: true, status: true, paymentStatus: true, totalPrice: true, amountPaid: true,
+    customerName: true, customerPhone: true, customerCity: true, deliveryAddress: true, notes: true, consultantId: true,
+  };
+  const [consultants, cycleSales, toGoOut, unpaid, queries, run] = await Promise.all([
+    prisma.consultant.findMany({ where: { companyId, isActive: true, isStockLocation: false }, select: { id: true, name: true, isSupervisor: true }, orderBy: { name: 'asc' } }),
+    prisma.sale.findMany({ where: { companyId, consultantId: { not: null }, status: { not: 'Cancelled' }, date: { gte: cycle.periodFrom, lt: cycle.periodTo } }, select: { consultantId: true, totalPrice: true, amountPaid: true } }),
+    prisma.sale.findMany({ where: { companyId, status: { in: ['Pending', 'Confirmed'] } }, select: saleSelect, orderBy: { date: 'asc' }, take: 200 }),
+    prisma.sale.findMany({ where: { companyId, status: { not: 'Cancelled' }, paymentStatus: { not: 'Paid' }, date: { gte: unpaidFrom } }, select: saleSelect, orderBy: { date: 'asc' }, take: 200 }),
+    prisma.orderQuery.findMany({ where: { companyId, status: { not: 'closed' } }, select: { consultantId: true, status: true } }),
+    // The targets as the payslip measures them: goods value collected this cycle.
+    payroll_run(prisma, companyId, cycle.label),
+  ]);
+  const names = Object.fromEntries(consultants.map(c => [c.id, c.name]));
+  const money = (n) => Math.round(n * 100) / 100;
+  const balance = (s) => money(parseFloat(s.totalPrice) - parseFloat(s.amountPaid));
+  const order = (s) => ({
+    id: s.id, orderNumber: s.orderNumber, date: s.date, status: s.status, paymentStatus: s.paymentStatus,
+    total: money(parseFloat(s.totalPrice)), balance: balance(s),
+    customerName: s.customerName, customerPhone: s.customerPhone, customerCity: s.customerCity, deliveryAddress: s.deliveryAddress, notes: s.notes,
+    consultant: s.consultantId ? { id: s.consultantId, name: names[s.consultantId] || 'Former consultant' } : null,
+  });
+  const slips = new Map(run.payslips.filter(x => x.kind === 'commission').map(x => [x.personId, x]));
+  const rows = consultants.map(c => {
+    const mine = cycleSales.filter(s => s.consultantId === c.id);
+    const t = slips.get(c.id)?.target || null;
+    return {
+      id: c.id, name: c.name, isSupervisor: c.isSupervisor,
+      orders: mine.length,
+      sales: money(mine.reduce((a, s) => a + parseFloat(s.totalPrice), 0)),
+      collected: money(mine.reduce((a, s) => a + Math.min(parseFloat(s.amountPaid), parseFloat(s.totalPrice)), 0)),
+      target: t ? { target: t.target, collected: t.collected, progress: t.progress, reached: t.reached, toGo: t.toGo } : null,
+      toGoOut: toGoOut.filter(s => s.consultantId === c.id).length,
+      unpaid: { count: unpaid.filter(s => s.consultantId === c.id).length, balance: money(unpaid.filter(s => s.consultantId === c.id).reduce((a, s) => a + balance(s), 0)) },
+      openQueries: queries.filter(q => q.consultantId === c.id).length,
+    };
+  });
+  return {
+    cycle: { label: cycle.label, from: cycle.periodFrom, to: cycle.periodTo, payDate: cycle.payDate },
+    consultants: rows,
+    toGoOut: toGoOut.map(order),
+    unpaid: unpaid.map(order),
+  };
+}
+
+app.get('/api/v1/team', authenticate, async (req, res) => {
+  try {
+    const user = req.user;
+    if (!(user.role === 'admin' || (user.role === 'consultant' && user.isSupervisor))) {
+      return res.status(403).json({ error: 'Only the office or the sales supervisor can see the team' });
+    }
+    res.json(await team_view(prisma, user));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const saleWhere = { companyId, paymentType: 'Credit', paymentStatus: { not: 'Paid' } };
-    if (req.user.role === 'consultant') saleWhere.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) saleWhere.consultantId = req.user.consultantId;
     const creditSales = await prisma.sale.findMany({ where: saleWhere, include: { customer: true } });
     const now = new Date();
     let totalOutstanding = 0, overdueCount = 0, overdueAmount = 0;
@@ -1156,7 +1308,7 @@ app.get('/api/v1/sales/credit/summary', authenticate, async (req, res) => {
     });
     const topDebtors = Object.values(debtorMap).sort((a, b) => b.totalOwed - a.totalOwed);
     const paymentWhere = { companyId };
-    if (req.user.role === 'consultant') paymentWhere.sale = { consultantId: req.user.consultantId };
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) paymentWhere.sale = { consultantId: req.user.consultantId };
     const recentPayments = await prisma.creditPayment.findMany({ where: paymentWhere, orderBy: { createdAt: 'desc' }, take: 10, include: { sale: { select: { orderNumber: true, customerName: true } } } });
     res.json({ totalOutstanding, overdueCount, overdueAmount, topDebtors, recentPayments });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -1175,7 +1327,7 @@ app.get('/api/v1/sales/reports/daily', authenticate, async (req, res) => {
     const rangeEnd = new Date(to + 'T23:59:59.999Z');
 
     const where = { companyId, date: { gte: rangeStart, lte: rangeEnd }, status: { not: 'Cancelled' } };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     else if (req.query.consultantId) where.consultantId = req.query.consultantId;
 
     const sales = await prisma.sale.findMany({
@@ -1253,19 +1405,19 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
     if (from || to) { where.date = {}; if (from) where.date.gte = new Date(from); if (to) where.date.lte = new Date(to + 'T23:59:59.999Z'); }
     if (search) { where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]; }
     if (consultantId) where.consultantId = consultantId;
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
 
     const pagination = parsePagination(req.query);
     if (!pagination) {
       const sales = await prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy: { createdAt: 'desc' } });
-      return res.json(sales);
+      return res.json(sales.map(x => sale_stripCosts(req.user, x)));
     }
 
-    if (sortBy === 'profit') {
+    if (sortBy === 'profit' && req.user.role !== 'consultant') {
       const all = await prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy: { createdAt: 'desc' } });
       all.sort((a, b) => (sortDir === 'asc' ? -1 : 1) * (calcSaleProfit(b) - calcSaleProfit(a)));
       const page = all.slice(pagination.skip, pagination.skip + pagination.take);
-      return res.json(paginatedResponse(page, all.length, pagination));
+      return res.json(paginatedResponse(page.map(x => sale_stripCosts(req.user, x)), all.length, pagination));
     }
 
     const orderBy = { [SALE_SORT_FIELDS[sortBy] || 'createdAt']: sortDir === 'asc' ? 'asc' : 'desc' };
@@ -1273,7 +1425,7 @@ app.get('/api/v1/sales', authenticate, async (req, res) => {
       prisma.sale.count({ where }),
       prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy, skip: pagination.skip, take: pagination.take }),
     ]);
-    res.json(paginatedResponse(sales, total, pagination));
+    res.json(paginatedResponse(sales.map(x => sale_stripCosts(req.user, x)), total, pagination));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -1281,13 +1433,14 @@ app.get('/api/v1/sales/:id', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, consultant: true, statusHistory: { orderBy: { createdAt: 'desc' } }, creditPayments: { orderBy: { createdAt: 'desc' } }, debtReminders: { orderBy: { sentAt: 'desc' } }, paymentNotes: { orderBy: { createdAt: 'desc' } }, delivery: { include: { rider: { select: { name: true, phone: true } } } }, fiscalDocuments: SALE_INCLUDE.fiscalDocuments } });
     if (!sale) return res.status(404).json({ error: 'Not found' });
     if (req.user.role === 'consultant') {
       sale.items = (sale.items || []).map(({ costPrice, ...rest }) => rest);
     }
-    res.json(sale);
+    sale.changeLogs = await sale_changeLogsOf(prisma, sale.id);
+    res.json(sale_stripCosts(req.user, sale));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -1635,6 +1788,8 @@ app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
         await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
         await tx.paymentNote.deleteMany({ where: { saleId: req.params.id } });
         await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+        // The supervisor's corrections and moves; the order cannot go while these point at it.
+        await tx.saleChangeLog.deleteMany({ where: { saleId: req.params.id } });
         await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
         await tx.sale.delete({ where: { id: req.params.id } });
       }, { timeout: 20000 });
@@ -1670,7 +1825,7 @@ app.post('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id/payments', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    if (req.user.role === 'consultant') {
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) {
       const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
       if (!owned) return res.status(404).json({ error: 'Sale not found' });
     }
@@ -1684,7 +1839,7 @@ app.post('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     const sale = await prisma.sale.findFirst({ where });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const reminder = await prisma.debtReminder.create({ data: { saleId: sale.id, channel: req.body.channel, message: req.body.message || null, companyId } });
@@ -1695,7 +1850,7 @@ app.post('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
 app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
-    if (req.user.role === 'consultant') {
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) {
       const owned = await prisma.sale.findFirst({ where: { id: req.params.id, companyId, consultantId: req.user.consultantId }, select: { id: true } });
       if (!owned) return res.status(404).json({ error: 'Sale not found' });
     }
@@ -1705,11 +1860,27 @@ app.get('/api/v1/sales/:id/reminders', authenticate, async (req, res) => {
 });
 
 // ---- RECEIPT DATA ----
+app.put('/api/v1/sales/:id/details', authenticate, async (req, res) => {
+  try {
+    const out = await sale_changeDetails(prisma, req.user, req.params.id, req.body || {});
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out.body);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
+app.put('/api/v1/sales/:id/consultant', authenticate, async (req, res) => {
+  try {
+    const out = await sale_reassign(prisma, req.user, req.params.id, req.body || {});
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out.body);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
+});
+
 app.get('/api/v1/sales/:id/receipt', authenticate, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const where = { id: req.params.id, companyId };
-    if (req.user.role === 'consultant') where.consultantId = req.user.consultantId;
+    if (req.user.role === 'consultant' && !req.user.isSupervisor) where.consultantId = req.user.consultantId;
     const sale = await prisma.sale.findFirst({ where, include: { items: { include: { product: true, stockSourceConsultant: { select: { id: true, name: true } } } }, customer: true, creditPayments: { orderBy: { createdAt: 'desc' } }, fiscalDocuments: SALE_INCLUDE.fiscalDocuments } });
     if (!sale) return res.status(404).json({ error: 'Sale not found' });
     const settings = await prisma.setting.findMany({ where: { companyId } });
@@ -2974,6 +3145,7 @@ app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, 
     await prisma.debtReminder.deleteMany({ where: { companyId } });
     await prisma.creditPayment.deleteMany({ where: { companyId } });
     await prisma.orderStatusLog.deleteMany({ where: { companyId } });
+    await prisma.saleChangeLog.deleteMany({ where: { companyId } });
     await prisma.stockLog.deleteMany({ where: { companyId } });
     await prisma.fiscalDocument.deleteMany({ where: { companyId } });
     await prisma.orderQuery.deleteMany({ where: { companyId } });
@@ -3980,6 +4152,8 @@ app.put('/api/v1/consultants/:id', authenticate, requireAdmin, async (req, res) 
       ...(raw.isActive !== undefined && { isActive: raw.isActive }),
       ...(raw.startDate !== undefined && { startDate: raw.startDate ? new Date(raw.startDate) : null }),
       ...(raw.notes !== undefined && { notes: raw.notes || null }),
+      // Only the admin reaches this route, so only the admin makes someone supervisor.
+      ...(raw.isSupervisor !== undefined && { isSupervisor: raw.isSupervisor === true || raw.isSupervisor === 'true' }),
     };
     const consultant = await prisma.consultant.update({ where: { id: req.params.id }, data });
     res.json(consultant);
@@ -5769,6 +5943,8 @@ function oq_view(q) {
 // nothing, as though it did not exist.
 function oq_scope(user) {
   if (OQ_IS_OFFICE(user)) return { companyId: user.companyId };
+  // The sales supervisor follows up every consultant's queries.
+  if (user.role === 'consultant' && user.isSupervisor) return { companyId: user.companyId };
   if (user.role === 'consultant' && user.consultantId) return { companyId: user.companyId, consultantId: user.consultantId };
   return null;
 }
@@ -6478,13 +6654,35 @@ async function delivery_reverseRemittance(tx, deliveryId, companyId) {
 // silently moves stock: an order still sitting in Pending is left for someone to confirm.
 const delivery_SALE_DELIVERABLE_FROM = ['Confirmed', 'Shipped'];
 
+// ---- WHO SENDS ORDERS OUT ----
+
+// The office and the warehouse dispatch, and so does the sales supervisor: she puts orders on our
+// own riders and moves them between riders. Closing a delivery, booking a hired courier (its fare
+// is a cost on the order) and anything to do with the cash stay with the office.
+const delivery_DISPATCH_OFFICE_ROLES = ['admin', 'superadmin', 'inventory'];
+const delivery_isDispatchSupervisor = (user) => user.role === 'consultant' && !!user.isSupervisor;
+function delivery_requireDispatcher(req, res, next) {
+  if (delivery_DISPATCH_OFFICE_ROLES.includes(req.user.role) || delivery_isDispatchSupervisor(req.user)) return next();
+  return res.status(403).json({ error: 'Admin, inventory or sales supervisor access required' });
+}
+// What a delivery costs us is not the supervisor's to see.
+const delivery_shapeForViewer = (user) => (d) => {
+  const shaped = delivery_shapeDelivery(d);
+  if (delivery_isDispatchSupervisor(user)) delete shaped.courierCost;
+  return shaped;
+};
+
 // ---- RIDERS ----
 
-app.get('/api/v1/deliveries/riders', authenticate, requireAdminOrInventory, async (req, res) => {
+app.get('/api/v1/deliveries/riders', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const where = { companyId: req.user.companyId };
     if (req.query.active === 'true') where.isActive = true;
     const riders = await prisma.rider.findMany({ where, orderBy: { name: 'asc' } });
+    // The supervisor needs a name to pick, not a rider's papers.
+    if (delivery_isDispatchSupervisor(req.user)) {
+      return res.json(riders.filter(r => r.isActive).map(r => ({ id: r.id, name: r.name, phone: r.phone, vehicle: r.vehicle, isActive: r.isActive })));
+    }
     const withLogin = riders.map(r => ({ ...r, hasLogin: !!r.userId }));
     res.json(withLogin);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -6631,7 +6829,7 @@ app.get('/api/v1/deliveries/my/runs', authenticate, async (req, res) => {
 // ---- ADMIN LIST / ASSIGNMENT ----
 
 // Orders that need a rider: in a deliverable state, no delivery record yet.
-app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, async (req, res) => {
+app.get('/api/v1/deliveries/unassigned', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const where = {
       companyId: req.user.companyId,
@@ -6671,6 +6869,15 @@ app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, 
 
 app.get('/api/v1/deliveries', authenticate, async (req, res) => {
   try {
+    // Riders see their own; the office and the warehouse see all of it. The supervisor sees what
+    // is still out on the road and nothing of the cash. Every other login is refused.
+    const supervisor = delivery_isDispatchSupervisor(req.user);
+    if (req.user.role !== 'rider' && !delivery_DISPATCH_OFFICE_ROLES.includes(req.user.role) && !supervisor) {
+      return res.status(403).json({ error: 'Admin, inventory or rider access required' });
+    }
+    if (supervisor && req.query.open !== 'true') {
+      return res.status(403).json({ error: 'The sales supervisor sees only deliveries still out on the road' });
+    }
     const where = { companyId: req.user.companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
     else if (req.query.riderId) where.riderId = req.query.riderId;
@@ -6685,18 +6892,21 @@ app.get('/api/v1/deliveries', authenticate, async (req, res) => {
       if (req.query.to) where.assignedAt.lte = new Date(req.query.to + 'T23:59:59.999Z');
     }
     const deliveries = await prisma.delivery.findMany({ where, include: deliveryInclude, orderBy: { assignedAt: 'desc' }, take: 300 });
-    res.json(deliveries.map(delivery_shapeDelivery));
+    res.json(deliveries.map(delivery_shapeForViewer(req.user)));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Assign one or more orders to a rider in a single call — the screen assigns a day's run at once.
-app.post('/api/v1/deliveries', authenticate, requireAdminOrInventory, async (req, res) => {
+app.post('/api/v1/deliveries', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { riderId, saleIds, notes, courierRef } = req.body;
     const courier = delivery_COURIERS.includes(req.body.courier) ? req.body.courier : 'rider';
     const ids = Array.isArray(saleIds) ? saleIds : (req.body.saleId ? [req.body.saleId] : []);
     if (!ids.length) return res.status(400).json({ error: 'Select at least one order' });
+    if (delivery_isDispatchSupervisor(req.user) && delivery_isHiredCourier(courier)) {
+      return res.status(403).json({ error: 'Booking a hired courier stays with the office' });
+    }
     // A hired courier is not one of our riders, so the two cannot both be set.
     if (delivery_isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
@@ -6735,7 +6945,7 @@ app.post('/api/v1/deliveries', authenticate, requireAdminOrInventory, async (req
       await prisma.sale.updateMany({ where: { id: { in: ids }, companyId }, data: { shippingCost: fare } });
     }
     const created = await prisma.delivery.findMany({ where: { saleId: { in: ids } }, include: deliveryInclude });
-    res.status(201).json(created.map(delivery_shapeDelivery));
+    res.status(201).json(created.map(delivery_shapeForViewer(req.user)));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -6745,6 +6955,11 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const { status, recipientName, cashCollected, failureReason, notes } = req.body;
     if (!delivery_STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${delivery_STATUSES.join(', ')}` });
+    // Closing a delivery records the cash taken at the door, so it is the rider's (his own only,
+    // below) or the office's. It used to be open to any login.
+    if (req.user.role !== 'rider' && !delivery_DISPATCH_OFFICE_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only the rider carrying it or the office can close a delivery' });
+    }
 
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
@@ -6811,7 +7026,7 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
 });
 
 // Reassign to a different rider, or park it back in the unassigned pile.
-app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, async (req, res) => {
+app.put('/api/v1/deliveries/:id/rider', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId } });
@@ -6822,6 +7037,10 @@ app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, a
       : (delivery_COURIERS.includes(req.body.courier) ? req.body.courier : delivery.courier);
     if (delivery_isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
+    }
+    if (delivery_isDispatchSupervisor(req.user)) {
+      if (delivery_isHiredCourier(courier)) return res.status(403).json({ error: 'Handing it to a hired courier stays with the office' });
+      if (delivery.status === 'Delivered') return res.status(400).json({ error: 'That delivery is already done' });
     }
     // The fare for a trip booked now, which belongs on the order as its delivery cost. No rider
     // credit: the office books and pays a courier directly, unlike a parcel one of ours carries
@@ -6836,6 +7055,7 @@ app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, a
     if (riderId) {
       const rider = await prisma.rider.findFirst({ where: { id: riderId, companyId } });
       if (!rider) return res.status(404).json({ error: 'Rider not found' });
+      if (delivery_isDispatchSupervisor(req.user) && !rider.isActive) return res.status(400).json({ error: 'That rider is inactive' });
     }
     const updated = await prisma.$transaction(async (tx) => {
       if (handoverFare !== null) await delivery_shiftSaleShippingCost(tx, delivery.saleId, companyId, handoverFare);
@@ -6847,7 +7067,7 @@ app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, a
         ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
       }, include: deliveryInclude });
     }, { timeout: 20000 });
-    res.json(delivery_shapeDelivery(updated));
+    res.json(delivery_shapeForViewer(req.user)(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

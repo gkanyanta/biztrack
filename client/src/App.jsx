@@ -30,6 +30,7 @@ import Payroll from './pages/Payroll';
 import RiderDashboard from './pages/RiderDashboard';
 import MyAdvances from './pages/MyAdvances';
 import OrderQueries from './pages/OrderQueries';
+import Team from './pages/Team';
 
 // Store domains — serve store directly, no admin
 const STORE_DOMAINS = { 'store.privtech.net': 'privtech-solutions' };
@@ -51,6 +52,13 @@ function DashboardRouter() {
   return <Dashboard />;
 }
 
+// The team page: the office, and the consultant the admin has made sales supervisor.
+function TeamAccess({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'admin' || (user?.role === 'consultant' && user?.isSupervisor)) return children;
+  return <Navigate to="/" />;
+}
+
 function AdminOnly({ children }) {
   const { user } = useAuth();
   if (user?.role === 'consultant' || user?.role === 'inventory' || user?.role === 'purchasing' || user?.role === 'rider') return <Navigate to="/" />;
@@ -67,11 +75,12 @@ function NotInventory({ children }) {
   return children;
 }
 
-// Dispatch belongs to the inventory role as well as an admin; the page itself hides the tabs
-// that move money.
+// Dispatch belongs to the inventory role and the sales supervisor as well as an admin; the page
+// itself hides the tabs that move money.
 function DispatchRoute({ children }) {
   const { user } = useAuth();
   if (user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'inventory') return children;
+  if (user?.role === 'consultant' && user?.isSupervisor) return children;
   return <Navigate to="/" />;
 }
 
@@ -131,6 +140,7 @@ function AppRoutes() {
         <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
         <Route path="my-advances" element={<MyAdvances />} />
         <Route path="order-queries" element={<NotInventory><OrderQueries /></NotInventory>} />
+        <Route path="team" element={<TeamAccess><Team /></TeamAccess>} />
       </Route>
     </Routes>
   );
