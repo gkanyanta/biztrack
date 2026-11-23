@@ -194,14 +194,36 @@ const SALE_DELIVERABLE_FROM = ['Confirmed', 'Shipped'];
 
 router.use(authenticate);
 
+// ---- WHO SENDS ORDERS OUT ----
+
+// The office and the warehouse dispatch, and so does the sales supervisor: she puts orders on our
+// own riders and moves them between riders. Closing a delivery, booking a hired courier (its fare
+// is a cost on the order) and anything to do with the cash stay with the office.
+const DISPATCH_OFFICE_ROLES = ['admin', 'superadmin', 'inventory'];
+const isDispatchSupervisor = (user) => user.role === 'consultant' && !!user.isSupervisor;
+function requireDispatcher(req, res, next) {
+  if (DISPATCH_OFFICE_ROLES.includes(req.user.role) || isDispatchSupervisor(req.user)) return next();
+  return res.status(403).json({ error: 'Admin, inventory or sales supervisor access required' });
+}
+// What a delivery costs us is not the supervisor's to see.
+const shapeForViewer = (user) => (d) => {
+  const shaped = shapeDelivery(d);
+  if (isDispatchSupervisor(user)) delete shaped.courierCost;
+  return shaped;
+};
+
 // ---- RIDERS ----
 
-router.get('/riders', requireAdminOrInventory, async (req, res) => {
+router.get('/riders', requireDispatcher, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const where = { companyId: req.user.companyId };
     if (req.query.active === 'true') where.isActive = true;
     const riders = await prisma.rider.findMany({ where, orderBy: { name: 'asc' } });
+    // The supervisor needs a name to pick, not a rider's papers.
+    if (isDispatchSupervisor(req.user)) {
+      return res.json(riders.filter(r => r.isActive).map(r => ({ id: r.id, name: r.name, phone: r.phone, vehicle: r.vehicle, isActive: r.isActive })));
+    }
     const withLogin = riders.map(r => ({ ...r, hasLogin: !!r.userId }));
     res.json(withLogin);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -352,7 +374,7 @@ router.get('/my/runs', async (req, res) => {
 // ---- ADMIN LIST / ASSIGNMENT ----
 
 // Orders that need a rider: in a deliverable state, no delivery record yet.
-router.get('/unassigned', requireAdminOrInventory, async (req, res) => {
+router.get('/unassigned', requireDispatcher, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const where = {
@@ -393,6 +415,15 @@ router.get('/unassigned', requireAdminOrInventory, async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
+    // Riders see their own; the office and the warehouse see all of it. The supervisor sees what
+    // is still out on the road and nothing of the cash. Every other login is refused.
+    const supervisor = isDispatchSupervisor(req.user);
+    if (req.user.role !== 'rider' && !DISPATCH_OFFICE_ROLES.includes(req.user.role) && !supervisor) {
+      return res.status(403).json({ error: 'Admin, inventory or rider access required' });
+    }
+    if (supervisor && req.query.open !== 'true') {
+      return res.status(403).json({ error: 'The sales supervisor sees only deliveries still out on the road' });
+    }
     const prisma = req.app.locals.prisma;
     const where = { companyId: req.user.companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
@@ -408,12 +439,12 @@ router.get('/', async (req, res) => {
       if (req.query.to) where.assignedAt.lte = new Date(req.query.to + 'T23:59:59.999Z');
     }
     const deliveries = await prisma.delivery.findMany({ where, include: deliveryInclude, orderBy: { assignedAt: 'desc' }, take: 300 });
-    res.json(deliveries.map(shapeDelivery));
+    res.json(deliveries.map(shapeForViewer(req.user)));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Assign one or more orders to a rider in a single call — the screen assigns a day's run at once.
-router.post('/', requireAdminOrInventory, async (req, res) => {
+router.post('/', requireDispatcher, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -421,6 +452,9 @@ router.post('/', requireAdminOrInventory, async (req, res) => {
     const courier = DELIVERY_COURIERS.includes(req.body.courier) ? req.body.courier : 'rider';
     const ids = Array.isArray(saleIds) ? saleIds : (req.body.saleId ? [req.body.saleId] : []);
     if (!ids.length) return res.status(400).json({ error: 'Select at least one order' });
+    if (isDispatchSupervisor(req.user) && isHiredCourier(courier)) {
+      return res.status(403).json({ error: 'Booking a hired courier stays with the office' });
+    }
     // A hired courier is not one of our riders, so the two cannot both be set.
     if (isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
@@ -459,7 +493,7 @@ router.post('/', requireAdminOrInventory, async (req, res) => {
       await prisma.sale.updateMany({ where: { id: { in: ids }, companyId }, data: { shippingCost: fare } });
     }
     const created = await prisma.delivery.findMany({ where: { saleId: { in: ids } }, include: deliveryInclude });
-    res.status(201).json(created.map(shapeDelivery));
+    res.status(201).json(created.map(shapeForViewer(req.user)));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -470,6 +504,11 @@ router.put('/:id/status', async (req, res) => {
     const companyId = req.user.companyId;
     const { status, recipientName, cashCollected, failureReason, notes } = req.body;
     if (!STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${STATUSES.join(', ')}` });
+    // Closing a delivery records the cash taken at the door, so it is the rider's (his own only,
+    // below) or the office's. It used to be open to any login.
+    if (req.user.role !== 'rider' && !DISPATCH_OFFICE_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only the rider carrying it or the office can close a delivery' });
+    }
 
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
@@ -536,7 +575,7 @@ router.put('/:id/status', async (req, res) => {
 });
 
 // Reassign to a different rider, or park it back in the unassigned pile.
-router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
+router.put('/:id/rider', requireDispatcher, async (req, res) => {
   try {
     const prisma = req.app.locals.prisma;
     const companyId = req.user.companyId;
@@ -548,6 +587,10 @@ router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
       : (DELIVERY_COURIERS.includes(req.body.courier) ? req.body.courier : delivery.courier);
     if (isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
+    }
+    if (isDispatchSupervisor(req.user)) {
+      if (isHiredCourier(courier)) return res.status(403).json({ error: 'Handing it to a hired courier stays with the office' });
+      if (delivery.status === 'Delivered') return res.status(400).json({ error: 'That delivery is already done' });
     }
     // The fare for a trip booked now, which belongs on the order as its delivery cost. No rider
     // credit: the office books and pays a courier directly, unlike a parcel one of ours carries
@@ -562,6 +605,7 @@ router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
     if (riderId) {
       const rider = await prisma.rider.findFirst({ where: { id: riderId, companyId } });
       if (!rider) return res.status(404).json({ error: 'Rider not found' });
+      if (isDispatchSupervisor(req.user) && !rider.isActive) return res.status(400).json({ error: 'That rider is inactive' });
     }
     const updated = await prisma.$transaction(async (tx) => {
       if (handoverFare !== null) await shiftSaleShippingCost(tx, delivery.saleId, companyId, handoverFare);
@@ -573,7 +617,7 @@ router.put('/:id/rider', requireAdminOrInventory, async (req, res) => {
         ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
       }, include: deliveryInclude });
     }, { timeout: 20000 });
-    res.json(shapeDelivery(updated));
+    res.json(shapeForViewer(req.user)(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

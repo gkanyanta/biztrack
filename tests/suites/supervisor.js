@@ -1,7 +1,8 @@
 // The admin can make a consultant sales supervisor. She then sees the whole team's orders, a
 // team page and every order query, corrects customer details and moves orders between
 // consultants before they go out, all logged. Cost prices, profit and pay stay out of her
-// reach, and money on someone else's order stays with them and the office.
+// reach, and money on someone else's order stays with them and the office. She also sends orders
+// out on our own riders, but closing a delivery, hiring a courier and the cash stay with the office.
 const { loginAs } = require('../lib/harness');
 
 module.exports = {
@@ -23,6 +24,7 @@ module.exports = {
     eq('the team page is closed to her', (await evelyn('GET', '/team')).status, 403);
     eq('she cannot change a colleague\'s order', (await evelyn('PUT', `/sales/${seed.annaPendingId}/details`, { customerPhone: '0960000000' })).status, 403);
     eq('nor make herself supervisor', (await evelyn('PUT', `/consultants/${seed.evelynId}`, { isSupervisor: true })).status, 403);
+    eq('deliveries are closed to her', [(await evelyn('GET', '/deliveries')).status, (await evelyn('GET', '/deliveries/riders')).status], [403, 403]);
 
     section('the admin makes her supervisor');
     const made = await boss('PUT', `/consultants/${seed.evelynId}`, { isSupervisor: true });
@@ -93,6 +95,36 @@ module.exports = {
     eq('nor delete it', (await evelyn('DELETE', `/sales/${seed.annaOutId}`)).status, 403);
     eq('the order is as it was', (await prisma.sale.findUnique({ where: { id: seed.annaOutId } })).status, 'Delivered');
 
+    section('sending orders out on our riders');
+    const riders = await evelyn('GET', '/deliveries/riders');
+    eq('she sees the active riders by name, not their papers',
+       [riders.status, riders.body.map(r => r.name), JSON.stringify(riders.body).includes('LIC-SECRET') || JSON.stringify(riders.body).includes('111111')],
+       [200, ['Moses'], false]);
+    const waiting = await evelyn('GET', '/deliveries/unassigned');
+    eq('and the orders waiting for a rider', [waiting.status, waiting.body.some(s => s.id === seed.annaOwnStockId)], [200, true]);
+    eq('she cannot book a hired courier, which costs a fare', (await evelyn('POST', '/deliveries', { saleIds: [seed.annaOwnStockId], courier: 'yango', courierCost: 80 })).status, 403);
+    eq('nor use a rider who has stopped', (await evelyn('POST', '/deliveries', { saleIds: [seed.annaOwnStockId], riderId: seed.retiredRiderId })).status, 400);
+    const sent = await evelyn('POST', '/deliveries', { saleIds: [seed.annaOwnStockId], riderId: seed.mosesId });
+    eq('she puts Anna\'s order on Moses', [sent.status, sent.body[0]?.rider?.name, 'courierCost' in (sent.body[0] || {})], [201, 'Moses', false]);
+    const deliveryId = sent.body[0].id;
+    const evelynUser = await prisma.user.findUnique({ where: { username: 'evelyn' } });
+    eq('with her name on the assignment', (await prisma.delivery.findUnique({ where: { id: deliveryId } })).assignedById, evelynUser.id);
+    const onRoad = await evelyn('GET', '/deliveries?open=true');
+    eq('she sees what is out on the road, with no cost on it', [onRoad.status, onRoad.body.map(d => d.id), JSON.stringify(onRoad.body).includes('courierCost')], [200, [deliveryId], false]);
+    eq('but not the cash screens', [(await evelyn('GET', '/deliveries?unremitted=true')).status, (await evelyn('GET', '/deliveries?remitted=true')).status, (await evelyn('GET', '/deliveries')).status], [403, 403, 403]);
+    eq('she takes it off Moses', [(await evelyn('PUT', `/deliveries/${deliveryId}/rider`, { riderId: null })).status, (await prisma.delivery.findUnique({ where: { id: deliveryId } })).riderId], [200, null]);
+    eq('and gives it back', (await evelyn('PUT', `/deliveries/${deliveryId}/rider`, { riderId: seed.mosesId })).body.rider?.name, 'Moses');
+    eq('but cannot hand it to a hired courier', (await evelyn('PUT', `/deliveries/${deliveryId}/rider`, { courier: 'yango' })).status, 403);
+
+    section('closing a delivery stays with the rider and the office');
+    eq('she cannot mark it delivered', (await evelyn('PUT', `/deliveries/${deliveryId}/status`, { status: 'Delivered', cashCollected: 300 })).status, 403);
+    eq('nor failed', (await evelyn('PUT', `/deliveries/${deliveryId}/status`, { status: 'Failed', failureReason: 'x' })).status, 403);
+    eq('nor confirm cash or delete it', [(await evelyn('PUT', `/deliveries/${deliveryId}/remit`, {})).status, (await evelyn('DELETE', `/deliveries/${deliveryId}`)).status], [403, 403]);
+    eq('a consultant who is not supervisor cannot either', [(await anna('PUT', `/deliveries/${deliveryId}/status`, { status: 'Delivered', cashCollected: 300 })).status, (await anna('GET', '/deliveries')).status], [403, 403]);
+    eq('the delivery is untouched', (await prisma.delivery.findUnique({ where: { id: deliveryId } })).status, 'Assigned');
+    eq('the office closes it', (await boss('PUT', `/deliveries/${deliveryId}/status`, { status: 'Delivered', cashCollected: 300 })).status, 200);
+    eq('after which she cannot move it', (await evelyn('PUT', `/deliveries/${deliveryId}/rider`, { riderId: null })).status, 400);
+
     section('the rest of the team is unchanged');
     eq('Anna still sees only her own', ids(await list(anna)), [seed.annaOutId, seed.annaOwnStockId, seed.annaPaidId].sort());
     eq('and has no team page', (await anna('GET', '/team')).status, 403);
@@ -102,6 +134,7 @@ module.exports = {
     await boss('PUT', `/consultants/${seed.evelynId}`, { isSupervisor: false });
     eq('she is back to her own orders', ids(await list(evelyn)), [seed.evelynSaleId]);
     eq('and the team page closes', (await evelyn('GET', '/team')).status, 403);
+    eq('as do deliveries', (await evelyn('GET', '/deliveries/riders')).status, 403);
     eq('the office can still move an order itself', (await boss('PUT', `/sales/${seed.evelynSaleId}/consultant`, { consultantId: seed.annaId })).status, 200);
   },
 };

@@ -25,15 +25,17 @@ export function decodeCarrier(value) {
   return { courier: 'rider', riderId: null };
 }
 
-export default function CarrierSelect({ riders, value, onChange, className = '', unsetLabel = 'Nobody yet' }) {
+// allowHired false leaves only our own people: booking a courier carries a fare, which is the office's.
+export default function CarrierSelect({ riders, value, onChange, className = '', unsetLabel = 'Nobody yet', allowHired = true }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)} className={className}>
       <option value="">{unsetLabel}</option>
       {riders.filter(r => r.isActive).map(r => (
         <option key={r.id} value={`rider:${r.id}`}>{r.name}{r.vehicle ? ` (${r.vehicle})` : ''}</option>
       ))}
-      <option value="hire:yango">Yango</option>
-      <option value="hire:other">Another courier</option>
+      {/* Still shown when a delivery is already on one, so the select never misreports it. */}
+      {(allowHired || value === 'hire:yango') && <option value="hire:yango">Yango</option>}
+      {(allowHired || value === 'hire:other') && <option value="hire:other">Another courier</option>}
     </select>
   );
 }

@@ -6651,13 +6651,35 @@ async function delivery_reverseRemittance(tx, deliveryId, companyId) {
 // silently moves stock: an order still sitting in Pending is left for someone to confirm.
 const delivery_SALE_DELIVERABLE_FROM = ['Confirmed', 'Shipped'];
 
+// ---- WHO SENDS ORDERS OUT ----
+
+// The office and the warehouse dispatch, and so does the sales supervisor: she puts orders on our
+// own riders and moves them between riders. Closing a delivery, booking a hired courier (its fare
+// is a cost on the order) and anything to do with the cash stay with the office.
+const delivery_DISPATCH_OFFICE_ROLES = ['admin', 'superadmin', 'inventory'];
+const delivery_isDispatchSupervisor = (user) => user.role === 'consultant' && !!user.isSupervisor;
+function delivery_requireDispatcher(req, res, next) {
+  if (delivery_DISPATCH_OFFICE_ROLES.includes(req.user.role) || delivery_isDispatchSupervisor(req.user)) return next();
+  return res.status(403).json({ error: 'Admin, inventory or sales supervisor access required' });
+}
+// What a delivery costs us is not the supervisor's to see.
+const delivery_shapeForViewer = (user) => (d) => {
+  const shaped = delivery_shapeDelivery(d);
+  if (delivery_isDispatchSupervisor(user)) delete shaped.courierCost;
+  return shaped;
+};
+
 // ---- RIDERS ----
 
-app.get('/api/v1/deliveries/riders', authenticate, requireAdminOrInventory, async (req, res) => {
+app.get('/api/v1/deliveries/riders', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const where = { companyId: req.user.companyId };
     if (req.query.active === 'true') where.isActive = true;
     const riders = await prisma.rider.findMany({ where, orderBy: { name: 'asc' } });
+    // The supervisor needs a name to pick, not a rider's papers.
+    if (delivery_isDispatchSupervisor(req.user)) {
+      return res.json(riders.filter(r => r.isActive).map(r => ({ id: r.id, name: r.name, phone: r.phone, vehicle: r.vehicle, isActive: r.isActive })));
+    }
     const withLogin = riders.map(r => ({ ...r, hasLogin: !!r.userId }));
     res.json(withLogin);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
@@ -6804,7 +6826,7 @@ app.get('/api/v1/deliveries/my/runs', authenticate, async (req, res) => {
 // ---- ADMIN LIST / ASSIGNMENT ----
 
 // Orders that need a rider: in a deliverable state, no delivery record yet.
-app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, async (req, res) => {
+app.get('/api/v1/deliveries/unassigned', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const where = {
       companyId: req.user.companyId,
@@ -6844,6 +6866,15 @@ app.get('/api/v1/deliveries/unassigned', authenticate, requireAdminOrInventory, 
 
 app.get('/api/v1/deliveries', authenticate, async (req, res) => {
   try {
+    // Riders see their own; the office and the warehouse see all of it. The supervisor sees what
+    // is still out on the road and nothing of the cash. Every other login is refused.
+    const supervisor = delivery_isDispatchSupervisor(req.user);
+    if (req.user.role !== 'rider' && !delivery_DISPATCH_OFFICE_ROLES.includes(req.user.role) && !supervisor) {
+      return res.status(403).json({ error: 'Admin, inventory or rider access required' });
+    }
+    if (supervisor && req.query.open !== 'true') {
+      return res.status(403).json({ error: 'The sales supervisor sees only deliveries still out on the road' });
+    }
     const where = { companyId: req.user.companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
     else if (req.query.riderId) where.riderId = req.query.riderId;
@@ -6858,18 +6889,21 @@ app.get('/api/v1/deliveries', authenticate, async (req, res) => {
       if (req.query.to) where.assignedAt.lte = new Date(req.query.to + 'T23:59:59.999Z');
     }
     const deliveries = await prisma.delivery.findMany({ where, include: deliveryInclude, orderBy: { assignedAt: 'desc' }, take: 300 });
-    res.json(deliveries.map(delivery_shapeDelivery));
+    res.json(deliveries.map(delivery_shapeForViewer(req.user)));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
 // Assign one or more orders to a rider in a single call — the screen assigns a day's run at once.
-app.post('/api/v1/deliveries', authenticate, requireAdminOrInventory, async (req, res) => {
+app.post('/api/v1/deliveries', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const { riderId, saleIds, notes, courierRef } = req.body;
     const courier = delivery_COURIERS.includes(req.body.courier) ? req.body.courier : 'rider';
     const ids = Array.isArray(saleIds) ? saleIds : (req.body.saleId ? [req.body.saleId] : []);
     if (!ids.length) return res.status(400).json({ error: 'Select at least one order' });
+    if (delivery_isDispatchSupervisor(req.user) && delivery_isHiredCourier(courier)) {
+      return res.status(403).json({ error: 'Booking a hired courier stays with the office' });
+    }
     // A hired courier is not one of our riders, so the two cannot both be set.
     if (delivery_isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
@@ -6908,7 +6942,7 @@ app.post('/api/v1/deliveries', authenticate, requireAdminOrInventory, async (req
       await prisma.sale.updateMany({ where: { id: { in: ids }, companyId }, data: { shippingCost: fare } });
     }
     const created = await prisma.delivery.findMany({ where: { saleId: { in: ids } }, include: deliveryInclude });
-    res.status(201).json(created.map(delivery_shapeDelivery));
+    res.status(201).json(created.map(delivery_shapeForViewer(req.user)));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 
@@ -6918,6 +6952,11 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
     const companyId = req.user.companyId;
     const { status, recipientName, cashCollected, failureReason, notes } = req.body;
     if (!delivery_STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of ${delivery_STATUSES.join(', ')}` });
+    // Closing a delivery records the cash taken at the door, so it is the rider's (his own only,
+    // below) or the office's. It used to be open to any login.
+    if (req.user.role !== 'rider' && !delivery_DISPATCH_OFFICE_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only the rider carrying it or the office can close a delivery' });
+    }
 
     const where = { id: req.params.id, companyId };
     if (req.user.role === 'rider') where.riderId = req.user.riderId;
@@ -6984,7 +7023,7 @@ app.put('/api/v1/deliveries/:id/status', authenticate, async (req, res) => {
 });
 
 // Reassign to a different rider, or park it back in the unassigned pile.
-app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, async (req, res) => {
+app.put('/api/v1/deliveries/:id/rider', authenticate, delivery_requireDispatcher, async (req, res) => {
   try {
     const companyId = req.user.companyId;
     const delivery = await prisma.delivery.findFirst({ where: { id: req.params.id, companyId } });
@@ -6995,6 +7034,10 @@ app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, a
       : (delivery_COURIERS.includes(req.body.courier) ? req.body.courier : delivery.courier);
     if (delivery_isHiredCourier(courier) && riderId) {
       return res.status(400).json({ error: 'A hired courier is not one of our riders — leave the rider blank' });
+    }
+    if (delivery_isDispatchSupervisor(req.user)) {
+      if (delivery_isHiredCourier(courier)) return res.status(403).json({ error: 'Handing it to a hired courier stays with the office' });
+      if (delivery.status === 'Delivered') return res.status(400).json({ error: 'That delivery is already done' });
     }
     // The fare for a trip booked now, which belongs on the order as its delivery cost. No rider
     // credit: the office books and pays a courier directly, unlike a parcel one of ours carries
@@ -7009,6 +7052,7 @@ app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, a
     if (riderId) {
       const rider = await prisma.rider.findFirst({ where: { id: riderId, companyId } });
       if (!rider) return res.status(404).json({ error: 'Rider not found' });
+      if (delivery_isDispatchSupervisor(req.user) && !rider.isActive) return res.status(400).json({ error: 'That rider is inactive' });
     }
     const updated = await prisma.$transaction(async (tx) => {
       if (handoverFare !== null) await delivery_shiftSaleShippingCost(tx, delivery.saleId, companyId, handoverFare);
@@ -7020,7 +7064,7 @@ app.put('/api/v1/deliveries/:id/rider', authenticate, requireAdminOrInventory, a
         ...(req.body.courierRef !== undefined && { courierRef: courierRef || null }),
       }, include: deliveryInclude });
     }, { timeout: 20000 });
-    res.json(delivery_shapeDelivery(updated));
+    res.json(delivery_shapeForViewer(req.user)(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong' }); }
 });
 

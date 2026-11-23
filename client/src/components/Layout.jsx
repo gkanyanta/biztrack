@@ -84,7 +84,7 @@ export default function Layout() {
   const navBadges = { '/payroll': advancesWaiting, '/order-queries': queriesWaiting };
   // The sales supervisor is a consultant who also looks after the team.
   const consultantItems = user?.isSupervisor
-    ? [consultantNavItems[0], { path: '/team', icon: FiUsers, label: 'Team' }, ...consultantNavItems.slice(1)]
+    ? [consultantNavItems[0], { path: '/team', icon: FiUsers, label: 'Team' }, { path: '/deliveries', icon: FiTruck, label: 'Deliveries' }, ...consultantNavItems.slice(1)]
     : consultantNavItems;
   const navItems = user?.role === 'superadmin' ? superadminNavItems : user?.role === 'consultant' ? consultantItems : user?.role === 'inventory' ? inventoryNavItems : user?.role === 'rider' ? riderNavItems : user?.role === 'purchasing' ? purchasingNavItems : adminNavItems;
 

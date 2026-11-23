@@ -1,7 +1,8 @@
 // A sales team for the supervisor: Evelyn (to be made supervisor), Anna and Lizzy with logins,
 // an inactive consultant and a stock location to refuse as destinations, Anna's orders in every
 // state that matters (waiting to go out, out and unpaid, one drawn from her own stock), one of
-// Evelyn's, and a second company whose orders must stay out of sight.
+// Evelyn's, a second company whose orders must stay out of sight, and two riders (one retired)
+// for her to send orders out with.
 const bcrypt = require('bcryptjs');
 const { TEST_PASSWORD } = require('../lib/harness');
 
@@ -44,10 +45,12 @@ module.exports = async function seed(prisma) {
   const annaPaid = await sale(anna.id, { status: 'Delivered', paid: 300 });
   const evelynSale = await sale(evelyn.id, { paid: 300 });
   const otherSale = await sale(otherC.id, { companyId: other.id });
+  const moses = await prisma.rider.create({ data: { name: 'Moses', phone: '0955000000', nrc: '111111/11/1', licenceNo: 'LIC-SECRET', vehicle: 'Bike', companyId: company.id } });
+  const retired = await prisma.rider.create({ data: { name: 'Old Bike', isActive: false, companyId: company.id } });
 
   return {
     evelynId: evelyn.id, annaId: anna.id, lizzyId: lizzy.id, goneId: gone.id, storeId: store.id,
     annaPendingId: annaPending.id, annaOutId: annaOut.id, annaOwnStockId: annaOwnStock.id, annaPaidId: annaPaid.id,
-    evelynSaleId: evelynSale.id, otherSaleId: otherSale.id,
+    evelynSaleId: evelynSale.id, otherSaleId: otherSale.id, mosesId: moses.id, retiredRiderId: retired.id,
   };
 };
