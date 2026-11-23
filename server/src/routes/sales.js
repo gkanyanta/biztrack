@@ -728,6 +728,8 @@ router.delete('/:id', async (req, res) => {
       await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
       await tx.paymentNote.deleteMany({ where: { saleId: req.params.id } });
       await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+      // The supervisor's corrections and moves; the order cannot go while these point at it.
+      await tx.saleChangeLog.deleteMany({ where: { saleId: req.params.id } });
       await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
       await tx.sale.delete({ where: { id: req.params.id } });
     }, { timeout: 20000 });

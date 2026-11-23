@@ -1788,6 +1788,8 @@ app.delete('/api/v1/sales/:id', authenticate, async (req, res) => {
         await tx.debtReminder.deleteMany({ where: { saleId: req.params.id } });
         await tx.paymentNote.deleteMany({ where: { saleId: req.params.id } });
         await tx.orderStatusLog.deleteMany({ where: { saleId: req.params.id } });
+        // The supervisor's corrections and moves; the order cannot go while these point at it.
+        await tx.saleChangeLog.deleteMany({ where: { saleId: req.params.id } });
         await tx.saleItem.deleteMany({ where: { saleId: req.params.id } });
         await tx.sale.delete({ where: { id: req.params.id } });
       }, { timeout: 20000 });
@@ -3143,6 +3145,7 @@ app.delete('/api/v1/superadmin/companies/:id', authenticate, requireSuperadmin, 
     await prisma.debtReminder.deleteMany({ where: { companyId } });
     await prisma.creditPayment.deleteMany({ where: { companyId } });
     await prisma.orderStatusLog.deleteMany({ where: { companyId } });
+    await prisma.saleChangeLog.deleteMany({ where: { companyId } });
     await prisma.stockLog.deleteMany({ where: { companyId } });
     await prisma.fiscalDocument.deleteMany({ where: { companyId } });
     await prisma.orderQuery.deleteMany({ where: { companyId } });

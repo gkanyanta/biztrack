@@ -136,5 +136,9 @@ module.exports = {
     eq('and the team page closes', (await evelyn('GET', '/team')).status, 403);
     eq('as do deliveries', (await evelyn('GET', '/deliveries/riders')).status, 403);
     eq('the office can still move an order itself', (await boss('PUT', `/sales/${seed.evelynSaleId}/consultant`, { consultantId: seed.annaId })).status, 200);
+
+    section('an order with a logged change can still be deleted');
+    eq('the office deletes the order Evelyn corrected and moved', (await boss('DELETE', `/sales/${seed.annaPendingId}`)).status, 200);
+    eq('it is gone, and its change log with it', [await prisma.sale.count({ where: { id: seed.annaPendingId } }), await prisma.saleChangeLog.count({ where: { saleId: seed.annaPendingId } })], [0, 0]);
   },
 };
